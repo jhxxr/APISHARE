@@ -148,28 +148,31 @@ curl "http://127.0.0.1:8080/v1beta/models/gemini-2.5-flash:generateContent" \
 
 ### Docker
 
-镜像由 GitHub Actions 自动构建发布（多架构 amd64/arm64，推送到 GHCR）：
+Docker 镜像由 GitHub Actions 在 GitHub 上自动打包，并发布到 GitHub Container Registry（GHCR），支持 `linux/amd64` 和 `linux/arm64`。镜像地址为 `ghcr.io/<owner>/<repo>`，其中用户名或组织名、仓库名均使用小写。发布成功后，可直接拉取镜像运行，无需在本地编译：
 
 ```bash
 docker run -d --name apishare -p 8080:8080 -v apishare-data:/data \
-  ghcr.io/<owner>/<repo>:main
+  ghcr.io/<owner>/<repo>:latest
 ```
+
+`apishare-data` 保存数据库和部署配置。启动后打开 `http://127.0.0.1:8080/`，首次部署会跳转到配置页，默认后台路径为 `/admin`。
 
 ### GitHub Actions 自动发布
 
-工作流在 [.github/workflows/docker.yml](.github/workflows/docker.yml)：
+工作流在 [.github/workflows/docker.yml](.github/workflows/docker.yml)，构建与发布均在 GitHub Actions 中完成：
 
-- push 到 `main` 分支 → `ghcr.io/<owner>/<repo>:main` + `:sha`
-- push `v*` 标签 → semver 版本标签（`:1.2.3`、`:1.2`）
-- 支持手动触发（workflow_dispatch）
+- 推送到 `main` 分支 → 发布 `:main` 和 `:sha-<提交短哈希>`；`main` 为默认分支时，同时更新 `:latest`。
+- 推送版本标签（如 `v1.2.3`）→ 发布 `:1.2.3`、`:1.2` 和 `:sha-<提交短哈希>`；正式版本同时更新 `:latest`。
+- 支持在仓库 **Actions → Publish Docker image → Run workflow** 手动触发。
 
 ```bash
 git remote add origin git@github.com:<you>/<repo>.git
 git push -u origin main
-git tag v0.1.0 && git push origin v0.1.0   # 触发版本发布
+git tag v0.1.0
+git push origin v0.1.0   # 触发版本发布
 ```
 
-无需配置 Secret（`GITHUB_TOKEN` 自动提供）；首次发布后到仓库 Packages 页可把镜像设为 public。
+工作流使用 GitHub 自动提供的 `GITHUB_TOKEN`，已声明 `packages: write` 权限，无需另填镜像仓库密码。发布结果可在仓库 Actions 页面查看，镜像可在 Packages 页面查看。若希望用户无需登录即可拉取，首次发布后将该 Package 的可见性设为 Public。认证与可见性规则参见 [GitHub GHCR 文档](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)。
 
 ## 环境变量
 
