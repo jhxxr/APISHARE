@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f8fb">
+  <title>API Share · 工作空间</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23e7f5ee'/%3E%3Cpath d='M16 7 5 13l11 6 11-6-11-6ZM5 18l11 6 11-6M5 23l11 6 11-6' fill='none' stroke='%23047857' stroke-width='1.8' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#mainContent">跳到主要内容</a>
+  <svg class="icon-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 2v20M2 12h20M5 5l14 14M5 19L19 5M8 3l8 18M3 8l18 8M3 16l18-8M8 21l8-18"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="9" r="5"/><path d="m12 12 9 9m-3-3 3-3m-6 0 3-3"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 10 5-10 5L2 8l10-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/></symbol>
+    <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h5m4 0h7M4 17h9m4 0h3"/><circle cx="11" cy="7" r="2"/><circle cx="15" cy="17" r="2"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 6a8 8 0 0 1 14 6M4 12a8 8 0 0 0 14 6"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="m9 15 6-6m-6 8-2 2a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2-2 2-2a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-code" viewBox="0 0 24 24"><path d="m7 6-6 6 6 6m10-12 6 6-6 6M14 3l-4 18"/></symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 4H4v16h5m5-13 5 5-5 5M8 12h13"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.01"/></symbol>
+    <symbol id="i-wallet" viewBox="0 0 24 24"><path d="M20 7V4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h16V7H5a1 1 0 0 1 0-2"/><path d="M21 12h-6v5h6m-3-2.5h.01"/></symbol>
+    <symbol id="i-token" viewBox="0 0 24 24"><path d="m12 2 9 5v10l-9 5-9-5V7l9-5Z"/><path d="m3 7 9 5 9-5m-9 5v10"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="m15 4 5 5M4 20l4-1L21 6a2 2 0 0 0-4-4L4 15l-1 6 5-2"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z"/><path d="m8 12 3 3 5-6"/></symbol>
+  </svg>
+
+  <div id="loginView" class="login-wrap hidden">
+    <div class="login-brand"><span class="brand-mark"><svg class="icon"><use href="#i-layers"/></svg></span><span>API Share</span></div>
+    <form id="loginForm" class="login-card" onsubmit="return doLogin(event)">
+      <span class="eyebrow">YOUR API WORKSPACE</span><h1>管理你的 API 工作空间</h1><p>统一连接模型服务，管理访问权限与调用用量。</p>
+      <label class="field" for="loginPassword"><span>管理员密码</span><input id="loginPassword" type="password" placeholder="输入密码，进入工作空间" autocomplete="current-password" required></label>
+      <p id="loginError" class="form-error hidden" role="alert"></p>
+      <button id="loginSubmit" class="btn login-submit" type="submit">进入工作空间 <svg class="icon"><use href="#i-arrow"/></svg></button>
+      <div class="login-note"><svg class="icon"><use href="#i-key"/></svg> 你的模型与密钥，在这里井然有序。</div>
+    </form>
+    <div class="login-footer">API Share <span>·</span> API GATEWAY CONSOLE</div>
+  </div>
+
+  <div id="appView" class="app-shell hidden">
+    <button id="sidebarOverlay" class="sidebar-overlay hidden" type="button" aria-label="关闭导航" onclick="toggleSidebar(false)"></button>
+    <aside id="sidebar" class="sidebar" aria-label="主导航">
+      <a class="brand" href="#dashboard" onclick="switchTab('dashboard'); return false;"><span class="brand-mark"><svg class="icon"><use href="#i-layers"/></svg></span><span>API Share<span class="brand-caption">API GATEWAY CONSOLE</span></span></a>
+      <div class="workspace-switch"><span class="workspace-avatar">A</span><span><strong>我的工作空间</strong><small>管理员空间</small></span><span class="workspace-label">本地</span></div>
+      <p class="nav-label">工作空间</p>
+      <nav class="tabs">
+        <button data-tab="dashboard" class="tab active" aria-current="page"><svg class="icon"><use href="#i-grid"/></svg><span>概览</span></button>
+        <button data-tab="keys" class="tab"><svg class="icon"><use href="#i-key"/></svg><span>API 密钥</span><span id="navKeyCount" class="nav-count">—</span></button>
+        <button data-tab="upstreams" class="tab"><svg class="icon"><use href="#i-layers"/></svg><span>上游服务</span><span id="navUpCount" class="nav-count">—</span></button>
+        <button data-tab="logs" class="tab"><svg class="icon"><use href="#i-activity"/></svg><span>调用日志</span></button>
+        <div class="nav-divider"></div>
+        <button data-tab="settings" class="tab"><svg class="icon"><use href="#i-sliders"/></svg><span>工作空间设置</span></button>
+        <button data-tab="deployment" class="tab"><svg class="icon"><use href="#i-shield"/></svg><span>部署配置</span></button>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="sidebar-note"><svg class="icon"><use href="#i-link"/></svg><strong>一个入口，无限可能</strong><p>统一接入 OpenAI、Claude、Gemini 与更多模型。</p><button class="text-btn" onclick="copyEndpoint()">复制 OpenAI 地址 <svg class="icon"><use href="#i-copy"/></svg></button></div>
+        <div class="account"><span class="account-avatar">A</span><span><strong>Administrator</strong><small>工作空间管理员</small></span><button class="icon-btn" onclick="logout()" title="退出登录" aria-label="退出登录"><svg class="icon"><use href="#i-logout"/></svg></button></div>
+      </div>
+    </aside>
+
+    <div class="workspace-main">
+      <header class="topbar">
+        <div class="breadcrumb"><button class="icon-btn mobile-menu" onclick="toggleSidebar()" aria-label="打开导航" aria-controls="sidebar" aria-expanded="false"><svg class="icon"><use href="#i-menu"/></svg></button><span>工作空间</span><svg class="icon"><use href="#i-chevron"/></svg><strong id="pageCrumb">概览</strong></div>
+        <div class="topbar-actions"><span id="connectionStatus" class="connection-status"><span class="status-dot"></span><span>正在连接</span></span><button id="refreshButton" class="icon-btn" onclick="refreshCurrent()" title="刷新当前页面" aria-label="刷新当前页面"><svg class="icon"><use href="#i-refresh"/></svg></button></div>
+      </header>
+      <main id="mainContent" tabindex="-1">
+        <section id="tab-dashboard" class="panel">
+          <div class="public-preview-link"><a class="btn ghost" href="/" target="_blank" rel="noopener"><svg class="icon" aria-hidden="true"><use href="#i-eye"/></svg> 查看公开首页 <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></div><div class="page-heading dashboard-heading"><div><div class="eyebrow">WORKSPACE / OVERVIEW</div><h1>工作空间概览</h1><p>监控请求用量、管理服务连接，掌握网关运行情况。</p></div><button class="btn" onclick="openCreateUpstream()"><svg class="icon"><use href="#i-plus"/></svg> 连接新上游</button></div>
+          <div class="overview-date"><span id="todayLabel"></span><span class="muted">今日概况</span><span class="date-line"></span><span class="live-label"><span class="status-dot"></span> 以最新刷新为准</span></div>
+          <div class="cards">
+            <div class="stat-card"><div class="stat-top"><span>今日调用</span><svg class="icon"><use href="#i-activity"/></svg></div><div class="card-num" id="stCalls">—</div><div class="card-foot">成功完成的请求</div></div>
+            <div class="stat-card"><div class="stat-top"><span>今日费用</span><svg class="icon"><use href="#i-wallet"/></svg></div><div class="card-num" id="stCost">—</div><div class="card-foot">按模型用量计费 · USD</div></div>
+            <div class="stat-card"><div class="stat-top"><span>今日 Tokens</span><svg class="icon"><use href="#i-token"/></svg></div><div class="card-num" id="stTokens">—</div><div class="card-foot">输入与输出总用量</div></div>
+            <div class="stat-card resources-card"><div class="stat-top"><span>可用资源</span><svg class="icon"><use href="#i-layers"/></svg></div><div class="resource-nums"><span><strong id="stUps">—</strong><small>上游服务</small></span><span class="resource-divider"></span><span><strong id="stKeys">—</strong><small>API 密钥</small></span></div><div class="card-foot">当前启用的连接与密钥</div></div>
+          </div>
+          <div class="dashboard-grid">
+            <div class="card-block chart-card"><div class="block-heading"><div><h2>用量趋势</h2><p>过去 7 天的工作空间活动</p></div><div class="segmented" aria-label="趋势指标"><button class="active" data-chart="calls" onclick="setChartMetric('calls')" aria-pressed="true">调用次数</button><button data-chart="cost" onclick="setChartMetric('cost')" aria-pressed="false">费用</button></div></div><div class="chart-summary"><strong id="chartTotal">—</strong><span id="chartUnit">次调用</span><span id="chartRange" class="muted"></span></div><div id="dailyChart" class="chart" aria-label="过去七天用量趋势"></div><div class="chart-caption"><span class="legend-dot"></span><span id="chartLegend">成功调用</span><span id="chartNote" class="muted"></span></div></div>
+            <div class="card-block getting-started"><span class="guide-icon"><svg class="icon"><use href="#i-code"/></svg></span><h2>快速接入<br>你的模型服务</h2><p>连接上游、创建密钥，<br>使用统一地址发起调用。</p><button class="guide-step" onclick="switchTab('upstreams')"><span class="step-number">01</span><span><strong>连接上游服务</strong><small>支持三种常用接口类型</small></span><svg class="icon"><use href="#i-arrow"/></svg></button><button class="guide-step" onclick="switchTab('keys')"><span class="step-number">02</span><span><strong>创建 API 密钥</strong><small>为团队分配独立的访问权限</small></span><svg class="icon"><use href="#i-arrow"/></svg></button><button class="guide-step" onclick="copyEndpoint()"><span class="step-number">03</span><span><strong>开始你的第一次调用</strong><small>复制地址，接入 OpenAI 兼容工具</small></span><svg class="icon"><use href="#i-copy"/></svg></button></div>
+          </div>
+          <div class="card-block recent-card"><div class="block-heading"><div><h2>最近的调用</h2><p>最新的请求状态与用量记录</p></div><button class="text-btn" onclick="switchTab('logs')">查看全部 <svg class="icon"><use href="#i-arrow"/></svg></button></div><div class="table-wrap"><table class="tbl" id="recentTable"><thead><tr><th scope="col">模型</th><th scope="col">API 密钥</th><th scope="col">状态</th><th scope="col">Tokens</th><th scope="col">费用</th><th scope="col">时间</th></tr></thead><tbody><tr><td colspan="6" class="table-message">正在加载最近调用…</td></tr></tbody></table></div></div>
+          <footer class="workspace-footer"><span>API Share / Gateway Console</span><span id="lastRefreshed">等待刷新</span></footer>
+        </section>
+
+        <section id="tab-keys" class="panel hidden">
+          <div class="page-heading"><div><span class="eyebrow">ACCESS & SHARING</span><h1>API 密钥</h1><p>为每位成员创建独立密钥，轻松管理额度与调用限制。</p></div><button class="btn" onclick="toggleKeyComposer(true)"><svg class="icon"><use href="#i-plus"/></svg> 创建密钥</button></div>
+          <div id="keyComposer" class="card-block composer hidden"><div class="block-heading"><div><h2>创建 API 密钥</h2><p>给密钥一个易于辨识的名称。</p></div><button class="icon-btn" onclick="toggleKeyComposer(false)" aria-label="收起密钥表单"><svg class="icon"><use href="#i-close"/></svg></button></div><form id="keyForm" onsubmit="return createKey(event)"><div class="form-grid key-fields"><label class="field"><span>名称 <span class="required">*</span></span><input id="keyName" placeholder="例如：研究组 · 课题 A" required maxlength="120"></label><label class="field"><span>总额度 <span class="field-unit">USD</span></span><input id="keyQuota" type="number" step="0.01" min="0" placeholder="0"><small>0 表示不限额度</small></label><label class="field"><span>每秒请求数</span><input id="keyQps" type="number" step="0.1" min="0.1" placeholder="3"></label><label class="field"><span>并发请求数</span><input id="keyConc" type="number" min="1" step="1" placeholder="5"></label></div><div class="form-actions"><button type="button" class="btn ghost" onclick="toggleKeyComposer(false)">取消</button><button type="submit" class="btn">生成密钥 <svg class="icon"><use href="#i-arrow"/></svg></button></div></form></div>
+          <div id="newKeyShow" class="new-key hidden" role="status"><div><strong>新密钥已生成</strong><p>请立即复制并保存这份完整密钥。</p></div><code id="newKeyValue"></code><button class="btn ghost" onclick="copyNewKey()"><svg class="icon"><use href="#i-copy"/></svg> 复制密钥</button><button class="icon-btn" onclick="dismissNewKey()" aria-label="隐藏新密钥"><svg class="icon"><use href="#i-close"/></svg></button></div>
+          <div class="card-block list-card"><div class="list-toolbar"><div class="list-title"><h2>所有密钥</h2><span id="keyTotal" class="count-pill">—</span></div><label class="search-field"><svg class="icon"><use href="#i-search"/></svg><input id="keySearch" placeholder="搜索密钥名称…" aria-label="搜索密钥名称" oninput="renderKeys()"></label></div><div class="table-wrap"><table class="tbl" id="keysTable"><thead><tr><th scope="col">名称</th><th scope="col">密钥</th><th scope="col">已用 / 总额度</th><th scope="col">QPS / 并发</th><th scope="col">状态</th><th scope="col">首页展示</th><th scope="col" class="actions-heading">操作</th></tr></thead><tbody></tbody></table></div></div>
+          <div class="inline-note"><svg class="icon"><use href="#i-info"/></svg> 勾选“首页展示”后，只公开所选密钥的合计余量与用量，隐藏密钥、名称和数量。停用密钥后，历史用量仍计入合计。</div>
+        </section>
+
+        <section id="tab-upstreams" class="panel hidden">
+          <div class="page-heading"><div><span class="eyebrow">MODELS & CONNECTIONS</span><h1>上游服务</h1><p>统一管理上游连接，让请求找到合适的模型。</p></div><button class="btn" onclick="openCreateUpstream()"><svg class="icon"><use href="#i-plus"/></svg> 添加上游</button></div>
+          <div class="upstream-summary"><div><span class="summary-icon"><svg class="icon"><use href="#i-layers"/></svg></span><span><strong id="upstreamTotal">—</strong><small>全部上游</small></span></div><div><span class="summary-icon green"><svg class="icon"><use href="#i-check"/></svg></span><span><strong id="upstreamHealthy">—</strong><small>健康且启用</small></span></div><div><span class="summary-icon orange"><svg class="icon"><use href="#i-token"/></svg></span><span><strong id="upstreamModelCount">—</strong><small>白名单模型</small></span></div><p>一个入口，<br><span>连接更多可能。</span></p></div>
+          <div class="card-block list-card"><div class="list-toolbar"><div class="list-title"><h2>上游服务</h2><span id="upstreamListCount" class="count-pill">—</span></div><div class="toolbar-filters"><label class="search-field"><svg class="icon"><use href="#i-search"/></svg><input id="upstreamSearch" placeholder="搜索名称、模型或地址…" aria-label="搜索上游" oninput="renderUpstreams()"></label><select id="upstreamTypeFilter" aria-label="按上游类型筛选" onchange="renderUpstreams()"><option value="">所有类型</option><option value="openai">OpenAI 兼容</option><option value="anthropic">Claude / Anthropic</option><option value="gemini">Gemini</option></select></div></div><div class="table-wrap"><table class="tbl upstream-table" id="upsTable"><thead><tr><th scope="col">上游服务</th><th scope="col">连接地址</th><th scope="col">模型 / 权重</th><th scope="col">健康状态</th><th scope="col">启用</th><th scope="col" class="actions-heading">操作</th></tr></thead><tbody></tbody></table></div></div>
+          <div class="inline-note"><svg class="icon"><use href="#i-info"/></svg> 同一会话优先使用相同上游；连接故障时，自动尝试其他可用服务。</div>
+        </section>
+
+        <section id="tab-logs" class="panel hidden">
+          <div class="page-heading"><div><span class="eyebrow">ACTIVITY & USAGE</span><h1>调用日志</h1><p>查看请求状态、模型用量与费用，了解每一次连接。</p></div><span id="logTotal" class="heading-meta"></span></div>
+          <div class="card-block list-card"><div class="list-toolbar"><div class="list-title"><h2>调用记录</h2><span class="muted">每页 50 条</span></div><label class="search-field"><svg class="icon"><use href="#i-search"/></svg><input id="logSearch" placeholder="搜索本页模型、密钥或上游…" aria-label="搜索本页日志" oninput="renderLogs()"></label></div><div class="table-wrap"><table class="tbl small" id="logsTable"><thead><tr><th scope="col">时间</th><th scope="col">密钥 / 上游</th><th scope="col">模型</th><th scope="col">状态</th><th scope="col">输入 / 输出</th><th scope="col">费用</th><th scope="col">耗时</th><th scope="col">错误</th></tr></thead><tbody></tbody></table></div><div class="pager"><span id="logRange" class="muted"></span><div><button id="logPrev" class="btn mini ghost" onclick="loadLogs(logsPage - 1)">上一页</button><span id="logPage">1</span><button id="logNext" class="btn mini ghost" onclick="loadLogs(logsPage + 1)">下一页</button></div></div></div>
+        </section>
+
+        <section id="tab-settings" class="panel hidden">
+          <div class="page-heading"><div><span class="eyebrow">WORKSPACE PREFERENCES</span><h1>工作空间设置</h1><p>管理定价、请求调度与管理员访问。</p></div></div>
+          <form id="settingsForm" class="settings-layout" onsubmit="return saveSettings(event)">
+            <div class="card-block settings-card"><div class="section-heading"><span class="section-icon"><svg class="icon"><use href="#i-wallet"/></svg></span><div><h2>模型定价</h2><p>自动同步价格，也可以为特定模型设置单价。</p></div></div><label class="switch-row"><span><strong>自动同步官方定价</strong><small>使用 LiteLLM 价格库，每小时检查、每日更新。</small></span><input id="setAutoPricing" type="checkbox" class="switch-input"><span class="switch-track"></span></label><label class="field"><span>定价源 URL</span><input id="setPricingURL" type="url" spellcheck="false" placeholder="https://…"><small>如果默认来源不可达，可替换为价格库镜像地址。</small></label><div class="pricing-status"><span id="pricingStatus" class="muted">正在加载…</span><button type="button" class="text-btn" onclick="refreshPricing(this)"><svg class="icon"><use href="#i-refresh"/></svg> 立即同步</button></div><div class="field"><div class="field-label-row"><label for="setPricing">手动覆盖价格</label><button type="button" class="text-btn" onclick="formatJSON('setPricing')"><svg class="icon"><use href="#i-code"/></svg> 格式化</button></div><textarea id="setPricing" class="code-input" rows="7" spellcheck="false" aria-describedby="pricingHint pricingError"></textarea><small id="pricingError" class="form-error hidden" role="alert"></small><small id="pricingHint">单位为 USD / 1M tokens。已列出的模型优先使用手动价格，default 为兜底价格。</small></div><div class="lookup-box"><label class="field"><span>查询模型单价</span><div class="input-action"><input id="lookupModel" placeholder="例如：gpt-4o" onkeydown="if(event.key === 'Enter') { event.preventDefault(); lookupPrice(); }"><button type="button" class="btn ghost" onclick="lookupPrice()">查询</button></div></label><div id="lookupResult" class="lookup-result muted" role="status"></div></div></div>
+            <div class="settings-side"><div class="card-block settings-card"><div class="section-heading"><span class="section-icon"><svg class="icon"><use href="#i-sliders"/></svg></span><div><h2>请求调度</h2><p>让连接稳定，让用量准确。</p></div></div><label class="field"><span>会话粘性时长 <span class="field-unit">分钟</span></span><input id="setTtl" type="number" min="1" required><small>同一会话固定到同一上游，命中后自动续期。</small></label><label class="field"><span>故障转移重试次数</span><input id="setRetry" type="number" min="0" max="5" required><small>可设置 0–5 次，0 表示不重试。</small></label><label class="switch-row compact"><span><strong>获取流式真实用量</strong><small>为 OpenAI 流式请求注入用量选项。</small></span><input id="setInject" type="checkbox" class="switch-input"><span class="switch-track"></span></label></div><div class="settings-save"><p>修改后，保存即可生效。</p><button type="submit" class="btn"><svg class="icon"><use href="#i-check"/></svg> 保存设置</button></div></div>
+          </form>
+          <div class="card-block password-card"><div><h2>管理员访问</h2><p>在部署配置中管理登录密码与后台入口。</p></div><button type="button" class="btn ghost" onclick="switchTab('deployment')">管理部署配置 <svg class="icon"><use href="#i-arrow"/></svg></button></div>
+        </section>
+
+        <section id="tab-deployment" class="panel hidden">
+          <div class="page-heading deployment-heading"><div><span class="eyebrow">DEPLOYMENT CONFIGURATION</span><h1 id="deploymentTitle">部署配置</h1><p id="deploymentDescription">设置管理员密码与专属后台入口。</p></div><span class="deployment-badge"><svg class="icon"><use href="#i-check"/></svg> 服务已部署</span></div>
+          <div id="deploymentWelcome" class="deployment-welcome hidden"><span class="section-icon"><svg class="icon"><use href="#i-shield"/></svg></span><div><strong>欢迎使用 API Share</strong><p>先设置登录密码和后台路径。完成后，即可添加上游服务并分发 API 密钥。</p></div></div>
+          <div id="deploymentSuccess" class="deployment-success hidden" role="status"><svg class="icon"><use href="#i-check"/></svg><span>配置已保存，新的后台入口已生效。</span><button type="button" class="text-btn" onclick="switchTab('dashboard')">进入概览 <svg class="icon"><use href="#i-arrow"/></svg></button></div>
+          <div class="deployment-layout">
+            <form id="deploymentForm" class="card-block deployment-form" onsubmit="return saveDeployment(event)">
+              <fieldset id="deploymentFields" disabled>
+                <section class="deployment-section" aria-labelledby="deploymentPasswordHeading">
+                  <div class="deployment-section-heading"><span class="deployment-number">01</span><div><h2 id="deploymentPasswordHeading">管理员密码</h2><p id="deploymentPasswordHint">设置用于登录管理后台的密码，留空则保留当前密码。</p></div><button id="deploymentReveal" type="button" class="text-btn" onclick="toggleDeploymentPasswords()" aria-label="显示新密码和确认密码" aria-pressed="false"><svg class="icon"><use href="#i-eye"/></svg><span>显示密码</span></button></div>
+                  <div class="deployment-password-grid">
+                    <div class="field"><label for="deploymentNewPassword">新管理员密码</label><input id="deploymentNewPassword" type="password" autocomplete="new-password" placeholder="至少 12 个字符" aria-describedby="deploymentLengthHint deploymentNewPasswordError"><small id="deploymentNewPasswordError" class="form-error hidden" role="alert"></small></div>
+                    <div class="field"><label for="deploymentConfirmPassword">确认新密码</label><input id="deploymentConfirmPassword" type="password" autocomplete="new-password" placeholder="再次输入新密码" aria-describedby="deploymentConfirmPasswordError"><small id="deploymentConfirmPasswordError" class="form-error hidden" role="alert"></small></div>
+                  </div>
+                  <div class="deployment-password-hint"><svg class="icon"><use href="#i-key"/></svg><small id="deploymentLengthHint">至少 12 个字符，最多 72 字节；支持粘贴和密码管理器。</small></div>
+                </section>
+                <section class="deployment-section" aria-labelledby="deploymentPathHeading">
+                  <div class="deployment-section-heading"><span class="deployment-number">02</span><div><h2 id="deploymentPathHeading">后台访问路径</h2><p>为管理后台设置一个容易记住的专属入口。</p></div></div>
+                  <div class="field"><div class="field-label-row"><label for="deploymentAdminPath">后台路径</label><button type="button" class="text-btn" onclick="generateAdminPath()"><svg class="icon"><use href="#i-refresh"/></svg> 随机生成</button></div><div class="deployment-path-input"><span aria-hidden="true">/</span><input id="deploymentAdminPath" type="text" placeholder="例如：console-a7f3" required maxlength="64" autocomplete="off" spellcheck="false" autocapitalize="none" aria-describedby="deploymentPathHint deploymentAdminPathError"></div><small id="deploymentPathHint">3–64 位字母、数字、短横线或下划线，以字母或数字开头。</small><small id="deploymentAdminPathError" class="form-error hidden" role="alert"></small></div>
+                  <div class="deployment-path-note"><svg class="icon"><use href="#i-info"/></svg><p>新路径保存后立即生效，页面会自动跳转。请更新后台书签，原入口将失效。</p></div>
+                </section>
+                <section class="deployment-section deployment-verification" aria-labelledby="deploymentVerifyHeading">
+                  <div class="deployment-section-heading"><span class="section-icon"><svg class="icon"><use href="#i-shield"/></svg></span><div><h2 id="deploymentVerifyHeading">验证管理员身份</h2><p>输入当前登录密码，确认并保存这次修改。</p></div></div>
+                  <div class="field"><label id="deploymentCurrentLabel" for="deploymentCurrentPassword">当前管理员密码</label><input id="deploymentCurrentPassword" type="password" placeholder="输入当前登录密码" autocomplete="current-password" required aria-describedby="deploymentCurrentPasswordError"><small id="deploymentCurrentPasswordError" class="form-error hidden" role="alert"></small></div>
+                  <p id="deploymentError" class="form-error hidden" role="alert" tabindex="-1"></p>
+                  <div class="deployment-actions"><p>保存后，其他已登录会话需要重新登录。</p><button id="deploymentSave" type="submit" class="btn"><svg class="icon"><use href="#i-check"/></svg><span>保存配置</span></button></div>
+                </section>
+              </fieldset>
+            </form>
+            <aside class="deployment-side" aria-label="部署配置预览">
+              <div class="card-block deployment-preview"><span class="deployment-preview-icon"><svg class="icon"><use href="#i-link"/></svg></span><span class="eyebrow">YOUR ADMIN ENTRANCE</span><h2>你的后台入口</h2><p>保存后，通过下方地址管理工作空间。</p><div class="deployment-url"><span id="deploymentOrigin"></span><strong id="deploymentPreviewPath">正在加载…</strong></div><button id="deploymentCopy" type="button" class="btn ghost" onclick="copyDeploymentURL()" disabled><svg class="icon"><use href="#i-copy"/></svg> 复制入口地址</button><span id="deploymentPreviewStatus" class="deployment-preview-status" role="status">正在读取配置…</span></div>
+              <div class="card-block deployment-notes"><h2>配置说明</h2><div><svg class="icon"><use href="#i-key"/></svg><p><strong>密码安全保存</strong><span>仅保存不可逆的密码摘要，页面不会显示已保存的密码。</span></p></div><div><svg class="icon"><use href="#i-refresh"/></svg><p><strong>重启后依然有效</strong><span>配置会保存在当前数据库中，无需重新部署。</span></p></div><div><svg class="icon"><use href="#i-link"/></svg><p><strong>API 接入地址保持一致</strong><span>后台入口调整不会影响现有 API 密钥及模型调用地址。</span></p></div></div>
+            </aside>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <dialog id="editModal" class="editor-dialog" aria-labelledby="editorHeading" aria-describedby="editorDescription">
+    <form id="upstreamEditorForm" class="editor-form" onsubmit="return saveEditUpstream(event)">
+      <header class="editor-header"><div class="editor-title-group"><span id="editorProviderIcon" class="provider-icon anthropic"><svg class="icon"><use href="#i-spark"/></svg></span><div><div class="editor-eyebrow">上游服务 <span>/</span> <span id="editTitle">新连接</span></div><h2 id="editorHeading">编辑上游</h2><p id="editorDescription" class="sr-only">配置上游连接、模型访问与调度策略。</p></div></div><button type="button" class="icon-btn editor-close" onclick="closeEdit()" title="关闭编辑器 · Esc" aria-label="关闭编辑器"><svg class="icon"><use href="#i-close"/></svg></button></header>
+      <div class="editor-body">
+        <aside class="editor-nav" aria-label="编辑器分区"><p class="nav-label">连接配置</p><button type="button" data-section="editorBasic" class="editor-nav-item active" onclick="jumpEditor('editorBasic')"><span>01</span> 基本信息</button><button type="button" data-section="editorConnection" class="editor-nav-item" onclick="jumpEditor('editorConnection')"><span>02</span> 连接与认证</button><button type="button" data-section="editorModels" class="editor-nav-item" onclick="jumpEditor('editorModels')"><span>03</span> 模型访问</button><button type="button" data-section="editorRouting" class="editor-nav-item" onclick="jumpEditor('editorRouting')"><span>04</span> 调度策略</button><div class="editor-nav-note"><svg class="icon"><use href="#i-info"/></svg><p>配置清晰，<br>连接更稳定。</p><small>保存后，新配置立即生效。</small></div></aside>
+        <div id="editorScroll" class="editor-scroll">
+          <section id="editorBasic" class="editor-section"><div class="editor-section-heading"><span>01</span><div><h3>基本信息</h3><p>一个名称，辨识每一条连接。</p></div></div><div class="form-grid"><label class="field"><span>上游名称 <span class="required">*</span></span><input id="editName" placeholder="例如：团队 Claude 主账号" required maxlength="120"></label><label class="field"><span>接口类型</span><select id="editType" onchange="updateEditorProvider()"><option value="openai">OpenAI 兼容</option><option value="anthropic">Claude / Anthropic</option><option value="gemini">Gemini</option></select></label></div><div id="providerHint" class="field-hint">支持 OpenAI、DeepSeek、Grok 等兼容接口。</div></section>
+          <section id="editorConnection" class="editor-section"><div class="editor-section-heading"><span>02</span><div><h3>连接与认证</h3><p>安全地连接你的模型服务。</p></div></div><label class="field"><span>Base URL <span class="required">*</span></span><input id="editBase" type="url" placeholder="https://api.anthropic.com" spellcheck="false" required><small>填写服务根地址，无需添加 /v1 或 /v1beta。</small></label><label class="field"><span>API 密钥 <span id="editKeyRequired" class="required">*</span></span><span class="secret-field"><input id="editKey" type="password" placeholder="输入上游 API 密钥" spellcheck="false" autocomplete="off"><button id="revealKeyButton" type="button" class="icon-btn" onclick="toggleKeyVisibility()" aria-label="显示 API 密钥" aria-pressed="false"><svg class="icon"><use href="#i-eye"/></svg></button></span><small id="editKeyHint">留空会保留当前密钥；填写新密钥将替换原密钥。</small></label></section>
+          <section id="editorModels" class="editor-section"><div class="editor-section-heading"><span>03</span><div><h3>模型访问</h3><p>按当前接口类型和 Key 获取模型，再勾选白名单。</p></div><button id="probeEditorButton" type="button" class="btn mini ghost" onclick="probeEditUpstream()"><svg class="icon"><use href="#i-refresh"/></svg> 获取当前 Key 模型</button></div><label class="field"><span>模型白名单 <span class="optional">可选</span></span><textarea id="editModels" rows="2" placeholder="claude-sonnet-4-20250514, claude-opus-4-20250514" spellcheck="false" oninput="onModelsInput()"></textarea><small>模型名用逗号分隔。留空允许全部模型；建议明确指定，方便准确路由。</small></label><div id="selectedModelChips" class="model-chips" aria-label="白名单模型"></div><p id="editProbeInfo" class="probe-info" role="status"></p><div id="editProbeArea" class="model-picker hidden"><div class="model-picker-toolbar"><label class="search-field"><svg class="icon"><use href="#i-search"/></svg><input id="editProbeFilter" placeholder="搜索模型…" aria-label="筛选可用模型" oninput="renderEditProbeList()"></label><button type="button" class="text-btn" onclick="selectAllEditProbe(true)">全选</button><button type="button" class="text-btn" onclick="selectAllEditProbe(false)">清空</button><span id="editProbeCount" class="muted"></span></div><div id="editProbeList" class="probe-box"></div></div><details id="modelMapDetails" class="advanced-options"><summary><svg class="icon"><use href="#i-code"/></svg> 模型映射 <span class="optional">高级选项</span><svg class="icon"><use href="#i-chevron"/></svg></summary><div class="field"><div class="field-label-row"><label for="editModelMap">映射规则 · JSON</label><button type="button" class="text-btn" onclick="formatJSON('editModelMap')">格式化</button></div><textarea id="editModelMap" class="code-input" rows="4" placeholder='{"gpt-4o": "deepseek-chat"}' spellcheck="false" oninput="validateModelMap()" aria-describedby="modelMapHint modelMapError"></textarea><small id="modelMapHint">将请求中的模型名映射为上游模型名。</small><small id="modelMapError" class="form-error hidden" role="alert"></small></div></details></section>
+          <section id="editorRouting" class="editor-section"><div class="editor-section-heading"><span>04</span><div><h3>调度策略</h3><p>决定这条连接如何参与请求分配。</p></div></div><div class="routing-grid"><label class="field"><span>分配权重</span><input id="editWeight" type="number" min="0" step="1" value="1" required><small>权重越高，分配的请求越多。</small></label><label id="editEnabledRow" class="switch-row"><span><strong>启用此上游</strong><small>允许接收新的请求</small></span><input id="editEnabled" type="checkbox" class="switch-input" checked><span class="switch-track"></span></label><div id="createEnabledNote" class="inline-note hidden"><svg class="icon"><use href="#i-check"/></svg> 创建后自动启用</div></div></section>
+          <p id="editorError" class="form-error editor-error hidden" role="alert"></p>
+        </div>
+      </div>
+      <footer class="editor-footer"><div id="editorSaveStatus" class="editor-save-status"><span class="status-dot"></span><span>所有修改已保存</span></div><div class="editor-footer-actions"><span class="shortcut-hint"><kbd>Ctrl</kbd> <kbd>↵</kbd> 保存</span><button type="button" class="btn ghost" onclick="closeEdit()">取消</button><button id="editorSaveButton" type="submit" class="btn"><svg class="icon"><use href="#i-check"/></svg><span id="editorSaveLabel">保存修改</span></button></div></footer>
+    </form>
+  </dialog>
+
+  <dialog id="actionDialog" class="action-dialog" aria-labelledby="actionHeading"><form id="actionForm"><div class="action-dialog-header"><span class="section-icon"><svg class="icon"><use href="#i-info"/></svg></span><button type="button" class="icon-btn" onclick="resolveAction(false)" aria-label="关闭对话框"><svg class="icon"><use href="#i-close"/></svg></button></div><h2 id="actionHeading"></h2><p id="actionDescription"></p><label id="actionInputField" class="field hidden"><span id="actionInputLabel">总额度 · USD</span><input id="actionInput" type="number" min="0" step="0.01" required></label><div class="form-actions"><button type="button" class="btn ghost" onclick="resolveAction(false)">取消</button><button id="actionConfirm" type="submit" class="btn">确认</button></div></form></dialog>
+  <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="false"></div>
+  <script src="static/deployment.js"></script>
+  <script src="static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#faf9f5">
+  <meta name="description" content="查看共享 API 的余量、模型用量与真实调用可用率。">
+  <title>API 分发 · 用量与模型状态</title>
+  <script>
+    (() => {
+      if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      document.documentElement.classList.add("motion-ready");
+      document.documentElement.classList.add("intro-active");
+    })();
+  </script>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23c47d60'/%3E%3Cpath d='M16 7 5 13l11 6 11-6-11-6ZM5 18l11 6 11-6M5 23l11 6 11-6' fill='none' stroke='%232e2b24' stroke-width='1.8' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/public/static/home.css">
+  <link rel="preload" href="/public/static/fonts/space-grotesk.ttf" as="font" type="font/ttf" crossorigin>
+  <script src="/public/static/home.js" defer></script>
+  <script src="/public/static/motion.js" defer></script>
+  <script src="/public/static/scene.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#overview">跳到服务概况</a>
+  <svg class="symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="layers" viewBox="0 0 24 24"><path d="m12 3 10 5-10 5L2 8l10-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/></symbol>
+    <symbol id="arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+    <symbol id="refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 6a8 8 0 0 1 14 6M4 12a8 8 0 0 0 14 6"/></symbol>
+    <symbol id="token" viewBox="0 0 24 24"><path d="m12 2 9 5v10l-9 5-9-5V7l9-5Z"/><path d="m3 7 9 5 9-5m-9 5v10"/></symbol>
+    <symbol id="activity" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></symbol>
+    <symbol id="wallet" viewBox="0 0 24 24"><path d="M20 7V4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h16V7H5a1 1 0 0 1 0-2"/><path d="M21 12h-6v5h6m-3-2.5h.01"/></symbol>
+    <symbol id="shield" viewBox="0 0 24 24"><path d="m12 3 8 4v5c0 5-8 9-8 9s-8-4-8-9V7l8-4Z"/><path d="m8 12 3 3 5-6"/></symbol>
+    <symbol id="search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+    <symbol id="copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></symbol>
+    <symbol id="clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  </svg>
+  <main>
+    <div id="heroStage" class="hero-stage">
+    <section id="firstScreen" class="first-screen" aria-labelledby="heroTitle">
+      <div class="ambient-field" aria-hidden="true">
+        <div class="scene-wash wash-clay"></div><div class="scene-wash wash-sand"></div>
+        <canvas id="particleScene" class="particle-scene"></canvas>
+        <div class="scene-grain"></div>
+      </div>
+      <div class="hero-readout">
+        <h1 id="heroTitle" class="token-total"><span class="token-prefix">累计 Token 用量</span><strong id="heroTokens" aria-hidden="true">—</strong></h1>
+        <p id="heroTokenNote" class="token-unit">正在读取 Token 用量</p>
+        <p class="hero-caption" aria-hidden="true">A little more possibility, with every token.</p>
+      </div>
+      <div class="hero-bottom">
+        <p id="heroDataStatus" class="hero-data-status">正在读取共享数据</p>
+        <a class="scroll-cue" href="#overview"><span>下滑查看用量</span><svg class="icon" aria-hidden="true"><use href="#arrow"/></svg></a>
+        <button id="heroMotion" class="hero-motion-toggle" type="button" aria-pressed="true">暂停动画</button>
+      </div>
+    </section>
+    </div>
+    <div class="model-ribbon"><span class="ribbon-label"><svg class="icon" aria-hidden="true"><use href="#layers"/></svg> 模型目录</span><p class="today-models"><span id="todayModels">正在读取模型…</span></p><span class="ribbon-tail" aria-hidden="true">ONE API. MORE IDEAS. ↗</span></div>
+    <div class="container">
+    <section id="overview" class="overview" aria-labelledby="pageTitle" tabindex="-1">
+      <div class="hero">
+        <div><p class="eyebrow">01 / THE BIG PICTURE</p><h2 id="pageTitle">每一份用量，都有迹可循。</h2><p class="hero-description">共享余量、调用趋势与真实反馈，一目了然。</p></div>
+        <div class="hero-status"><span id="overallStatus" class="status-badge idle"><span class="dot"></span>正在读取状态</span><span id="updatedAt">等待首次更新</span></div>
+      </div>
+      <div id="errorBanner" class="error-banner hidden" role="alert"></div>
+      <div class="metrics" aria-label="服务用量概况">
+        <article class="metric balance-metric"><div class="metric-label"><span>剩余可用额度</span><svg class="icon"><use href="#wallet"/></svg></div><div id="remainingAmount" class="metric-value">—</div><div class="balance-details"><span id="balanceHint">正在读取余量</span><span id="balancePercent"></span></div><div id="balanceTrack" class="balance-track hidden" role="meter" aria-label="剩余可用额度百分比" aria-valuemin="0" aria-valuemax="100"><span></span></div></article>
+        <article class="metric"><div class="metric-label"><span>累计 Token 用量</span><svg class="icon"><use href="#token"/></svg></div><div id="totalTokens" class="metric-value">—</div><p id="tokenDetail" class="metric-foot">输入 + 输出</p></article>
+        <article class="metric"><div class="metric-label"><span>累计调用</span><svg class="icon"><use href="#activity"/></svg></div><div id="totalCalls" class="metric-value">—</div><p id="callDetail" class="metric-foot">真实请求记录</p></article>
+        <article class="metric"><div class="metric-label"><span>近 24 小时 Uptime</span><svg class="icon"><use href="#shield"/></svg></div><div id="totalUptime" class="metric-value">—</div><p class="metric-foot">按真实请求成功率计算</p></article>
+      </div>
+    </section>
+    <section class="analytics" aria-label="模型使用情况">
+      <article class="surface trend-card">
+        <div class="section-heading"><div><p class="eyebrow">USAGE OVER TIME</p><h2>每一天的调用足迹</h2></div><div class="segmented" role="group" aria-label="趋势统计方式"><button id="trendCalls" type="button" aria-pressed="true" data-metric="calls">调用次数</button><button id="trendTokens" type="button" aria-pressed="false" data-metric="tokens">Token 用量</button></div></div>
+        <div class="trend-summary"><strong id="weeklyAmount">—</strong><span id="weeklyUnit">近 7 天调用</span><span id="chartDates"></span></div>
+        <div id="trendChart" class="trend-chart"><p class="loading-note">正在读取用量趋势…</p></div>
+        <div class="chart-foot"><span><i class="legend-dot"></i><span id="chartLegend">调用次数</span></span><span>最近 7 天</span></div>
+      </article>
+      <article class="surface usage-card">
+        <div class="section-heading"><div><p class="eyebrow">WHERE TOKENS GO</p><h2>模型用量分布</h2></div><svg class="icon"><use href="#layers"/></svg></div>
+        <p class="section-description">累计输入与输出 Token</p>
+        <div id="usageList" class="usage-list"><p class="loading-note">正在读取模型用量…</p></div>
+        <div id="usageRest" class="usage-rest"></div>
+      </article>
+    </section>
+    <section id="models" class="models-section" aria-labelledby="modelsHeading">
+      <div class="models-intro"><div><p class="eyebrow">02 / CONNECTED POSSIBILITIES</p><h2 id="modelsHeading">模型与服务状态 <span id="modelCount" class="count">—</span></h2><p>状态与 Uptime 来自最近 24 小时的真实调用，支持按小时或分钟查看。</p></div><div class="model-filters"><label class="search-field"><svg class="icon"><use href="#search"/></svg><input id="modelSearch" type="search" placeholder="搜索模型或提供方" aria-label="搜索模型或提供方"></label><select id="statusFilter" aria-label="按模型状态筛选"><option value="">全部状态</option><option value="operational">运行正常</option><option value="incident">最近调用失败</option><option value="idle">暂无近期调用</option></select></div></div>
+      <div class="uptime-controls"><div class="segmented" role="group" aria-label="Uptime 记录粒度"><button id="uptimeHour" type="button" aria-pressed="true" data-history-interval="hour">按小时</button><button id="uptimeMinute" type="button" aria-pressed="false" data-history-interval="minute">按分钟</button></div><p id="uptimeWindowLabel" aria-live="polite">最近 24 小时 · 每格 1 小时</p></div>
+      <div class="status-legend" aria-label="状态图例"><span><i class="dot green"></i>调用成功</span><span><i class="dot amber"></i>部分请求失败</span><span><i class="dot red"></i>调用失败</span><span><i class="dot gray"></i>无调用记录</span><span class="legend-explanation">灰色时段不计入成功率</span></div>
+      <div class="model-console"><div class="models-grid-head" aria-hidden="true"><span>模型 / 最新反馈</span><span>请求轨迹 / 24 小时</span><span>Uptime</span><span>累计用量</span><span></span></div><div id="modelsGrid" class="models-grid"><div class="empty-state"><svg class="icon"><use href="#layers"/></svg><h3>正在读取模型状态</h3><p>真实数据即将显示。</p></div></div></div>
+      <p class="uptime-note"><svg class="icon"><use href="#clock"/></svg> Uptime = 成功请求 ÷ 总请求。未发生调用时，显示灰色；历史可用率不代表当前持续在线。</p>
+    </section>
+    <section class="connection-strip" aria-label="服务接入地址"><div class="connection-icon"><svg class="icon"><use href="#layers"/></svg></div><div><h2>统一 API 接入地址</h2><p>兼容 OpenAI、Anthropic 与 Gemini 格式。</p></div><button id="copyAddress" class="button secondary" type="button"><svg class="icon"><use href="#copy"/></svg>复制 OpenAI 接入地址</button></section>
+    <footer class="site-footer"><span>API 调用分发 <span class="footer-divider">/</span> 共享用量与模型状态</span><div class="refresh-controls"><button id="ambientMotion" type="button" aria-pressed="true">暂停页面动画</button><span id="refreshNote" aria-live="polite">每 30 秒更新</span><button id="autoRefresh" type="button" aria-pressed="true">暂停自动更新</button><button id="refreshNow" type="button"><svg class="icon"><use href="#refresh"/></svg>刷新</button></div></footer>
+    </div>
+  </main>
+  <dialog id="historyDialog" class="history-dialog" aria-labelledby="historyHeading" aria-describedby="historyDescription"><div class="dialog-heading"><div><p class="eyebrow">24-HOUR REQUEST HISTORY</p><h2 id="historyHeading"></h2></div><button id="closeHistory" class="icon-button" type="button" aria-label="关闭调用历史"><svg class="icon"><use href="#close"/></svg></button></div><p id="historyDescription">最近 24 小时的真实调用结果。灰色时段表示没有调用。</p><div id="historyHourControl" class="history-hour-control hidden"><label for="historyHour">查看时段</label><select id="historyHour"></select></div><div class="history-scroll"><table><thead><tr><th scope="col">时间段</th><th scope="col">调用</th><th scope="col">成功</th><th scope="col">Uptime</th></tr></thead><tbody id="historyRows"></tbody></table></div></dialog>
+  <div id="toast" class="toast hidden" role="status"></div>
+</body>
+</html>

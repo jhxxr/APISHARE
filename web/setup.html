@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f8fb">
+  <title>API Share · 首次部署配置</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23e7f5ee'/%3E%3Cpath d='M16 7 5 13l11 6 11-6-11-6ZM5 18l11 6 11-6M5 23l11 6 11-6' fill='none' stroke='%23047857' stroke-width='1.8' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="static/style.css">
+</head>
+<body class="setup-page">
+  <a class="skip-link" href="#setupContent">跳到配置表单</a>
+  <svg class="icon-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 2v20M2 12h20M5 5l14 14M5 19L19 5M8 3l8 18M3 8l18 8M3 16l18-8M8 21l8-18"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="9" r="5"/><path d="m12 12 9 9m-3-3 3-3m-6 0 3-3"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 10 5-10 5L2 8l10-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/></symbol>
+    <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h5m4 0h7M4 17h9m4 0h3"/><circle cx="11" cy="7" r="2"/><circle cx="15" cy="17" r="2"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 6a8 8 0 0 1 14 6M4 12a8 8 0 0 0 14 6"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="m9 15 6-6m-6 8-2 2a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2-2 2-2a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-code" viewBox="0 0 24 24"><path d="m7 6-6 6 6 6m10-12 6 6-6 6M14 3l-4 18"/></symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 4H4v16h5m5-13 5 5-5 5M8 12h13"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.01"/></symbol>
+    <symbol id="i-wallet" viewBox="0 0 24 24"><path d="M20 7V4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h16V7H5a1 1 0 0 1 0-2"/><path d="M21 12h-6v5h6m-3-2.5h.01"/></symbol>
+    <symbol id="i-token" viewBox="0 0 24 24"><path d="m12 2 9 5v10l-9 5-9-5V7l9-5Z"/><path d="m3 7 9 5 9-5m-9 5v10"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="m15 4 5 5M4 20l4-1L21 6a2 2 0 0 0-4-4L4 15l-1 6 5-2"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z"/><path d="m8 12 3 3 5-6"/></symbol>
+  </svg>
+
+  <header class="setup-header"><div class="login-brand"><span class="brand-mark"><svg class="icon"><use href="#i-layers"/></svg></span><span>API Share</span></div><span class="setup-step">首次部署 · 创建管理员</span></header>
+  <main id="setupContent" class="setup-main" tabindex="-1">
+        <section id="setupPanel" class="panel">
+          <div class="page-heading deployment-heading"><div><span class="eyebrow">DEPLOYMENT CONFIGURATION</span><h1 id="deploymentTitle">完成部署配置</h1><p id="deploymentDescription">设置管理员密码与专属后台入口。</p></div><span class="deployment-badge"><svg class="icon"><use href="#i-check"/></svg> 服务已部署</span></div>
+          <div id="deploymentWelcome" class="deployment-welcome"><span class="section-icon"><svg class="icon"><use href="#i-shield"/></svg></span><div><strong>欢迎使用 API Share</strong><p>先设置登录密码和后台路径。完成后，即可添加上游服务并分发 API 密钥。</p></div></div>
+          <div id="deploymentSuccess" class="deployment-success hidden" role="status"><svg class="icon"><use href="#i-check"/></svg><span>配置已保存，新的后台入口已生效。</span><button type="button" class="text-btn" onclick="location.href='/'">进入概览 <svg class="icon"><use href="#i-arrow"/></svg></button></div>
+          <button id="setupRetry" type="button" class="btn ghost hidden" onclick="loadDeployment()">重新加载配置</button>
+          <div class="deployment-layout">
+            <form id="deploymentForm" class="card-block deployment-form" onsubmit="return saveDeployment(event)">
+              <fieldset id="deploymentFields" disabled>
+                <section class="deployment-section" aria-labelledby="deploymentPasswordHeading">
+                  <div class="deployment-section-heading"><span class="deployment-number">01</span><div><h2 id="deploymentPasswordHeading">管理员密码</h2><p id="deploymentPasswordHint">创建用于登录管理后台的密码。</p></div><button id="deploymentReveal" type="button" class="text-btn" onclick="toggleDeploymentPasswords()" aria-label="显示新密码和确认密码" aria-pressed="false"><svg class="icon"><use href="#i-eye"/></svg><span>显示密码</span></button></div>
+                  <div class="deployment-password-grid">
+                    <div class="field"><label for="deploymentNewPassword">新管理员密码</label><input id="deploymentNewPassword" type="password" required autocomplete="new-password" placeholder="至少 12 个字符" aria-describedby="deploymentLengthHint deploymentNewPasswordError"><small id="deploymentNewPasswordError" class="form-error hidden" role="alert"></small></div>
+                    <div class="field"><label for="deploymentConfirmPassword">确认新密码</label><input id="deploymentConfirmPassword" type="password" required autocomplete="new-password" placeholder="再次输入新密码" aria-describedby="deploymentConfirmPasswordError"><small id="deploymentConfirmPasswordError" class="form-error hidden" role="alert"></small></div>
+                  </div>
+                  <div class="deployment-password-hint"><svg class="icon"><use href="#i-key"/></svg><small id="deploymentLengthHint">至少 12 个字符，最多 72 字节；支持粘贴和密码管理器。</small></div>
+                </section>
+                <section class="deployment-section" aria-labelledby="deploymentPathHeading">
+                  <div class="deployment-section-heading"><span class="deployment-number">02</span><div><h2 id="deploymentPathHeading">后台访问路径</h2><p>为管理后台设置一个容易记住的专属入口。</p></div></div>
+                  <div class="field"><div class="field-label-row"><label for="deploymentAdminPath">后台路径</label><button type="button" class="text-btn" onclick="generateAdminPath()"><svg class="icon"><use href="#i-refresh"/></svg> 随机生成</button></div><div class="deployment-path-input"><span aria-hidden="true">/</span><input id="deploymentAdminPath" type="text" placeholder="例如：console-a7f3" required maxlength="64" autocomplete="off" spellcheck="false" autocapitalize="none" aria-describedby="deploymentPathHint deploymentAdminPathError"></div><small id="deploymentPathHint">3–64 位字母、数字、短横线或下划线，以字母或数字开头。</small><small id="deploymentAdminPathError" class="form-error hidden" role="alert"></small></div>
+                  <div class="deployment-path-note"><svg class="icon"><use href="#i-info"/></svg><p>保存后将自动进入此后台地址。请收藏入口，后续登录使用你设置的路径。</p></div>
+                </section>
+                <section class="deployment-section deployment-verification" aria-label="完成配置">
+                  <p id="deploymentError" class="form-error hidden" role="alert" tabindex="-1"></p>
+                  <div class="deployment-actions"><p>保存后自动进入你的管理后台。</p><button id="deploymentSave" type="submit" class="btn"><svg class="icon"><use href="#i-check"/></svg><span>完成配置并进入后台</span></button></div>
+                </section>
+              </fieldset>
+            </form>
+            <aside class="deployment-side" aria-label="部署配置预览">
+              <div class="card-block deployment-preview"><span class="deployment-preview-icon"><svg class="icon"><use href="#i-link"/></svg></span><span class="eyebrow">YOUR ADMIN ENTRANCE</span><h2>你的后台入口</h2><p>保存后，通过下方地址管理工作空间。</p><div class="deployment-url"><span id="deploymentOrigin"></span><strong id="deploymentPreviewPath">正在加载…</strong></div><button id="deploymentCopy" type="button" class="btn ghost" onclick="copyDeploymentURL()" disabled><svg class="icon"><use href="#i-copy"/></svg> 复制入口地址</button><span id="deploymentPreviewStatus" class="deployment-preview-status" role="status">正在读取配置…</span></div>
+              <div class="card-block deployment-notes"><h2>配置说明</h2><div><svg class="icon"><use href="#i-key"/></svg><p><strong>密码安全保存</strong><span>设置的密码用于后续登录，请妥善保存。</span></p></div><div><svg class="icon"><use href="#i-refresh"/></svg><p><strong>重启后依然有效</strong><span>配置保存后，重新打开首页会直接显示服务信息。</span></p></div><div><svg class="icon"><use href="#i-link"/></svg><p><strong>API 接入地址保持一致</strong><span>后台入口调整不会影响现有 API 密钥及模型调用地址。</span></p></div></div>
+            </aside>
+          </div>
+        </section>
+    <noscript><p class="form-error">请启用 JavaScript 后完成部署配置。</p></noscript>
+  </main>
+  <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="false"></div>
+  <script src="static/deployment.js"></script>
+  <script src="static/setup.js"></script>
+</body>
+</html>

@@ -1,0 +1,55 @@
+# Go 编译产物（仅忽略根目录同名程序，保留 cmd/mockupstream 源码）
+/apishare
+/mockupstream
+*.exe
+*.test
+/bin/
+/build/
+/dist/
+*.dll
+*.so
+*.dylib
+
+# 本地 SQLite 数据及其事务、共享内存文件
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.db-journal
+*.sqlite-journal
+*.sqlite3-journal
+/data/
+
+# 运行日志、测试覆盖率及临时文件
+*.log
+/logs/
+/coverage/
+/coverage.out
+/coverage.html
+/output/
+/.playwright-cli/
+*.prof
+*.tmp
+*.swp
+*.swo
+*~
+*.bak
+
+# 本地环境配置可能包含密码、密钥；保留可共享的配置示例
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+!.env.*.example
+
+# 编辑器本地配置与系统缓存
+.idea/
+.vscode/
+.fleet/
+.zcodeignore
+.DS_Store
+Thumbs.db
+Desktop.ini
