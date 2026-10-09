@@ -4,7 +4,15 @@ const $ = (id) => document.getElementById(id);
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
 const icon = (name) => '<svg class="icon" aria-hidden="true"><use href="#i-' + name + '"/></svg>';
 const fmtUSD = (value) => "$" + Number(value || 0).toFixed(4);
-const fmtTime = (value) => (value || "").replace("T", " ").slice(0, 19);
+const fmtTime = (value) => {
+  const date = new Date(value);
+  if (!value || Number.isNaN(date.getTime())) return (value || "").replace("T", " ").slice(0, 19);
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+  }).formatToParts(date).map(({ type, value }) => [type, value]));
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+};
 const number = (value) => Number(value || 0).toLocaleString("zh-CN");
 const providerNames = { openai: "OpenAI 兼容", anthropic: "Anthropic", gemini: "Gemini" };
 const providerURLs = { openai: "https://api.openai.com", anthropic: "https://api.anthropic.com", gemini: "https://generativelanguage.googleapis.com" };
@@ -72,7 +80,7 @@ async function api(path, options = {}) {
   return data;
 }
 function stampRefresh() {
-  $("lastRefreshed").textContent = "更新于 " + new Date().toLocaleTimeString("zh-CN", { hour12: false });
+  $("lastRefreshed").textContent = "更新于 " + new Date().toLocaleTimeString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
 }
 function emptyRow(columns, title, description = "", action = "", label = "", glyph = "layers") {
   return '<tr><td colspan="' + columns + '"><div class="table-empty">' + icon(glyph) + "<strong>" + esc(title) + "</strong><p>" + esc(description) + "</p>" + (action ? '<button class="btn ghost" onclick="' + action + '">' + icon("plus") + esc(label) + "</button>" : "") + "</div></td></tr>";
@@ -208,7 +216,14 @@ window.addEventListener("hashchange", followHistory);
 
 /* Overview: only values returned by the gateway are shown. */
 function dateKey(date) {
-  return date.getFullYear() + "-" + String(date.getMonth() + 1).padStart(2, "0") + "-" + String(date.getDate()).padStart(2, "0");
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(date).map(({ type, value }) => [type, value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+function addDays(date, offset) {
+  const [year, month, day] = date.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + offset)).toISOString().slice(0, 10);
 }
 async function loadStats() {
   const version = requestVersions.stats = (requestVersions.stats || 0) + 1;
@@ -239,9 +254,9 @@ function setChartMetric(metric) {
 function renderChart() {
   if (!statsCache) return;
   const byDate = new Map((statsCache.daily || []).map((day) => [day.date, day]));
+  const today = dateKey(new Date());
   const days = Array.from({ length: 7 }, (_, i) => {
-    const date = new Date(); date.setDate(date.getDate() - 6 + i);
-    const key = dateKey(date);
+    const key = addDays(today, -6 + i);
     return byDate.get(key) || { date: key, calls: 0, cost_usd: 0 };
   });
   const cost = chartMetric === "cost";
@@ -813,7 +828,7 @@ window.addEventListener("resize", () => {
   resizeFrame = requestAnimationFrame(() => { resizeFrame = 0; syncSidebar(); if (activeTab === "dashboard") renderChart(); });
 });
 document.querySelectorAll("svg.icon").forEach((svg) => { svg.setAttribute("aria-hidden", "true"); svg.setAttribute("focusable", "false"); });
-$("todayLabel").textContent = new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "long" });
+$("todayLabel").textContent = new Date().toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai", month: "long", day: "numeric", weekday: "long" });
 initDeployment();
 initOutboundProxies();
 syncSidebar();

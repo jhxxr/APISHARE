@@ -174,6 +174,7 @@ func publicRows(tx *sql.Tx, query string, scan func(*sql.Rows) error, args ...an
 	return rows.Err()
 }
 func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error) {
+	now = now.In(beijingLocation)
 	bucketSize := time.Hour
 	switch interval {
 	case "hour":
@@ -235,7 +236,7 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 		HistoryInterval: interval, HistoryWindowMinutes: int(bucketSize/time.Minute) * bucketCount,
 		Daily: make([]PublicDay, 30), Usage: []PublicUsage{}, Models: []PublicModel{}}
 	dayIndex := make(map[string]int)
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, beijingLocation)
 	for i := range result.Daily {
 		date := today.AddDate(0, 0, i-29).Format("2006-01-02")
 		result.Daily[i].Date = date
@@ -285,11 +286,11 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 	if err != nil {
 		return nil, err
 	}
-	err = publicRows(tx, `SELECT substr(l.created_at,1,10),COUNT(*),
+	err = publicRows(tx, `SELECT date(l.created_at,'+8 hours'),COUNT(*),
  SUM(CASE WHEN l.status BETWEEN 200 AND 299 THEN 1 ELSE 0 END),
  COALESCE(SUM(l.prompt_tokens),0),COALESCE(SUM(l.completion_tokens),0)
  FROM call_logs l JOIN api_keys k ON k.id=l.key_id AND k.show_on_home=1
- WHERE l.created_at>=? GROUP BY substr(l.created_at,1,10)`,
+ WHERE unixepoch(l.created_at)>=? AND unixepoch(l.created_at)<? GROUP BY date(l.created_at,'+8 hours')`,
 		func(rows *sql.Rows) error {
 			var day PublicDay
 			if err := rows.Scan(&day.Date, &day.Calls, &day.Successes, &day.PromptTokens, &day.CompletionTokens); err != nil {
@@ -305,7 +306,7 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 			all.PromptTokens += day.PromptTokens
 			all.CompletionTokens += day.CompletionTokens
 			return nil
-		}, today.AddDate(0, 0, -29).Format(time.RFC3339))
+		}, today.AddDate(0, 0, -29).Unix(), today.AddDate(0, 0, 1).Unix())
 	if err != nil {
 		return nil, err
 	}

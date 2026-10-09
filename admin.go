@@ -458,13 +458,14 @@ func registerAdminRoutes(r *gin.Engine) {
 
 	// ---------- Stats ----------
 	auth.GET("/stats", func(c *gin.Context) {
-		today := time.Now().Format("2006-01-02")
+		now := beijingNow()
+		todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, beijingLocation)
 		var calls int
 		var pt, ct int64
 		var cost float64
 		db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0),
-			COALESCE(SUM(cost_usd),0) FROM call_logs WHERE status BETWEEN 200 AND 299 AND created_at >= ?`,
-			today).Scan(&calls, &pt, &ct, &cost)
+			COALESCE(SUM(cost_usd),0) FROM call_logs WHERE status BETWEEN 200 AND 299 AND unixepoch(created_at) >= ?`,
+			todayStart.Unix()).Scan(&calls, &pt, &ct, &cost)
 
 		var keysCount, upsCount int
 		db.QueryRow(`SELECT COUNT(*) FROM api_keys WHERE enabled=1`).Scan(&keysCount)
@@ -476,9 +477,10 @@ func registerAdminRoutes(r *gin.Engine) {
 			CostUSD float64 `json:"cost_usd"`
 		}
 		var daily []dailyRow
-		rows, err := db.Query(`SELECT substr(created_at,1,10) d, COUNT(*), COALESCE(SUM(cost_usd),0)
-			FROM call_logs WHERE status BETWEEN 200 AND 299 AND created_at >= ?
-			GROUP BY d ORDER BY d`, time.Now().AddDate(0, 0, -6).Format("2006-01-02"))
+		weekStart := todayStart.AddDate(0, 0, -6)
+		rows, err := db.Query(`SELECT date(created_at,'+8 hours') d, COUNT(*), COALESCE(SUM(cost_usd),0)
+			FROM call_logs WHERE status BETWEEN 200 AND 299 AND unixepoch(created_at) >= ? AND unixepoch(created_at) < ?
+			GROUP BY d ORDER BY d`, weekStart.Unix(), todayStart.AddDate(0, 0, 1).Unix())
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {

@@ -152,7 +152,10 @@ CREATE TABLE IF NOT EXISTS session_affinity (
 	if !hasProxy {
 		_, err = db.Exec(`ALTER TABLE upstreams ADD COLUMN proxy_id INTEGER NOT NULL DEFAULT 0`)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	return migrateTimestampsToBeijing()
 }
 
 // ---------- models ----------
@@ -202,7 +205,38 @@ type CallLog struct {
 	CreatedAt        string  `json:"created_at"`
 }
 
-func nowStr() string { return time.Now().Format(time.RFC3339) }
+func nowStr() string { return beijingNow().Format(time.RFC3339) }
+
+func migrateTimestampsToBeijing() error {
+	const migrationKey = "migration_timestamps_beijing_v1"
+	var applied string
+	err := db.QueryRow(`SELECT v FROM settings WHERE k=?`, migrationKey).Scan(&applied)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, table := range []string{"api_keys", "upstreams", "outbound_proxies", "call_logs"} {
+		query := `UPDATE ` + table + `
+			SET created_at=strftime('%Y-%m-%dT%H:%M:%f+08:00',created_at,'+8 hours')
+			WHERE created_at<>'' AND substr(created_at,-6)<> '+08:00'
+			AND julianday(created_at) IS NOT NULL`
+		if _, err := tx.Exec(query); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`INSERT INTO settings(k,v) VALUES(?,?)`, migrationKey, "1"); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
 
 func boolToInt(b bool) int {
 	if b {

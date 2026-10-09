@@ -117,7 +117,7 @@ function renderOverview() {
  const state=overview.models.some(m=>m.status==="incident")?"incident":overview.models.some(m=>m.status==="operational")?"operational":"idle";
  $("overallStatus").className="status-badge "+state;
  $("overallStatus").innerHTML='<span class="dot"></span>'+({incident:"有模型最近调用异常",operational:"模型服务运行中",idle:"等待真实调用反馈"}[state]);
- $("updatedAt").textContent="更新于 "+new Date(overview.updated_at).toLocaleTimeString("zh-CN",{hour12:false,hour:"2-digit",minute:"2-digit",second:"2-digit"});
+ $("updatedAt").textContent="更新于 "+new Date(overview.updated_at).toLocaleTimeString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false,hour:"2-digit",minute:"2-digit",second:"2-digit"});
  $("heroDataStatus").textContent=$("updatedAt").textContent;$("heroDataStatus").classList.remove("is-stale");
  $("modelCount").textContent=overview.models.length;
  renderTrend();renderUsage();renderModels();
@@ -153,7 +153,7 @@ function renderUsage() {
  window.pageMotion?.drawUsage();
 }
 function historyTime(value,withDate=true,withSeconds=false) {
- return new Date(value).toLocaleString("zh-CN",{...(withDate?{month:"2-digit",day:"2-digit"}:{}),hour:"2-digit",minute:"2-digit",...(withSeconds?{second:"2-digit"}:{}),hourCycle:"h23"});
+ return new Date(value).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",...(withDate?{month:"2-digit",day:"2-digit"}:{}),hour:"2-digit",minute:"2-digit",...(withSeconds?{second:"2-digit"}:{}),hourCycle:"h23"});
 }
 function intervalTitle(d) { return historyTime(d.start,true,true)+" – "+historyTime(d.end,true,true)+(d.calls?" · "+fmt(d.calls)+" 次调用 · "+rate(d.successes/d.calls*100):" · 无调用记录"); }
 function renderHistoryControls() {
