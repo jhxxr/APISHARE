@@ -35,8 +35,16 @@ func normalizeOutboundProxy(p *OutboundProxy) error {
 		return errors.New("代理名称必填，最多 120 个字符")
 	}
 	u, err := url.Parse(p.URL)
-	if err != nil || u.Hostname() == "" || u.User != nil || u.Opaque != "" || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
-		return errors.New("代理地址应为 协议://主机:端口；认证信息请填写在用户名和密码中")
+	if err != nil || u.Hostname() == "" || u.Opaque != "" || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return errors.New("代理地址应为 协议://主机:端口，或 协议://用户名:密码@主机:端口")
+	}
+	if u.User != nil {
+		p.Username = u.User.Username()
+		p.Password, _ = u.User.Password()
+		if p.Username == "" {
+			return errors.New("标准代理链接必须包含用户名")
+		}
+		u.User = nil
 	}
 	u.Scheme = strings.ToLower(u.Scheme)
 	switch u.Scheme {

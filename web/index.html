@@ -115,12 +115,15 @@
           <div id="proxyComposer" class="card-block composer hidden">
             <div class="block-heading"><div><h2 id="proxyComposerTitle">添加代理</h2><p>支持 HTTP、HTTPS、SOCKS5 与 SOCKS5h。</p></div><button type="button" class="icon-btn" onclick="closeProxyComposer()" aria-label="关闭代理表单"><svg class="icon"><use href="#i-close"/></svg></button></div>
             <form id="proxyForm" onsubmit="return saveProxy(event)">
-              <fieldset id="proxyFields" class="proxy-fields"><div class="form-grid">
+              <fieldset id="proxyFields" class="proxy-fields">
+                <label class="field proxy-import"><span>快速导入标准代理链接 <span class="optional">可选</span></span><div class="input-action"><input id="proxyImportURI" type="password" autocomplete="off" spellcheck="false" placeholder="socks5h://用户名:密码@主机:端口" aria-describedby="proxyImportHint proxyImportError"><button type="button" class="btn ghost" onclick="importProxyURI()">导入链接</button></div><small id="proxyImportHint">粘贴标准代理链接，自动拆分地址和认证信息；导入后不会保留完整链接。</small><small id="proxyImportError" class="form-error hidden" role="alert"></small></label>
+                <div class="form-grid">
                 <label class="field"><span>代理名称 <span class="required">*</span></span><input id="proxyName" required maxlength="120" placeholder="例如：香港出口"></label>
                 <label class="field"><span>代理地址 <span class="required">*</span></span><input id="proxyURL" type="text" inputmode="url" required spellcheck="false" placeholder="socks5://127.0.0.1:1080" aria-describedby="proxyURLHint" onblur="validateProxyURL()"><small id="proxyURLHint">协议://主机:端口，也支持 IPv6。用户名和密码在下方填写。</small></label>
                 <label class="field"><span>用户名 <span class="optional">可选</span></span><input id="proxyUsername" autocomplete="off" spellcheck="false" placeholder="无需认证时留空"></label>
                 <label class="field"><span>密码 <span class="optional">可选</span></span><input id="proxyPassword" type="password" autocomplete="new-password" aria-describedby="proxyPasswordHint"><small id="proxyPasswordHint">密码不会在列表中显示。</small></label>
-              </div><label class="check-label proxy-clear"><input id="proxyClearPassword" type="checkbox">清除已保存的密码</label></fieldset>
+                </div><label class="check-label proxy-clear"><input id="proxyClearPassword" type="checkbox">清除已保存的密码</label>
+              </fieldset>
               <p id="proxyFormError" class="form-error hidden" role="alert" tabindex="-1"></p>
               <div class="form-actions"><button type="button" class="btn ghost" onclick="closeProxyComposer()">取消</button><button id="proxySaveButton" type="submit" class="btn"><svg class="icon"><use href="#i-check"/></svg> 保存代理</button></div>
             </form>

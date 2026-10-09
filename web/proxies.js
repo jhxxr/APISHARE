@@ -49,9 +49,10 @@ function openProxyComposer(id = null) {
   if (id !== null && !item) { toast("代理不存在，请刷新后重试", "error"); return; }
   proxyEditID = id;
   $("proxyForm").reset();
+  $("proxyImportURI").value = "";
   $("proxyPassword").disabled = false;
   $("proxyForm").querySelectorAll(".form-error").forEach((error) => error.classList.add("hidden"));
-  ["proxyName", "proxyURL", "proxyUsername", "proxyPassword"].forEach((field) => { $(field).setCustomValidity(""); $(field).removeAttribute("aria-invalid"); });
+  ["proxyName", "proxyURL", "proxyUsername", "proxyPassword", "proxyImportURI"].forEach((field) => { $(field).setCustomValidity(""); $(field).removeAttribute("aria-invalid"); });
   $("proxyName").value = item?.name || "";
   $("proxyURL").value = item?.url || "";
   $("proxyUsername").value = item?.username || "";
@@ -66,20 +67,63 @@ function openProxyComposer(id = null) {
 function closeProxyComposer() {
   if (proxySaving) return;
   $("proxyComposer").classList.add("hidden");
+  $("proxyImportURI").value = "";
   $("proxyPassword").value = "";
   proxyEditID = null;
+}
+function parseProxyURI(value, allowCredentials = false) {
+  const raw = value.trim();
+  const parsed = new URL(raw);
+  if (!["http:", "https:", "socks5:", "socks5h:"].includes(parsed.protocol) || !parsed.hostname || parsed.search || parsed.hash || (parsed.pathname && parsed.pathname !== "/")) throw new Error();
+  const authority = raw.match(/^[a-z][a-z\d+.-]*:\/\/([^/?#]*)/i)?.[1] || "";
+  const hasCredentials = authority.includes("@");
+  if (hasCredentials && !allowCredentials) throw new Error();
+  const hostPort = authority.slice(authority.lastIndexOf("@") + 1);
+  const portMatch = hostPort.startsWith("[") ? hostPort.match(/^\[[^\]]+\]:(\d+)$/) : hostPort.match(/^[^:]+:(\d+)$/);
+  const port = parsed.port || portMatch?.[1];
+  if (!port || Number(port) < 1 || Number(port) > 65535 || !portMatch) throw new Error();
+  let username = "", password = "";
+  if (hasCredentials) {
+    username = decodeURIComponent(parsed.username);
+    password = decodeURIComponent(parsed.password);
+    if (!username) throw new Error();
+  }
+  return {
+    address: parsed.protocol + "//" + hostPort,
+    hostname: parsed.hostname.replace(/^\[|\]$/g, ""),
+    username,
+    password,
+  };
+}
+function importProxyURI() {
+  const field = $("proxyImportURI"), error = $("proxyImportError");
+  try {
+    const imported = parseProxyURI(field.value, true);
+    const existing = proxiesCache.find((proxy) => proxy.id === proxyEditID);
+    $("proxyURL").value = imported.address;
+    $("proxyUsername").value = imported.username;
+    if (!$("proxyName").value.trim()) $("proxyName").value = imported.hostname;
+    const clearSavedPassword = !!existing?.has_password && !imported.password;
+    $("proxyClearPassword").checked = clearSavedPassword;
+    $("proxyPassword").disabled = clearSavedPassword;
+    $("proxyPassword").value = clearSavedPassword ? "" : imported.password;
+    $("proxyURL").setCustomValidity("");
+    $("proxyURL").removeAttribute("aria-invalid");
+    error.classList.add("hidden");
+    field.value = "";
+    toast("代理链接已解析，请确认信息后保存");
+  } catch {
+    error.textContent = "链接格式无效，请使用 协议://用户名:密码@主机:端口 格式。";
+    error.classList.remove("hidden");
+    field.focus();
+  }
 }
 function validateProxyURL() {
   const field = $("proxyURL");
   let message = "";
   try {
-    const parsed = new URL(field.value.trim());
-    if (!["http:", "https:", "socks5:", "socks5h:"].includes(parsed.protocol) || !parsed.hostname || parsed.username || parsed.password || parsed.search || parsed.hash || (parsed.pathname && parsed.pathname !== "/")) throw new Error();
-    // URL normalizes standard HTTP(S) ports away, so inspect the original authority.
-    const authority = field.value.trim().split("://")[1]?.replace(/\/$/, "");
-    const port = authority?.match(/:(\d+)$/)?.[1];
-    if (!port || Number(port) < 1 || Number(port) > 65535) throw new Error();
-  } catch { message = "请输入 HTTP、HTTPS、SOCKS5 或 SOCKS5h 地址，例如 socks5://127.0.0.1:1080。"; }
+    parseProxyURI(field.value);
+  } catch { message = "请输入不含认证信息的代理地址；标准代理链接请使用上方快速导入。"; }
   field.setCustomValidity(message);
   field.setAttribute("aria-invalid", String(!!message));
   if (message) field.reportValidity();
@@ -128,6 +172,7 @@ async function deleteProxy(id) {
 }
 function initOutboundProxies() {
   $("proxyForm").addEventListener("input", (event) => { event.target.setCustomValidity?.(""); });
+  $("proxyImportURI").addEventListener("input", () => $("proxyImportError").classList.add("hidden"));
   $("proxyClearPassword").addEventListener("change", () => {
     $("proxyPassword").disabled = $("proxyClearPassword").checked;
     if ($("proxyClearPassword").checked) $("proxyPassword").value = "";
