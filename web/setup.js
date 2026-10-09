@@ -31,8 +31,7 @@ function reportError(error) {
 }
 async function copyText(value, message) {
   try {
-    if (!navigator.clipboard) throw new Error("当前浏览器不支持复制，请手动选择文本");
-    await navigator.clipboard.writeText(value);
+    await copyToClipboard(value);
     toast(message);
   } catch (error) { showDeploymentError("", error.message); }
 }

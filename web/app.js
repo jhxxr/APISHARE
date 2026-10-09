@@ -97,13 +97,17 @@ function statusBadge(status) {
 }
 async function copyText(value, message) {
   try {
-    if (!navigator.clipboard) throw new Error("当前浏览器不支持复制，请手动选择文本");
-    await navigator.clipboard.writeText(value);
+    await copyToClipboard(value);
     toast(message);
   } catch (error) { reportError(error, "复制失败"); }
 }
 function copyEndpoint() { return copyText(location.origin + "/v1", "已复制 OpenAI 兼容接入地址"); }
 function copyNewKey() { return copyText($("newKeyValue").textContent, "完整密钥已复制，请妥善保存"); }
+function copyKey(id) {
+  const key = keysCache.find((key) => key.id === id);
+  if (!key?.key) { toast("密钥不存在，请刷新列表后重试", "error"); return; }
+  return copyText(key.key, "完整密钥已复制，请妥善保存");
+}
 function dismissNewKey() { $("newKeyShow").classList.add("hidden"); $("newKeyValue").textContent = ""; }
 
 /* Authentication and navigation */
@@ -324,7 +328,8 @@ function renderKeys() {
   $("keysTable").querySelector("tbody").innerHTML = keys.map((key) => {
     const masked = key.key.length > 16 ? key.key.slice(0, 8) + "••••" + key.key.slice(-4) : "••••••••";
     const used = key.quota_usd > 0 ? Math.min(100, key.used_usd / key.quota_usd * 100) : 0;
-    return '<tr><td class="cell-stack"><strong>' + esc(key.name) + '</strong><small>#' + key.id + ' · ' + esc((key.created_at || "").slice(0, 10)) + '</small></td><td><code>' + esc(masked) + '</code></td><td class="quota-cell"><span>' + fmtUSD(key.used_usd) + ' <span class="muted">/ ' + (key.quota_usd > 0 ? fmtUSD(key.quota_usd) : "不限") + '</span></span>' + (key.quota_usd > 0 ? '<div class="quota-track" role="meter" aria-label="额度使用" aria-valuenow="' + used + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + used + '%"></span></div>' : "") + '</td><td><code>' + key.qps + " / " + key.concurrency + '</code></td><td><span class="badge ' + (key.enabled ? "on" : "off") + '">' + (key.enabled ? "启用" : "停用") + '</span></td><td><label class="home-share-control"><input type="checkbox" ' + (key.show_on_home ? 'checked ' : '') + 'aria-label="在公开首页汇总 ' + esc(key.name) + ' 的余量和用量" onchange="toggleHomeShare(' + key.id + ', this)"><span>首页展示</span></label></td><td><div class="row-actions"><button class="text-btn" onclick="editQuota(' + key.id + ", " + key.quota_usd + ')" aria-label="修改 ' + esc(key.name) + ' 的额度">额度</button><button class="text-btn" onclick="toggleKey(' + key.id + ", " + !key.enabled + ', this)" aria-label="' + (key.enabled ? "停用 " : "启用 ") + esc(key.name) + '">' + (key.enabled ? "停用" : "启用") + '</button><button class="icon-btn danger" onclick="deleteKey(' + key.id + ')" aria-label="删除 ' + esc(key.name) + '" title="删除密钥">' + icon("trash") + '</button></div></td></tr>';
+    const keyCell = '<div class="key-value"><code>' + esc(masked) + '</code><button type="button" class="text-btn key-copy" onclick="copyKey(' + key.id + ')" aria-label="复制 ' + esc(key.name) + ' 的完整密钥" title="复制完整密钥">' + icon("copy") + '<span>复制</span></button></div>';
+    return '<tr><td class="cell-stack"><strong>' + esc(key.name) + '</strong><small>#' + key.id + ' · ' + esc((key.created_at || "").slice(0, 10)) + '</small></td><td>' + keyCell + '</td><td class="quota-cell"><span>' + fmtUSD(key.used_usd) + ' <span class="muted">/ ' + (key.quota_usd > 0 ? fmtUSD(key.quota_usd) : "不限") + '</span></span>' + (key.quota_usd > 0 ? '<div class="quota-track" role="meter" aria-label="额度使用" aria-valuenow="' + used + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + used + '%"></span></div>' : "") + '</td><td><code>' + key.qps + " / " + key.concurrency + '</code></td><td><span class="badge ' + (key.enabled ? "on" : "off") + '">' + (key.enabled ? "启用" : "停用") + '</span></td><td><label class="home-share-control"><input type="checkbox" ' + (key.show_on_home ? 'checked ' : '') + 'aria-label="在公开首页汇总 ' + esc(key.name) + ' 的余量和用量" onchange="toggleHomeShare(' + key.id + ', this)"><span>首页展示</span></label></td><td><div class="row-actions"><button class="text-btn" onclick="editQuota(' + key.id + ", " + key.quota_usd + ')" aria-label="修改 ' + esc(key.name) + ' 的额度">额度</button><button class="text-btn" onclick="toggleKey(' + key.id + ", " + !key.enabled + ', this)" aria-label="' + (key.enabled ? "停用 " : "启用 ") + esc(key.name) + '">' + (key.enabled ? "停用" : "启用") + '</button><button class="icon-btn danger" onclick="deleteKey(' + key.id + ')" aria-label="删除 ' + esc(key.name) + '" title="删除密钥">' + icon("trash") + '</button></div></td></tr>';
   }).join("") || emptyRow(7, query ? "没有匹配的密钥" : "创建你的第一个 API 密钥", query ? "试试其他名称。" : "为成员分配独立的访问权限和调用额度。", query ? "" : "toggleKeyComposer(true)", "创建密钥", "key");
   labelTableCells("keysTable");
 }

@@ -228,6 +228,10 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline
 .row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 5px; white-space: nowrap; }
 .row-actions .text-btn { padding: 5px 8px; border-radius: 5px; color: var(--text); }
 .row-actions .text-btn:hover { background: var(--panel-soft); color: var(--accent); }
+.key-value { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.key-value code { white-space: nowrap; }
+.key-copy { min-width: 60px; min-height: 44px; padding: 5px 8px; border-radius: 5px; color: var(--text); white-space: nowrap; }
+.key-copy:hover { background: var(--panel-soft); color: var(--accent); }
 .badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px; border: 1px solid transparent; border-radius: 5px; font-size: 10px; line-height: 1.5; white-space: nowrap; }
 .badge::before { content: ""; width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
 .badge.on { background: var(--green-soft); color: var(--green); border-color: #c1e3d2; }

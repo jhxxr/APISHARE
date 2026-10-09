@@ -243,7 +243,7 @@ $("historyDialog").addEventListener("cancel",event=>{event.preventDefault();clos
 $("historyDialog").addEventListener("click",event=>{if(event.target!==$("historyDialog"))return;const r=event.target.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)closeHistory();});
 $("autoRefresh").addEventListener("click",()=>{autoUpdate=!autoUpdate;$("autoRefresh").setAttribute("aria-pressed",String(autoUpdate));$("autoRefresh").textContent=autoUpdate?"暂停自动更新":"恢复自动更新";$("refreshNote").textContent=autoUpdate?"每 30 秒更新":"已暂停自动更新";if(autoUpdate)refresh();});
 $("refreshNow").addEventListener("click",refresh);
-$("copyAddress").addEventListener("click",async()=>{const address=location.origin+"/v1";try{await navigator.clipboard.writeText(address);notify("OpenAI 接入地址已复制");}catch{notify("请手动复制接入地址："+address);}});
+$("copyAddress").addEventListener("click",async()=>{const address=location.origin+"/v1";try{await copyToClipboard(address);notify("OpenAI 接入地址已复制");}catch{notify("复制失败，请手动复制接入地址："+address);}});
 document.querySelectorAll("svg.icon").forEach(s=>s.setAttribute("aria-hidden","true"));
 document.addEventListener("visibilitychange",()=>{if(!document.hidden&&autoUpdate&&!$("historyDialog").open)refresh();});
 setInterval(()=>{if(autoUpdate&&!document.hidden&&!$("historyDialog").open)refresh();},30000);

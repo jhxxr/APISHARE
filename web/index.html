@@ -200,6 +200,7 @@
 
   <dialog id="actionDialog" class="action-dialog" aria-labelledby="actionHeading"><form id="actionForm"><div class="action-dialog-header"><span class="section-icon"><svg class="icon"><use href="#i-info"/></svg></span><button type="button" class="icon-btn" onclick="resolveAction(false)" aria-label="关闭对话框"><svg class="icon"><use href="#i-close"/></svg></button></div><h2 id="actionHeading"></h2><p id="actionDescription"></p><label id="actionInputField" class="field hidden"><span id="actionInputLabel">总额度 · USD</span><input id="actionInput" type="number" min="0" step="0.01" required></label><div class="form-actions"><button type="button" class="btn ghost" onclick="resolveAction(false)">取消</button><button id="actionConfirm" type="submit" class="btn">确认</button></div></form></dialog>
   <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="false"></div>
+  <script src="/public/static/clipboard.js"></script>
   <script src="static/deployment.js"></script>
   <script src="static/proxies.js"></script>
   <script src="static/app.js"></script>
