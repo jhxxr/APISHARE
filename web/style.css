@@ -180,6 +180,13 @@ textarea { resize: vertical; }
 input[type="checkbox"] { width: 15px; min-height: 15px; height: 15px; flex: 0 0 auto; accent-color: var(--accent); margin: 0; }
 input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.proxy-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.proxy-fields:disabled { opacity: .65; }
+.proxy-clear { display: flex; align-items: center; gap: 9px; min-height: 44px; margin-top: 14px; font-size: 12px; }
+#proxyFormError { margin-top: 16px; }
+#proxiesTable .endpoint-cell { overflow-wrap: anywhere; }
+#proxyComposer .form-actions .btn, #tab-proxies .page-heading .btn { min-height: 44px; }
+@media (max-width: 600px) { #proxyForm .form-grid { grid-template-columns: minmax(0, 1fr); } #proxyForm input { font-size: 16px; } }
 .field { display: flex; flex-direction: column; gap: 8px; color: var(--text); font-size: 12px; min-width: 0; }
 .field > span:first-child, .field-label-row > label { font-weight: 500; }
 .field small, .field-hint { color: var(--muted); font-size: 11px; font-weight: 400; line-height: 1.8; }
@@ -555,18 +562,19 @@ kbd { padding: 2px 4px; border: 1px solid var(--border-strong); border-radius: 3
   .routing-grid .switch-row, .routing-grid .inline-note { margin-top: 0; }
 }
 @media (max-width: 600px) {
-  #keysTable, #upsTable { display: block; min-width: 0; }
-  #keysTable thead, #upsTable thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
-  #keysTable tbody, #upsTable tbody { display: block; }
-  #keysTable tr, #upsTable tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; padding: 18px 16px; border-top: 1px solid var(--border); }
-  #keysTable td, #upsTable td { display: block; min-width: 0; padding: 0; border: 0; font-size: 13px; overflow-wrap: anywhere; }
-  #keysTable td::before, #upsTable td::before { content: attr(data-label); display: block; margin-bottom: 6px; color: var(--muted); font-size: 11px; }
-  #keysTable td:first-child, #upsTable td:first-child, #keysTable td:nth-child(2), #upsTable td:nth-child(2), #keysTable td:last-child, #upsTable td:last-child { grid-column: 1 / -1; }
-  #keysTable td:first-child::before, #upsTable td:first-child::before, #keysTable td:last-child::before, #upsTable td:last-child::before { display: none; }
-  #keysTable td:last-child, #upsTable td:last-child { padding-top: 12px; border-top: 1px solid var(--border); }
-  #keysTable td[colspan], #upsTable td[colspan] { grid-column: 1 / -1; border: 0; padding: 0; }
-  #keysTable .quota-cell, #upsTable .provider-cell, #upsTable .endpoint-cell { min-width: 0; max-width: none; }
-  #keysTable .row-actions, #upsTable .row-actions { justify-content: flex-start; }
+  #keysTable, #upsTable, #proxiesTable { display: block; min-width: 0; }
+  #keysTable thead, #upsTable thead, #proxiesTable thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+  #keysTable tbody, #upsTable tbody, #proxiesTable tbody { display: block; }
+  #keysTable tr, #upsTable tr, #proxiesTable tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; padding: 18px 16px; border-top: 1px solid var(--border); }
+  #keysTable td, #upsTable td, #proxiesTable td { display: block; min-width: 0; padding: 0; border: 0; font-size: 13px; overflow-wrap: anywhere; }
+  #keysTable td::before, #upsTable td::before, #proxiesTable td::before { content: attr(data-label); display: block; margin-bottom: 6px; color: var(--muted); font-size: 11px; }
+  #keysTable td:first-child, #upsTable td:first-child, #proxiesTable td:first-child, #keysTable td:nth-child(2), #upsTable td:nth-child(2), #proxiesTable td:nth-child(2), #keysTable td:last-child, #upsTable td:last-child, #proxiesTable td:last-child { grid-column: 1 / -1; }
+  #keysTable td:first-child::before, #upsTable td:first-child::before, #proxiesTable td:first-child::before, #keysTable td:last-child::before, #upsTable td:last-child::before, #proxiesTable td:last-child::before { display: none; }
+  #keysTable td:last-child, #upsTable td:last-child, #proxiesTable td:last-child { padding-top: 12px; border-top: 1px solid var(--border); }
+  #keysTable td[colspan], #upsTable td[colspan], #proxiesTable td[colspan] { grid-column: 1 / -1; border: 0; padding: 0; }
+  #keysTable .quota-cell, #upsTable .provider-cell, #upsTable .endpoint-cell, #proxiesTable .endpoint-cell { min-width: 0; max-width: none; }
+  #keysTable .row-actions, #upsTable .row-actions, #proxiesTable .row-actions { justify-content: flex-start; }
+  #proxiesTable .row-actions > button { min-width: 44px; min-height: 44px; }
   main { padding: 22px 16px; }
   .panel { gap: 20px; }
   .topbar { padding: 9px 16px; }

@@ -308,13 +308,24 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	}
 
 	start := time.Now()
-	resp, err := upstreamHTTPClient.Do(req)
+	client, err := clientForUpstream(upstreamHTTPClient, up.ProxyID)
+	if err != nil {
+		return info, false, err
+	}
+	resp, err := client.Do(req)
 	info.LatencyMS = time.Since(start).Milliseconds()
 	if err != nil {
+		if up.ProxyID != 0 {
+			// Transport errors may contain proxy URLs or credentials.
+			return info, false, fmt.Errorf("通过代理连接上游失败，请检查代理地址、认证和网络")
+		}
 		return info, false, err
 	}
 	defer resp.Body.Close()
 	info.Status = resp.StatusCode
+	if up.ProxyID != 0 && info.Status == http.StatusProxyAuthRequired {
+		return info, false, fmt.Errorf("代理认证失败，请检查代理用户名和密码")
+	}
 
 	if info.Status < 200 || info.Status > 299 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))

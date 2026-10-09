@@ -34,7 +34,19 @@ type modelCacheKey struct {
 }
 
 func upstreamModelCacheKey(u *Upstream) modelCacheKey {
-	connection, _ := json.Marshal([]string{u.Type, u.BaseURL, u.APIKey})
+	var p *OutboundProxy
+	if u.ProxyID != 0 {
+		p, _ = dbGetOutboundProxy(u.ProxyID)
+	}
+	return upstreamModelCacheKeyForProxy(u, p)
+}
+
+func upstreamModelCacheKeyForProxy(u *Upstream, p *OutboundProxy) modelCacheKey {
+	var proxyConnection any = u.ProxyID
+	if p != nil {
+		proxyConnection = proxyFingerprint(p)
+	}
+	connection, _ := json.Marshal([]any{u.Type, u.BaseURL, u.APIKey, proxyConnection})
 	return modelCacheKey{u.ID, sha256.Sum256(connection)}
 }
 
@@ -64,6 +76,18 @@ var modelsFetchClient = &http.Client{
 // probeUpstreamModels always uses the supplied credentials, including unsaved edits.
 // The deadline covers all pages; a partial catalog is never reported as complete.
 func probeUpstreamModels(ctx context.Context, upType, baseURL, apiKey string) ([]string, error) {
+	return probeUpstreamModelsWithProxy(ctx, upType, baseURL, apiKey, 0)
+}
+
+func probeUpstreamModelsWithProxy(ctx context.Context, upType, baseURL, apiKey string, proxyID int64) ([]string, error) {
+	client, err := clientForUpstream(modelsFetchClient, proxyID)
+	if err != nil {
+		return nil, err
+	}
+	return probeUpstreamModelsWithClient(ctx, upType, baseURL, apiKey, client)
+}
+
+func probeUpstreamModelsWithClient(ctx context.Context, upType, baseURL, apiKey string, client *http.Client) ([]string, error) {
 	upType, baseURL, apiKey = strings.TrimSpace(upType), strings.TrimSpace(baseURL), strings.TrimSpace(apiKey)
 	if upType != "openai" && upType != "anthropic" && upType != "gemini" {
 		return nil, fmt.Errorf("type must be openai, anthropic or gemini")
@@ -110,7 +134,7 @@ func probeUpstreamModels(ctx context.Context, upType, baseURL, apiKey string) ([
 		default:
 			req.Header.Set("Authorization", "Bearer "+apiKey)
 		}
-		resp, err := modelsFetchClient.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, fmt.Errorf("model request timed out or was canceled")
@@ -185,7 +209,18 @@ func probeUpstreamModels(ctx context.Context, upType, baseURL, apiKey string) ([
 // Share discovery across clients and the public page, with cache isolation for
 // every connection/key. An older in-flight request cannot populate a new key's cache.
 func cachedUpstreamModels(ctx context.Context, u *Upstream) ([]string, error) {
-	key := upstreamModelCacheKey(u)
+	var proxyConfig *OutboundProxy
+	if u.ProxyID != 0 {
+		var err error
+		proxyConfig, err = dbGetOutboundProxy(u.ProxyID)
+		if err != nil {
+			return nil, fmt.Errorf("所选代理不存在或无法读取")
+		}
+		if !proxyConfig.Enabled {
+			return nil, fmt.Errorf("所选代理已停用")
+		}
+	}
+	key := upstreamModelCacheKeyForProxy(u, proxyConfig)
 	modelsCache.Lock()
 	if cached, ok := modelsCache.m[key]; ok && time.Since(cached.at) < modelsCacheTTL {
 		modelsCache.Unlock()
@@ -197,7 +232,12 @@ func cachedUpstreamModels(ctx context.Context, u *Upstream) ([]string, error) {
 		modelsCache.pending[key] = flight
 		connection := *u
 		go func() {
-			flight.ids, flight.err = probeUpstreamModels(context.Background(), connection.Type, connection.BaseURL, connection.APIKey)
+			client, err := clientForProxyConfig(modelsFetchClient, proxyConfig)
+			if err != nil {
+				flight.err = err
+			} else {
+				flight.ids, flight.err = probeUpstreamModelsWithClient(context.Background(), connection.Type, connection.BaseURL, connection.APIKey, client)
+			}
 			modelsCache.Lock()
 			defer modelsCache.Unlock()
 			for k, cached := range modelsCache.m {

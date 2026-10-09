@@ -67,6 +67,16 @@ CREATE TABLE IF NOT EXISTS upstreams (
   models TEXT NOT NULL DEFAULT '',
   model_map TEXT NOT NULL DEFAULT '',
   enabled INTEGER NOT NULL DEFAULT 1,
+  proxy_id INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS outbound_proxies (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL DEFAULT '',
+  url TEXT NOT NULL DEFAULT '',
+  username TEXT NOT NULL DEFAULT '',
+  password TEXT NOT NULL DEFAULT '',
+  enabled INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS call_logs (
@@ -126,6 +136,22 @@ CREATE TABLE IF NOT EXISTS session_affinity (
 	if !hasHome {
 		_, err = db.Exec(`ALTER TABLE api_keys ADD COLUMN show_on_home INTEGER NOT NULL DEFAULT 0`)
 	}
+	if err != nil {
+		return err
+	}
+	rows, err = db.Query(`SELECT name FROM pragma_table_info('upstreams') WHERE name='proxy_id'`)
+	if err != nil {
+		return err
+	}
+	hasProxy := rows.Next()
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	if !hasProxy {
+		_, err = db.Exec(`ALTER TABLE upstreams ADD COLUMN proxy_id INTEGER NOT NULL DEFAULT 0`)
+	}
 	return err
 }
 
@@ -155,6 +181,7 @@ type Upstream struct {
 	Models    string `json:"models"`
 	ModelMap  string `json:"model_map"`
 	Enabled   bool   `json:"enabled"`
+	ProxyID   int64  `json:"proxy_id"`
 	CreatedAt string `json:"created_at"`
 }
 
@@ -265,12 +292,12 @@ func dbAddUsedUSD(keyID int64, cost float64) error {
 // ---------- upstreams ----------
 
 func dbGetUpstream(id int64) (*Upstream, error) {
-	row := db.QueryRow(`SELECT id,name,type,base_url,api_key,weight,models,model_map,enabled,created_at
+	row := db.QueryRow(`SELECT id,name,type,base_url,api_key,weight,models,model_map,enabled,created_at,proxy_id
 		FROM upstreams WHERE id=?`, id)
 	u := &Upstream{}
 	var enabled int
 	if err := row.Scan(&u.ID, &u.Name, &u.Type, &u.BaseURL, &u.APIKey, &u.Weight,
-		&u.Models, &u.ModelMap, &enabled, &u.CreatedAt); err != nil {
+		&u.Models, &u.ModelMap, &enabled, &u.CreatedAt, &u.ProxyID); err != nil {
 		return nil, err
 	}
 	u.Enabled = enabled == 1
@@ -278,7 +305,7 @@ func dbGetUpstream(id int64) (*Upstream, error) {
 }
 
 func dbListUpstreams() ([]Upstream, error) {
-	rows, err := db.Query(`SELECT id,name,type,base_url,api_key,weight,models,model_map,enabled,created_at
+	rows, err := db.Query(`SELECT id,name,type,base_url,api_key,weight,models,model_map,enabled,created_at,proxy_id
 		FROM upstreams ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -289,7 +316,7 @@ func dbListUpstreams() ([]Upstream, error) {
 		var u Upstream
 		var enabled int
 		if err := rows.Scan(&u.ID, &u.Name, &u.Type, &u.BaseURL, &u.APIKey, &u.Weight,
-			&u.Models, &u.ModelMap, &enabled, &u.CreatedAt); err != nil {
+			&u.Models, &u.ModelMap, &enabled, &u.CreatedAt, &u.ProxyID); err != nil {
 			return nil, err
 		}
 		u.Enabled = enabled == 1
@@ -299,9 +326,9 @@ func dbListUpstreams() ([]Upstream, error) {
 }
 
 func dbInsertUpstream(u *Upstream) error {
-	res, err := db.Exec(`INSERT INTO upstreams(name,type,base_url,api_key,weight,models,model_map,enabled,created_at)
-		VALUES(?,?,?,?,?,?,?,?,?)`,
-		u.Name, u.Type, u.BaseURL, u.APIKey, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), nowStr())
+	res, err := db.Exec(`INSERT INTO upstreams(name,type,base_url,api_key,weight,models,model_map,enabled,created_at,proxy_id)
+		VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		u.Name, u.Type, u.BaseURL, u.APIKey, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), nowStr(), u.ProxyID)
 	if err == nil {
 		u.ID, _ = res.LastInsertId()
 	}
@@ -309,8 +336,8 @@ func dbInsertUpstream(u *Upstream) error {
 }
 
 func dbUpdateUpstream(u *Upstream) error {
-	_, err := db.Exec(`UPDATE upstreams SET name=?,type=?,base_url=?,api_key=?,weight=?,models=?,model_map=?,enabled=? WHERE id=?`,
-		u.Name, u.Type, u.BaseURL, u.APIKey, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), u.ID)
+	_, err := db.Exec(`UPDATE upstreams SET name=?,type=?,base_url=?,api_key=?,weight=?,models=?,model_map=?,enabled=?,proxy_id=? WHERE id=?`,
+		u.Name, u.Type, u.BaseURL, u.APIKey, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), u.ProxyID, u.ID)
 	return err
 }
 

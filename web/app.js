@@ -8,7 +8,7 @@ const fmtTime = (value) => (value || "").replace("T", " ").slice(0, 19);
 const number = (value) => Number(value || 0).toLocaleString("zh-CN");
 const providerNames = { openai: "OpenAI 兼容", anthropic: "Anthropic", gemini: "Gemini" };
 const providerURLs = { openai: "https://api.openai.com", anthropic: "https://api.anthropic.com", gemini: "https://generativelanguage.googleapis.com" };
-const tabNames = { dashboard: "概览", keys: "API 密钥", upstreams: "上游服务", logs: "调用日志", settings: "工作空间设置", deployment: "部署配置" };
+const tabNames = { dashboard: "概览", keys: "API 密钥", upstreams: "上游服务", proxies: "代理配置", logs: "调用日志", settings: "工作空间设置", deployment: "部署配置" };
 const validTab = (name) => Object.hasOwn(tabNames, name);
 let token = localStorage.getItem(TOKEN_KEY) || "";
 let activeTab = "dashboard";
@@ -108,6 +108,8 @@ function showLogin() {
   dismissNewKey();
   toggleSidebar(false);
   clearDeploymentPasswords();
+  $("proxyPassword").value = "";
+  $("proxyComposer").classList.add("hidden");
   deploymentConfig = null;
 }
 function showApp(session = {}) {
@@ -187,6 +189,7 @@ async function loadCurrentTab() {
   if (activeTab === "dashboard") return Promise.all([loadStats(), loadRecent()]);
   if (activeTab === "keys") return loadKeys();
   if (activeTab === "upstreams") return loadUpstreams();
+  if (activeTab === "proxies") return loadProxies();
   if (activeTab === "logs") return loadLogs(logsPage);
   if (activeTab === "settings") return loadSettings();
   if (activeTab === "deployment") return loadDeployment();
@@ -359,7 +362,7 @@ function providerIcon(type) { return '<span class="provider-icon ' + esc(type) +
 async function loadUpstreams(quiet = false) {
   const version = requestVersions.upstreams = (requestVersions.upstreams || 0) + 1;
   try {
-    const result = await api("api/upstreams");
+    const [result] = await Promise.all([api("api/upstreams"), loadProxies(true)]);
     if (version !== requestVersions.upstreams) return;
     upsCache = result || [];
     $("navUpCount").textContent = upsCache.length;
@@ -374,7 +377,7 @@ function renderUpstreams() {
   $("upstreamHealthy").textContent = upsCache.filter((item) => item.enabled && item.healthy).length;
   $("upstreamModelCount").textContent = new Set(upsCache.flatMap((item) => parseAllowlist(item.models))).size;
   $("upstreamListCount").textContent = list.length + (list.length !== upsCache.length ? " / " + upsCache.length : "");
-  $("upsTable").querySelector("tbody").innerHTML = list.map((item) => '<tr><td><div class="provider-cell">' + providerIcon(item.type) + '<span class="cell-stack"><strong>' + esc(item.name || "未命名上游") + '</strong><small>' + esc(providerNames[item.type] || item.type) + ' · #' + item.id + '</small></span></div></td><td class="endpoint-cell"><span>' + esc(item.base_url) + '</span><small>' + esc(item.key_masked) + '</small></td><td class="cell-stack"><strong>' + (parseAllowlist(item.models).length ? parseAllowlist(item.models).length + " 个模型" : "全部模型") + '</strong><small>权重 ' + item.weight + '</small></td><td><span class="badge ' + (item.healthy ? "on" : "warn") + '">' + (item.healthy ? "健康" : "冷却中") + '</span>' + (item.fails ? '<span class="cell-stack"><small>连续失败 ' + item.fails + ' 次</small></span>' : "") + '</td><td><button class="toggle-btn" role="switch" aria-checked="' + !!item.enabled + '" aria-label="' + (item.enabled ? "停用 " : "启用 ") + esc(item.name) + '" onclick="toggleUpstream(' + item.id + ", " + !item.enabled + ', this)"><span></span></button></td><td><div class="row-actions"><button class="text-btn" onclick="openEditUpstream(' + item.id + ')" aria-label="编辑 ' + esc(item.name) + '">' + icon("edit") + '编辑</button><button class="icon-btn" onclick="testUpstream(' + item.id + ', this)" aria-label="测试 ' + esc(item.name) + '" title="测试连接">' + icon("activity") + '</button><button class="icon-btn danger" onclick="deleteUpstream(' + item.id + ')" aria-label="删除 ' + esc(item.name) + '" title="删除上游">' + icon("trash") + '</button></div></td></tr>').join("") || emptyRow(6, query || type ? "没有匹配的上游" : "连接你的第一个上游", query || type ? "调整搜索条件或接口类型。" : "支持 OpenAI 兼容、Anthropic 与 Gemini 接口。", query || type ? "" : "openCreateUpstream()", "添加上游");
+  $("upsTable").querySelector("tbody").innerHTML = list.map((item) => '<tr><td><div class="provider-cell">' + providerIcon(item.type) + '<span class="cell-stack"><strong>' + esc(item.name || "未命名上游") + '</strong><small>' + esc(providerNames[item.type] || item.type) + ' · #' + item.id + '</small></span></div></td><td class="endpoint-cell"><span>' + esc(item.base_url) + '</span><small>' + esc(item.key_masked) + '</small><small>代理：' + esc(upstreamProxyLabel(item.proxy_id)) + '</small></td><td class="cell-stack"><strong>' + (parseAllowlist(item.models).length ? parseAllowlist(item.models).length + " 个模型" : "全部模型") + '</strong><small>权重 ' + item.weight + '</small></td><td><span class="badge ' + (item.healthy ? "on" : "warn") + '">' + (item.healthy ? "健康" : "冷却中") + '</span>' + (item.fails ? '<span class="cell-stack"><small>连续失败 ' + item.fails + ' 次</small></span>' : "") + '</td><td><button class="toggle-btn" role="switch" aria-checked="' + !!item.enabled + '" aria-label="' + (item.enabled ? "停用 " : "启用 ") + esc(item.name) + '" onclick="toggleUpstream(' + item.id + ", " + !item.enabled + ', this)"><span></span></button></td><td><div class="row-actions"><button class="text-btn" onclick="openEditUpstream(' + item.id + ')" aria-label="编辑 ' + esc(item.name) + '">' + icon("edit") + '编辑</button><button class="icon-btn" onclick="testUpstream(' + item.id + ', this)" aria-label="测试 ' + esc(item.name) + '" title="测试连接">' + icon("activity") + '</button><button class="icon-btn danger" onclick="deleteUpstream(' + item.id + ')" aria-label="删除 ' + esc(item.name) + '" title="删除上游">' + icon("trash") + '</button></div></td></tr>').join("") || emptyRow(6, query || type ? "没有匹配的上游" : "连接你的第一个上游", query || type ? "调整搜索条件或接口类型。" : "支持 OpenAI 兼容、Anthropic 与 Gemini 接口。", query || type ? "" : "openCreateUpstream()", "添加上游");
   labelTableCells("upsTable");
 }
 async function toggleUpstream(id, enabled, button) {
@@ -400,7 +403,7 @@ async function testUpstream(id, button) {
 
 /* One editor for both creation and updates. */
 function editorValue() {
-  return JSON.stringify(["editName", "editType", "editBase", "editKey", "editWeight", "editModels", "editModelMap"].map((id) => $(id).value).concat($("editEnabled").checked));
+  return JSON.stringify(["editName", "editType", "editBase", "editKey", "editProxy", "editWeight", "editModels", "editModelMap"].map((id) => $(id).value).concat($("editEnabled").checked));
 }
 function editorDirty() { return $("editModal").open && editorValue() !== editProbe.initial; }
 function updateEditorDirty() {
@@ -414,8 +417,10 @@ function openEditUpstream(id) {
   if (!upstream) { toast("未找到该上游，请刷新列表后重试", "error"); return; }
   openEditor(upstream);
 }
-function openEditor(upstream) {
+async function openEditor(upstream) {
   if ($("editModal").open) return;
+  if (!await loadProxies()) return;
+  if ($("editModal").open || $("appView").classList.contains("hidden")) return;
   const creating = !upstream;
   editProbe.id = upstream ? upstream.id : null;
   editProbe.generation++;
@@ -424,6 +429,7 @@ function openEditor(upstream) {
   $("upstreamEditorForm").querySelectorAll(".form-error").forEach((error) => error.classList.add("hidden"));
   const values = { editName: upstream?.name || "", editType: upstream?.type || "openai", editBase: upstream?.base_url || providerURLs.openai, editKey: "", editWeight: upstream ? upstream.weight : 1, editModels: upstream?.models || "", editModelMap: upstream?.model_map || "" };
   Object.entries(values).forEach(([id, value]) => { $(id).value = value; $(id).setCustomValidity(""); $(id).removeAttribute("aria-invalid"); });
+  renderProxyOptions(upstream?.proxy_id || 0);
   editProbe.selected = new Set(parseAllowlist($("editModels").value));
   $("editEnabled").checked = creating || !!upstream.enabled;
   $("editEnabledRow").classList.toggle("hidden", creating);
@@ -595,8 +601,8 @@ async function probeEditUpstream() {
   clearProbeResults();
   const generation = editProbe.generation;
   editProbe.controller = new AbortController();
-  const signature = [$("editType").value, base.value, key.value].join("\n");
-  const body = { type: $("editType").value, base_url: base.value.trim() };
+  const signature = [$("editType").value, base.value, key.value, $("editProxy").value].join("\n");
+  const body = { type: $("editType").value, base_url: base.value.trim(), proxy_id: Number($("editProxy").value) };
   if (key.value.trim()) body.api_key = key.value.trim();
   $("editProbeInfo").className = "probe-info";
   $("editProbeInfo").textContent = key.value.trim() ? "正在使用当前填写的 Key 获取模型…" : "正在使用已保存的 Key 获取模型…";
@@ -604,7 +610,7 @@ async function probeEditUpstream() {
   try {
     const path = editProbe.id === null ? "api/upstream-probe" : "api/upstreams/" + editProbe.id + "/probe";
     const result = await api(path, { method: "POST", body: JSON.stringify(body), signal: editProbe.controller.signal });
-    if (generation !== editProbe.generation || signature !== [$("editType").value, base.value, key.value].join("\n")) return;
+    if (generation !== editProbe.generation || signature !== [$("editType").value, base.value, key.value, $("editProxy").value].join("\n")) return;
     if (!result.ok) throw new Error(result.error || "上游未返回模型");
     editProbe.models = [...new Set(result.models || [])];
     editProbe.selected = new Set(parseAllowlist($("editModels").value));
@@ -613,10 +619,10 @@ async function probeEditUpstream() {
     $("editProbeArea").classList.toggle("hidden", editProbe.models.length === 0);
     renderEditProbeList();
   } catch (error) {
-    if (generation !== editProbe.generation || error.name === "AbortError" || error.message === "unauthorized" || signature !== [$("editType").value, base.value, key.value].join("\n")) return;
+    if (generation !== editProbe.generation || error.name === "AbortError" || error.message === "unauthorized" || signature !== [$("editType").value, base.value, key.value, $("editProxy").value].join("\n")) return;
     $("editProbeInfo").className = "probe-info error";
     const status = error.message.match(/HTTP (\d{3})/);
-    const hint = status && ({ 401: "当前 Key 认证失败，请检查密钥", 403: "当前 Key 没有模型列表访问权限", 404: "未找到模型接口，请检查 Base URL 和接口类型", 429: "上游请求过于频繁，请稍后重试" })[status[1]];
+    const hint = status && ({ 401: "当前 Key 认证失败，请检查密钥", 403: "当前 Key 没有模型列表访问权限", 404: "未找到模型接口，请检查 Base URL 和接口类型", 407: "代理认证失败，请检查代理用户名和密码", 429: "上游请求过于频繁，请稍后重试" })[status[1]];
     $("editProbeInfo").textContent = "获取失败：" + (hint || error.message) + "。仍可手动填写白名单。";
   } finally { if (generation === editProbe.generation) setBusy($("probeEditorButton"), false); }
 }
@@ -631,7 +637,7 @@ async function saveEditUpstream(event) {
     if (!["http:", "https:"].includes(new URL($("editBase").value).protocol)) throw new Error();
   } catch { $("editBase").setCustomValidity("请输入以 http:// 或 https:// 开头的服务地址"); jumpEditor("editorConnection"); $("editBase").reportValidity(); return false; }
   if (!$("upstreamEditorForm").reportValidity()) return false;
-  const body = { name: $("editName").value.trim(), type: $("editType").value, base_url: $("editBase").value.trim().replace(/\/+$/, ""), weight: Number($("editWeight").value), models: parseAllowlist($("editModels").value).join(","), model_map: $("editModelMap").value.trim() };
+  const body = { name: $("editName").value.trim(), type: $("editType").value, base_url: $("editBase").value.trim().replace(/\/+$/, ""), proxy_id: Number($("editProxy").value), weight: Number($("editWeight").value), models: parseAllowlist($("editModels").value).join(","), model_map: $("editModelMap").value.trim() };
   if (!creating) body.enabled = $("editEnabled").checked;
   if ($("editKey").value.trim()) body.api_key = $("editKey").value.trim();
   editProbe.saving = true; updateEditorDirty();
@@ -809,6 +815,7 @@ window.addEventListener("resize", () => {
 document.querySelectorAll("svg.icon").forEach((svg) => { svg.setAttribute("aria-hidden", "true"); svg.setAttribute("focusable", "false"); });
 $("todayLabel").textContent = new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "long" });
 initDeployment();
+initOutboundProxies();
 syncSidebar();
 (async function init() {
   if (!token) { showLogin(); return; }

@@ -116,6 +116,7 @@ func registerAdminRoutes(r *gin.Engine) {
 		c.JSON(http.StatusOK, gin.H{"ok": true, "admin_path": currentAdminPath(), "setup_required": adminSetupRequired()})
 	})
 	registerDeploymentRoutes(auth)
+	registerOutboundProxyRoutes(auth)
 
 	// ---------- API Keys ----------
 	auth.GET("/keys", func(c *gin.Context) {
@@ -248,6 +249,8 @@ func registerAdminRoutes(r *gin.Engine) {
 	})
 
 	auth.POST("/upstreams", func(c *gin.Context) {
+		proxyConfigMu.Lock()
+		defer proxyConfigMu.Unlock()
 		var u Upstream
 		if c.BindJSON(&u) != nil {
 			return
@@ -258,6 +261,10 @@ func registerAdminRoutes(r *gin.Engine) {
 		}
 		if u.BaseURL == "" || u.APIKey == "" {
 			c.JSON(400, gin.H{"error": "base_url and api_key are required"})
+			return
+		}
+		if err := validateUpstreamProxy(u.ProxyID); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
 		if u.Weight <= 0 {
@@ -272,6 +279,8 @@ func registerAdminRoutes(r *gin.Engine) {
 	})
 
 	auth.PATCH("/upstreams/:id", func(c *gin.Context) {
+		proxyConfigMu.Lock()
+		defer proxyConfigMu.Unlock()
 		id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
 		u, err := dbGetUpstream(id)
 		if err != nil {
@@ -287,6 +296,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			Models   *string `json:"models"`
 			ModelMap *string `json:"model_map"`
 			Enabled  *bool   `json:"enabled"`
+			ProxyID  *int64  `json:"proxy_id"`
 		}
 		if c.BindJSON(&req) != nil {
 			return
@@ -315,6 +325,15 @@ func registerAdminRoutes(r *gin.Engine) {
 		if req.Enabled != nil {
 			u.Enabled = *req.Enabled
 		}
+		if req.ProxyID != nil {
+			if *req.ProxyID != u.ProxyID {
+				if err := validateUpstreamProxy(*req.ProxyID); err != nil {
+					c.JSON(400, gin.H{"error": err.Error()})
+					return
+				}
+			}
+			u.ProxyID = *req.ProxyID
+		}
 		if err := dbUpdateUpstream(u); err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
@@ -339,7 +358,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			return
 		}
 		start := time.Now()
-		models, err := probeUpstreamModels(c.Request.Context(), u.Type, u.BaseURL, u.APIKey)
+		models, err := probeUpstreamModelsWithProxy(c.Request.Context(), u.Type, u.BaseURL, u.APIKey, u.ProxyID)
 		latency := time.Since(start).Milliseconds()
 		if err != nil {
 			c.JSON(200, gin.H{"ok": false, "latency_ms": latency, "error": err.Error()})
@@ -350,9 +369,9 @@ func registerAdminRoutes(r *gin.Engine) {
 
 	// probeUpstream 处理两种探测：未保存的上游（/upstream-probe，必须显式给全参数）
 	// 与已保存的上游（/upstreams/:id/probe，参数留空则用已存值）。
-	probeResult := func(c *gin.Context, typ, base, key string) {
+	probeResult := func(c *gin.Context, typ, base, key string, proxyID int64) {
 		start := time.Now()
-		models, err := probeUpstreamModels(c.Request.Context(), typ, base, key)
+		models, err := probeUpstreamModelsWithProxy(c.Request.Context(), typ, base, key, proxyID)
 		latency := time.Since(start).Milliseconds()
 		if err != nil {
 			c.JSON(200, gin.H{"ok": false, "latency_ms": latency, "error": err.Error()})
@@ -366,6 +385,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			Type    string `json:"type"`
 			BaseURL string `json:"base_url"`
 			APIKey  string `json:"api_key"`
+			ProxyID int64  `json:"proxy_id"`
 		}
 		if c.ShouldBindJSON(&req) != nil || req.Type == "" || req.BaseURL == "" || req.APIKey == "" {
 			c.JSON(400, gin.H{"ok": false, "error": "type, base_url and api_key are required"})
@@ -375,7 +395,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			c.JSON(400, gin.H{"ok": false, "error": "type must be openai, anthropic or gemini"})
 			return
 		}
-		probeResult(c, req.Type, req.BaseURL, req.APIKey)
+		probeResult(c, req.Type, req.BaseURL, req.APIKey, req.ProxyID)
 	})
 
 	auth.POST("/upstreams/:id/probe", func(c *gin.Context) {
@@ -389,6 +409,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			Type    string `json:"type"`
 			BaseURL string `json:"base_url"`
 			APIKey  string `json:"api_key"`
+			ProxyID *int64 `json:"proxy_id"`
 		}
 		// An empty body uses saved values; malformed edits must never silently
 		// fall back to the stored key and report a misleading success.
@@ -406,7 +427,11 @@ func registerAdminRoutes(r *gin.Engine) {
 		if strings.TrimSpace(req.APIKey) != "" {
 			key = strings.TrimSpace(req.APIKey)
 		}
-		probeResult(c, typ, base, key)
+		proxyID := u.ProxyID
+		if req.ProxyID != nil {
+			proxyID = *req.ProxyID
+		}
+		probeResult(c, typ, base, key, proxyID)
 	})
 
 	// ---------- Logs ----------
