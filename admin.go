@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"io/fs"
 	"log"
@@ -13,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -655,5 +659,36 @@ func serveAdminFile(c *gin.Context, sub fs.FS, name string) {
 	}
 	c.Header("X-Content-Type-Options", "nosniff")
 	c.Header("X-Frame-Options", "DENY")
+	if compressibleAsset(name) && len(b) >= 1024 {
+		c.Header("Vary", "Accept-Encoding")
+		if strings.Contains(c.GetHeader("Accept-Encoding"), "gzip") {
+			c.Header("Content-Encoding", "gzip")
+			b = gzipAsset(b)
+		}
+	}
 	c.Data(http.StatusOK, ct, b)
+}
+
+func compressibleAsset(name string) bool {
+	switch filepath.Ext(name) {
+	case ".js", ".css", ".html", ".svg", ".json", ".txt", ".ttf":
+		return true
+	}
+	return false
+}
+
+// Embedded assets never change at runtime, so each one is compressed once.
+var gzipAssets sync.Map
+
+func gzipAsset(b []byte) []byte {
+	key := uint64(crc32.ChecksumIEEE(b))<<32 | uint64(uint32(len(b)))
+	if v, ok := gzipAssets.Load(key); ok {
+		return v.([]byte)
+	}
+	var buf bytes.Buffer
+	w, _ := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+	w.Write(b)
+	w.Close()
+	gzipAssets.Store(key, buf.Bytes())
+	return buf.Bytes()
 }

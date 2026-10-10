@@ -44,6 +44,7 @@
         <canvas id="particleScene" class="particle-scene"></canvas>
         <div class="scene-grain"></div>
       </div>
+      <a class="metro-entry" href="/metro"><span class="metro-entry-lamp" aria-hidden="true"></span><span>进入 3D 站台</span><small aria-hidden="true">TOKEN METRO ↗</small></a>
       <div class="hero-readout">
         <h1 id="heroTitle" class="token-total"><span class="token-prefix">累计 Token 用量</span><strong id="heroTokens" aria-hidden="true">—</strong></h1>
         <p id="heroTokenNote" class="token-unit">正在读取 Token 用量</p>
@@ -93,7 +94,7 @@
       <p class="uptime-note"><svg class="icon"><use href="#clock"/></svg> Uptime = 成功请求 ÷ 总请求。未发生调用时，显示灰色；历史可用率不代表当前持续在线。</p>
     </section>
     <section class="connection-strip" aria-label="服务接入地址"><div class="connection-icon"><svg class="icon"><use href="#layers"/></svg></div><div><h2>统一 API 接入地址</h2><p>兼容 OpenAI、Anthropic 与 Gemini 格式。</p></div><button id="copyAddress" class="button secondary" type="button"><svg class="icon"><use href="#copy"/></svg>复制 OpenAI 接入地址</button></section>
-    <footer class="site-footer"><span>API 调用分发 <span class="footer-divider">/</span> 共享用量与模型状态</span><div class="refresh-controls"><button id="ambientMotion" type="button" aria-pressed="true">暂停页面动画</button><span id="refreshNote" aria-live="polite">每 30 秒更新</span><button id="autoRefresh" type="button" aria-pressed="true">暂停自动更新</button><button id="refreshNow" type="button"><svg class="icon"><use href="#refresh"/></svg>刷新</button></div></footer>
+    <footer class="site-footer"><span>API 调用分发 <span class="footer-divider">/</span> 共享用量与模型状态 <span class="footer-divider">/</span> <a class="footer-metro" href="/metro">3D 站台视图 ↗</a></span><div class="refresh-controls"><button id="ambientMotion" type="button" aria-pressed="true">暂停页面动画</button><span id="refreshNote" aria-live="polite">每 30 秒更新</span><button id="autoRefresh" type="button" aria-pressed="true">暂停自动更新</button><button id="refreshNow" type="button"><svg class="icon"><use href="#refresh"/></svg>刷新</button></div></footer>
     </div>
   </main>
   <dialog id="historyDialog" class="history-dialog" aria-labelledby="historyHeading" aria-describedby="historyDescription"><div class="dialog-heading"><div><p class="eyebrow">24-HOUR REQUEST HISTORY</p><h2 id="historyHeading"></h2></div><button id="closeHistory" class="icon-button" type="button" aria-label="关闭调用历史"><svg class="icon"><use href="#close"/></svg></button></div><p id="historyDescription">最近 24 小时的真实调用结果。灰色时段表示没有调用。</p><div id="historyHourControl" class="history-hour-control hidden"><label for="historyHour">查看时段</label><select id="historyHour"></select></div><div class="history-scroll"><table><thead><tr><th scope="col">时间段</th><th scope="col">调用</th><th scope="col">成功</th><th scope="col">Uptime</th></tr></thead><tbody id="historyRows"></tbody></table></div></dialog>

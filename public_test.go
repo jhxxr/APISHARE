@@ -1,9 +1,11 @@
 package main
 
 import (
+	"compress/gzip"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -168,7 +170,7 @@ func TestPublicHTTPAndPrivateAdmin(t *testing.T) {
 	r := gin.New()
 	registerPublic(r)
 	registerAdmin(r)
-	for _, url := range []string{"/", "/public/static/home.css", "/public/static/home.js", "/api/public/overview", "/api/public/overview?interval=hour", "/api/public/overview?interval=minute"} {
+	for _, url := range []string{"/", "/metro", "/public/static/home.css", "/public/static/home.js", "/public/static/metro.css", "/public/static/metro.js", "/api/public/overview", "/api/public/overview?interval=hour", "/api/public/overview?interval=minute"} {
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, httptest.NewRequest("GET", url, nil))
 		if w.Code != http.StatusOK {
@@ -201,6 +203,36 @@ func TestPublicHTTPAndPrivateAdmin(t *testing.T) {
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("unsupported interval %q accepted: %d", interval, w.Code)
 		}
+	}
+}
+func TestPublicVendorAssetsCompressedAndCached(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	registerPublic(r)
+	for _, name := range []string{"three.module.js", "three.core.js", "addons/postprocessing/UnrealBloomPass.js", "addons/objects/Reflector.js"} {
+		request := httptest.NewRequest("GET", "/public/static/vendor/three-0.186.1/"+name, nil)
+		request.Header.Set("Accept-Encoding", "gzip, deflate")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, request)
+		if w.Code != http.StatusOK || w.Header().Get("Content-Encoding") != "gzip" {
+			t.Fatalf("%s: status %d encoding %q", name, w.Code, w.Header().Get("Content-Encoding"))
+		}
+		if !strings.Contains(w.Header().Get("Cache-Control"), "immutable") {
+			t.Fatalf("%s: vendor asset not cacheable", name)
+		}
+		body, err := gzip.NewReader(w.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plain, err := io.ReadAll(body)
+		if err != nil || len(plain) == 0 {
+			t.Fatalf("%s: invalid gzip body: %v", name, err)
+		}
+	}
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/public/static/metro.js", nil))
+	if w.Header().Get("Content-Encoding") != "" || w.Header().Get("Cache-Control") != "" {
+		t.Fatalf("plain request must stay uncompressed and uncached: %v", w.Header())
 	}
 }
 func TestUnavailableRoutingRecordsFailure(t *testing.T) {

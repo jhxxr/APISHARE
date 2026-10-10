@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#070b12">
+  <meta name="description" content="Token Metro：以 3D 地铁站的方式查看共享 API 的模型线路、调用流量与服务状态。">
+  <title>Token Metro · 02:37 站台</title>
+  <script>
+    (() => {
+      const root = document.documentElement;
+      if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      try { if (sessionStorage.getItem("metro-intro-seen")) return; } catch {}
+      root.classList.add("intro-active");
+    })();
+  </script>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23070b12'/%3E%3Cpath d='M7 21h18M9 21V11a3 3 0 0 1 3-3h8a3 3 0 0 1 3 3v10M12 12h8M12 25l-2 2M20 25l2 2' fill='none' stroke='%2300e5ff' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="preload" href="/public/static/fonts/orbitron.ttf" as="font" type="font/ttf" crossorigin>
+  <link rel="stylesheet" href="/public/static/metro.css">
+  <script type="importmap">{"imports":{"three":"/public/static/vendor/three-0.186.1/three.module.js","three/addons/":"/public/static/vendor/three-0.186.1/addons/"}}</script>
+  <link rel="modulepreload" href="/public/static/vendor/three-0.186.1/three.module.js">
+  <link rel="modulepreload" href="/public/static/vendor/three-0.186.1/three.core.js">
+  <script src="/public/static/clipboard.js" defer></script>
+  <script type="module" src="/public/static/metro.js"></script>
+</head>
+<body data-view="platform">
+  <canvas id="metroScene" class="metro-scene" tabindex="0" aria-label="Token Metro 3D 站台。按 1 站台、2 线路图、3 调度屏、4 售票机、5 到站屏，方向键切换站点或接入格式，回车取票，Esc 返回。" aria-describedby="sceneSummary"></canvas>
+  <div class="scene-vignette" aria-hidden="true"></div>
+
+  <div id="introVeil" class="intro-veil" aria-hidden="true">
+    <p class="intro-clock">02<span>:</span>37</p>
+    <p class="intro-line">AM · 末班之后，列车仍在运行</p>
+    <p class="intro-skip">点击任意处跳过</p>
+  </div>
+
+  <header class="hud-top">
+    <div class="station-mark">
+      <span class="station-logo" aria-hidden="true"><i></i></span>
+      <div><h1 class="station-name">TOKEN METRO</h1><p class="station-sub">API SHARE TERMINAL · <span class="station-clock">02<b>:</b>37</span></p></div>
+    </div>
+    <div class="hud-actions">
+      <button id="soundToggle" class="hud-chip" type="button" aria-pressed="true">提示音 开</button>
+      <button id="motionToggle" class="hud-chip" type="button" aria-pressed="true">暂停动画</button>
+      <a class="hud-chip classic-link" href="/">经典主页 <span aria-hidden="true">↗</span></a>
+    </div>
+  </header>
+
+  <div class="hud-bottom">
+    <button id="backButton" class="hud-chip back-chip" type="button" hidden>← 返回站台</button>
+    <p id="sceneHint" class="scene-hint" aria-live="polite"></p>
+  </div>
+
+  <div id="fallback" class="fallback" hidden><p>当前浏览器无法启用 WebGL 3D 渲染。</p><a class="hud-chip classic-link" href="/">返回经典主页 ↗</a></div>
+  <section id="sceneSummary" class="sr-only"></section>
+  <p id="announcer" class="sr-only" aria-live="polite"></p>
+  <noscript><div class="fallback"><p>3D 站台需要启用 JavaScript。</p><a href="/">返回经典主页</a></div></noscript>
+  <div id="sceneTip" class="scene-tip" hidden></div>
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

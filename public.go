@@ -79,8 +79,22 @@ func registerPublic(r *gin.Engine) {
 		}
 		serveAdminFile(c, sub, "index.html")
 	})
+	// The 3D station view reads the same anonymous aggregate endpoint as the root page.
+	r.GET("/metro", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+		if adminSetupRequired() {
+			c.Redirect(http.StatusTemporaryRedirect, "/setup/")
+			return
+		}
+		serveAdminFile(c, sub, "metro.html")
+	})
 	r.GET("/public/static/*filepath", func(c *gin.Context) {
-		serveAdminFile(c, sub, strings.TrimPrefix(c.Param("filepath"), "/"))
+		name := strings.TrimPrefix(c.Param("filepath"), "/")
+		// Vendored libraries live in version-named directories, so they can be cached for good.
+		if strings.HasPrefix(name, "vendor/") {
+			c.Header("Cache-Control", "public, max-age=31536000, immutable")
+		}
+		serveAdminFile(c, sub, name)
 	})
 	r.GET("/api/public/overview", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
