@@ -43,7 +43,16 @@ func TestOutboundProxyValidation(t *testing.T) {
 			t.Errorf("rejected %s: %v", endpoint, err)
 		}
 	}
-	for _, endpoint := range []string{"ftp://proxy.example:21", "http://proxy.example", "http://proxy.example:0", "http://proxy.example:65536", "http://user:secret@proxy.example:80", "http://proxy.example:80/path", "http://proxy.example:80?secret=yes", "http://proxy.example:80#secret", "http://proxy.example:80?", "socks5://:1080", "http://proxy.example:not-a-port"} {
+	for _, scheme := range []string{"http", "https", "socks5", "socks5h"} {
+		p := &OutboundProxy{Name: "name", URL: scheme + "://user:pass%40word@proxy.example:1080"}
+		if err := normalizeOutboundProxy(p); err != nil {
+			t.Fatal(err)
+		}
+		if p.Username != "user" || p.Password != "pass@word" || p.URL != scheme+"://proxy.example:1080" {
+			t.Fatal("standard proxy link did not extract and remove URL credentials")
+		}
+	}
+	for _, endpoint := range []string{"ftp://proxy.example:21", "http://proxy.example", "http://proxy.example:0", "http://proxy.example:65536", "http://:secret@proxy.example:80", "http://proxy.example:80/path", "http://proxy.example:80?secret=yes", "http://proxy.example:80#secret", "http://proxy.example:80?", "socks5://:1080", "http://proxy.example:not-a-port"} {
 		p := &OutboundProxy{Name: "name", URL: endpoint}
 		if err := normalizeOutboundProxy(p); err == nil {
 			t.Errorf("accepted invalid %s", endpoint)

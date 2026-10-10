@@ -47,6 +47,7 @@ API Share 是一个轻量的 API 分发网关，统一接入 OpenAI Chat、OpenA
 - **公开首页 `/`**：首屏展示当前模型与累计 Token，下滑查看公开余量、用量趋势、模型分布和真实调用 Uptime。后台按密钥勾选参与合计，公开接口不返回密钥、名称、数量、上游地址或凭证。
 - **管理后台（默认 `/admin`）**：Key 签发与额度、上游管理（三种类型 + 连通性测试）、调用日志（含格式/上游/usage/费用）、价格表与调度参数；未注册路径一律 404
 - **上游独立代理**：后台集中管理 HTTP / HTTPS / SOCKS5 / SOCKS5h 代理及认证，每个上游可单独选择；模型调用、流式响应、连通性测试和模型目录获取均通过所选代理。
+- **自定义请求头**：每个上游可独立设置固定请求头、客户端请求头透传、正则匹配与变量替换；原生和跨格式转发、流式响应、连接测试及模型目录获取均生效。
 - **单文件部署**：前端内嵌 Go 二进制，SQLite（WAL）存储，零外部依赖
 
 ## 快速开始
@@ -111,6 +112,44 @@ $env:API_DB = "apishare.db"
 3. 打开「上游服务」添加或编辑上游，在「连接与认证 → 请求代理」选择代理并保存。一个代理可以供多个供应商共用，配置保存在 SQLite，重启后保留。
 
 已选择的代理不受系统 `NO_PROXY` 绕过规则影响；SOCKS5 / SOCKS5h 均由代理解析目标域名。未选择代理时沿用原有 `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` 环境设置，未设置时直连。代理配置修改对后续请求生效，进行中的请求继续使用原连接。停用或失效的代理不会自动降级为直连，而是触发既有上游故障转移；删除代理前需要解除所有上游关联。可使用上游列表的「测试连接」或编辑器的「获取当前 Key 模型」验证实际代理链路。
+
+#### 自定义请求头
+
+在「上游服务 → 添加 / 编辑 → 请求头覆盖」填写 JSON，或点击「填入模板」「透传模板」。支持复制、格式化与实时 JSON 校验；留空或填写 `{}` 使用默认请求头，保存后立即生效，重启后保留。
+
+```json
+{
+  "*": true,
+  "re:^X-Trace-.*$": true,
+  "X-Foo": "{client_header:X-Foo}",
+  "Authorization": "Bearer {api_key}"
+}
+```
+
+- 字符串设置固定值，可包含 `{api_key}`（当前上游密钥）和 `{client_header:NAME}`（客户端请求头值，名称不区分大小写）。同名请求头被覆盖；客户端变量不存在时跳过该条规则，保留已有默认值。
+- `true` 透传客户端的同名请求头，保留多值；`false` 移除请求头。`*` 匹配全部，`re:` 按不区分大小写的 Go 正则匹配请求头名称，值必须是布尔值。
+- 应用顺序为通配规则、正则透传、正则移除、精确名称规则，因此精确规则优先；同一层按名称排序，不依赖 JSON 字段顺序。请求头名称不区分大小写，不允许重复。
+- 通配和正则规则过滤 `Authorization`、`x-api-key`、`x-goog-api-key`、Cookie 等凭证，默认使用上游密钥。需要修改认证时使用精确名称，例如 OpenAI 的 `"Authorization": "Bearer {api_key}"`、Anthropic 的 `"x-api-key": "{api_key}"` 或 Gemini 的 `"x-goog-api-key": "{api_key}"`；模板会按当前接口类型填入。
+- `Host`、`Content-Length`、`Connection`、`Transfer-Encoding` 等连接控制头由 HTTP 自动管理，不能自定义；客户端 `Connection` 指定的头也不透传。非法名称、换行或控制字符会被拒绝。
+- 连接测试和模型获取也应用当前配置，并支持保存前测试。它们没有客户端调用请求头，客户端变量对应规则会跳过；管理员的登录凭证不会参与透传。修改配置会重新获取模型目录缓存。
+
+管理接口的 `header_overrides` 字段为 JSON 文本字符串，与 `model_map` 一样。更新时省略字段保留原值，传空字符串清除。
+
+在同一区域选择 **Codex 模板** 或 **Claude Code 模板**，可以替换 `User-Agent`，同时保留其他请求头。页面显示最新已检测版本、检测时间和生成的请求头，也可点击「检查更新」立即刷新。
+
+版本来自官方 npm 包的 `latest` 稳定版本：[Codex](https://registry.npmjs.org/@openai/codex/latest)、[Claude Code](https://registry.npmjs.org/@anthropic-ai/claude-code/latest)。服务启动时检测，正常每小时检查，失败后每 5 分钟重试；两个客户端分别更新，单个检测失败不会影响另一个。最近成功版本保存到 SQLite，网络失败或重启时继续使用缓存；没有成功获取过版本时不会填写虚构的版本号。
+
+模板使用动态变量，保存后后续请求自动跟随新版，无需重新编辑上游：
+
+```json
+{"User-Agent": "{codex_user_agent}"}
+```
+
+```json
+{"User-Agent": "{claude_code_user_agent}"}
+```
+
+分别生成 `codex_cli_rs/<版本>`（Codex CLI 标识的版本部分）与 `claude-cli/<版本> (external, cli)`。格式依据 [Codex 官方客户端源码](https://github.com/openai/codex/blob/main/codex-rs/login/src/auth/default_client.rs)与 [Claude Code 官方维护记录](https://github.com/anthropics/claude-code/issues/72879)。这些变量在转发、流式请求、连接测试和模型获取中都生效；新版被检测到后，相关上游的模型目录缓存也会更新。手动填写固定 `User-Agent` 的上游不会跟随版本变化。
 
 #### 获取当前 Key 的模型
 

@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS upstreams (
   model_map TEXT NOT NULL DEFAULT '',
   enabled INTEGER NOT NULL DEFAULT 1,
   proxy_id INTEGER NOT NULL DEFAULT 0,
+  header_overrides TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS outbound_proxies (
@@ -155,6 +156,21 @@ CREATE TABLE IF NOT EXISTS session_affinity (
 	if err != nil {
 		return err
 	}
+	rows, err = db.Query(`SELECT name FROM pragma_table_info('upstreams') WHERE name='header_overrides'`)
+	if err != nil {
+		return err
+	}
+	hasHeaders := rows.Next()
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	if !hasHeaders {
+		if _, err = db.Exec(`ALTER TABLE upstreams ADD COLUMN header_overrides TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
 	return migrateTimestampsToBeijing()
 }
 
@@ -175,17 +191,18 @@ type ApiKey struct {
 }
 
 type Upstream struct {
-	ID        int64  `json:"id"`
-	Name      string `json:"name"`
-	Type      string `json:"type"` // openai | anthropic
-	BaseURL   string `json:"base_url"`
-	APIKey    string `json:"api_key"`
-	Weight    int    `json:"weight"`
-	Models    string `json:"models"`
-	ModelMap  string `json:"model_map"`
-	Enabled   bool   `json:"enabled"`
-	ProxyID   int64  `json:"proxy_id"`
-	CreatedAt string `json:"created_at"`
+	ID              int64  `json:"id"`
+	Name            string `json:"name"`
+	Type            string `json:"type"` // openai | anthropic
+	BaseURL         string `json:"base_url"`
+	APIKey          string `json:"api_key"`
+	Weight          int    `json:"weight"`
+	Models          string `json:"models"`
+	ModelMap        string `json:"model_map"`
+	Enabled         bool   `json:"enabled"`
+	ProxyID         int64  `json:"proxy_id"`
+	HeaderOverrides string `json:"header_overrides"`
+	CreatedAt       string `json:"created_at"`
 }
 
 type CallLog struct {
@@ -326,12 +343,12 @@ func dbAddUsedUSD(keyID int64, cost float64) error {
 // ---------- upstreams ----------
 
 func dbGetUpstream(id int64) (*Upstream, error) {
-	row := db.QueryRow(`SELECT id,name,type,base_url,api_key,weight,models,model_map,enabled,created_at,proxy_id
+	row := db.QueryRow(`SELECT id,name,type,base_url,api_key,weight,models,model_map,enabled,created_at,proxy_id,header_overrides
 		FROM upstreams WHERE id=?`, id)
 	u := &Upstream{}
 	var enabled int
 	if err := row.Scan(&u.ID, &u.Name, &u.Type, &u.BaseURL, &u.APIKey, &u.Weight,
-		&u.Models, &u.ModelMap, &enabled, &u.CreatedAt, &u.ProxyID); err != nil {
+		&u.Models, &u.ModelMap, &enabled, &u.CreatedAt, &u.ProxyID, &u.HeaderOverrides); err != nil {
 		return nil, err
 	}
 	u.Enabled = enabled == 1
@@ -339,7 +356,7 @@ func dbGetUpstream(id int64) (*Upstream, error) {
 }
 
 func dbListUpstreams() ([]Upstream, error) {
-	rows, err := db.Query(`SELECT id,name,type,base_url,api_key,weight,models,model_map,enabled,created_at,proxy_id
+	rows, err := db.Query(`SELECT id,name,type,base_url,api_key,weight,models,model_map,enabled,created_at,proxy_id,header_overrides
 		FROM upstreams ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -350,7 +367,7 @@ func dbListUpstreams() ([]Upstream, error) {
 		var u Upstream
 		var enabled int
 		if err := rows.Scan(&u.ID, &u.Name, &u.Type, &u.BaseURL, &u.APIKey, &u.Weight,
-			&u.Models, &u.ModelMap, &enabled, &u.CreatedAt, &u.ProxyID); err != nil {
+			&u.Models, &u.ModelMap, &enabled, &u.CreatedAt, &u.ProxyID, &u.HeaderOverrides); err != nil {
 			return nil, err
 		}
 		u.Enabled = enabled == 1
@@ -360,9 +377,9 @@ func dbListUpstreams() ([]Upstream, error) {
 }
 
 func dbInsertUpstream(u *Upstream) error {
-	res, err := db.Exec(`INSERT INTO upstreams(name,type,base_url,api_key,weight,models,model_map,enabled,created_at,proxy_id)
-		VALUES(?,?,?,?,?,?,?,?,?,?)`,
-		u.Name, u.Type, u.BaseURL, u.APIKey, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), nowStr(), u.ProxyID)
+	res, err := db.Exec(`INSERT INTO upstreams(name,type,base_url,api_key,weight,models,model_map,enabled,created_at,proxy_id,header_overrides)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		u.Name, u.Type, u.BaseURL, u.APIKey, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), nowStr(), u.ProxyID, u.HeaderOverrides)
 	if err == nil {
 		u.ID, _ = res.LastInsertId()
 	}
@@ -370,8 +387,8 @@ func dbInsertUpstream(u *Upstream) error {
 }
 
 func dbUpdateUpstream(u *Upstream) error {
-	_, err := db.Exec(`UPDATE upstreams SET name=?,type=?,base_url=?,api_key=?,weight=?,models=?,model_map=?,enabled=?,proxy_id=? WHERE id=?`,
-		u.Name, u.Type, u.BaseURL, u.APIKey, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), u.ProxyID, u.ID)
+	_, err := db.Exec(`UPDATE upstreams SET name=?,type=?,base_url=?,api_key=?,weight=?,models=?,model_map=?,enabled=?,proxy_id=?,header_overrides=? WHERE id=?`,
+		u.Name, u.Type, u.BaseURL, u.APIKey, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), u.ProxyID, u.HeaderOverrides, u.ID)
 	return err
 }
 

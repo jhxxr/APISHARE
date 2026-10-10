@@ -306,6 +306,9 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	default:
 		req.Header.Set("Authorization", "Bearer "+up.APIKey)
 	}
+	if err := applyHeaderOverrides(req, up.HeaderOverrides, up.APIKey, c.Request.Header); err != nil {
+		return info, false, err
+	}
 
 	start := time.Now()
 	client, err := clientForUpstream(upstreamHTTPClient, up.ProxyID)

@@ -46,7 +46,7 @@ func upstreamModelCacheKeyForProxy(u *Upstream, p *OutboundProxy) modelCacheKey 
 	if p != nil {
 		proxyConnection = proxyFingerprint(p)
 	}
-	connection, _ := json.Marshal([]any{u.Type, u.BaseURL, u.APIKey, proxyConnection})
+	connection, _ := json.Marshal([]any{u.Type, u.BaseURL, u.APIKey, proxyConnection, u.HeaderOverrides, clientHeaderVersionFingerprint(u.HeaderOverrides)})
 	return modelCacheKey{u.ID, sha256.Sum256(connection)}
 }
 
@@ -79,15 +79,22 @@ func probeUpstreamModels(ctx context.Context, upType, baseURL, apiKey string) ([
 	return probeUpstreamModelsWithProxy(ctx, upType, baseURL, apiKey, 0)
 }
 
-func probeUpstreamModelsWithProxy(ctx context.Context, upType, baseURL, apiKey string, proxyID int64) ([]string, error) {
+func probeUpstreamModelsWithProxy(ctx context.Context, upType, baseURL, apiKey string, proxyID int64, headerOverrides ...string) ([]string, error) {
 	client, err := clientForUpstream(modelsFetchClient, proxyID)
 	if err != nil {
 		return nil, err
 	}
-	return probeUpstreamModelsWithClient(ctx, upType, baseURL, apiKey, client)
+	return probeUpstreamModelsWithClient(ctx, upType, baseURL, apiKey, client, headerOverrides...)
 }
 
-func probeUpstreamModelsWithClient(ctx context.Context, upType, baseURL, apiKey string, client *http.Client) ([]string, error) {
+func probeUpstreamModelsWithClient(ctx context.Context, upType, baseURL, apiKey string, client *http.Client, headerOverrides ...string) ([]string, error) {
+	headers := ""
+	if len(headerOverrides) > 0 {
+		headers = headerOverrides[0]
+	}
+	if _, err := parseHeaderOverrides(headers); err != nil {
+		return nil, err
+	}
 	upType, baseURL, apiKey = strings.TrimSpace(upType), strings.TrimSpace(baseURL), strings.TrimSpace(apiKey)
 	if upType != "openai" && upType != "anthropic" && upType != "gemini" {
 		return nil, fmt.Errorf("type must be openai, anthropic or gemini")
@@ -133,6 +140,9 @@ func probeUpstreamModelsWithClient(ctx context.Context, upType, baseURL, apiKey 
 			req.Header.Set("x-goog-api-key", apiKey)
 		default:
 			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+		if err := applyHeaderOverrides(req, headers, apiKey, nil); err != nil {
+			return nil, err
 		}
 		resp, err := client.Do(req)
 		if err != nil {
@@ -236,7 +246,7 @@ func cachedUpstreamModels(ctx context.Context, u *Upstream) ([]string, error) {
 			if err != nil {
 				flight.err = err
 			} else {
-				flight.ids, flight.err = probeUpstreamModelsWithClient(context.Background(), connection.Type, connection.BaseURL, connection.APIKey, client)
+				flight.ids, flight.err = probeUpstreamModelsWithClient(context.Background(), connection.Type, connection.BaseURL, connection.APIKey, client, connection.HeaderOverrides)
 			}
 			modelsCache.Lock()
 			defer modelsCache.Unlock()

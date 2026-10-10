@@ -423,7 +423,7 @@ async function testUpstream(id, button) {
 
 /* One editor for both creation and updates. */
 function editorValue() {
-  return JSON.stringify(["editName", "editType", "editBase", "editKey", "editProxy", "editWeight", "editModels", "editModelMap"].map((id) => $(id).value).concat($("editEnabled").checked));
+  return JSON.stringify(["editName", "editType", "editBase", "editKey", "editProxy", "editHeaderOverrides", "editWeight", "editModels", "editModelMap"].map((id) => $(id).value).concat($("editEnabled").checked));
 }
 function editorDirty() { return $("editModal").open && editorValue() !== editProbe.initial; }
 function updateEditorDirty() {
@@ -447,7 +447,7 @@ async function openEditor(upstream) {
   editProbe.saving = false; editProbe.closing = false; editProbe.models = [];
   $("upstreamEditorForm").reset();
   $("upstreamEditorForm").querySelectorAll(".form-error").forEach((error) => error.classList.add("hidden"));
-  const values = { editName: upstream?.name || "", editType: upstream?.type || "openai", editBase: upstream?.base_url || providerURLs.openai, editKey: "", editWeight: upstream ? upstream.weight : 1, editModels: upstream?.models || "", editModelMap: upstream?.model_map || "" };
+  const values = { editName: upstream?.name || "", editType: upstream?.type || "openai", editBase: upstream?.base_url || providerURLs.openai, editKey: "", editHeaderOverrides: upstream?.header_overrides || "", editWeight: upstream ? upstream.weight : 1, editModels: upstream?.models || "", editModelMap: upstream?.model_map || "" };
   Object.entries(values).forEach(([id, value]) => { $(id).value = value; $(id).setCustomValidity(""); $(id).removeAttribute("aria-invalid"); });
   renderProxyOptions(upstream?.proxy_id || 0);
   editProbe.selected = new Set(parseAllowlist($("editModels").value));
@@ -470,7 +470,7 @@ async function openEditor(upstream) {
   $("editorError").classList.add("hidden"); $("modelMapError").classList.add("hidden");
   $("modelMapDetails").open = !!upstream?.model_map;
   setBusy($("probeEditorButton"), false);
-  updateEditorProvider(false); renderModelChips();
+  updateEditorProvider(false); renderModelChips(); validateHeaderOverrides();
   editProbe.initial = editorValue();
   $("editModal").showModal();
   document.body.classList.add("modal-open");
@@ -478,6 +478,7 @@ async function openEditor(upstream) {
   activateEditorSection("editorBasic");
   updateEditorDirty();
   $("editName").focus();
+  loadClientHeaderVersions();
 }
 function updateEditorProvider(changed = true) {
   const type = $("editType").value;
@@ -616,13 +617,14 @@ function formatJSON(id) {
 }
 async function probeEditUpstream() {
   const base = $("editBase"), key = $("editKey");
+  if (!validateHeaderOverrides()) { jumpEditor("editorHeaders"); $("editHeaderOverrides").reportValidity(); return; }
   if (!base.checkValidity()) { jumpEditor("editorConnection"); base.reportValidity(); return; }
   if (editProbe.id === null && !key.value.trim()) { jumpEditor("editorConnection"); key.reportValidity(); return; }
   clearProbeResults();
   const generation = editProbe.generation;
   editProbe.controller = new AbortController();
-  const signature = [$("editType").value, base.value, key.value, $("editProxy").value].join("\n");
-  const body = { type: $("editType").value, base_url: base.value.trim(), proxy_id: Number($("editProxy").value) };
+  const signature = [$("editType").value, base.value, key.value, $("editProxy").value, $("editHeaderOverrides").value].join("\n");
+  const body = { type: $("editType").value, base_url: base.value.trim(), proxy_id: Number($("editProxy").value), header_overrides: $("editHeaderOverrides").value.trim() };
   if (key.value.trim()) body.api_key = key.value.trim();
   $("editProbeInfo").className = "probe-info";
   $("editProbeInfo").textContent = key.value.trim() ? "正在使用当前填写的 Key 获取模型…" : "正在使用已保存的 Key 获取模型…";
@@ -630,7 +632,7 @@ async function probeEditUpstream() {
   try {
     const path = editProbe.id === null ? "api/upstream-probe" : "api/upstreams/" + editProbe.id + "/probe";
     const result = await api(path, { method: "POST", body: JSON.stringify(body), signal: editProbe.controller.signal });
-    if (generation !== editProbe.generation || signature !== [$("editType").value, base.value, key.value, $("editProxy").value].join("\n")) return;
+    if (generation !== editProbe.generation || signature !== [$("editType").value, base.value, key.value, $("editProxy").value, $("editHeaderOverrides").value].join("\n")) return;
     if (!result.ok) throw new Error(result.error || "上游未返回模型");
     editProbe.models = [...new Set(result.models || [])];
     editProbe.selected = new Set(parseAllowlist($("editModels").value));
@@ -639,7 +641,7 @@ async function probeEditUpstream() {
     $("editProbeArea").classList.toggle("hidden", editProbe.models.length === 0);
     renderEditProbeList();
   } catch (error) {
-    if (generation !== editProbe.generation || error.name === "AbortError" || error.message === "unauthorized" || signature !== [$("editType").value, base.value, key.value, $("editProxy").value].join("\n")) return;
+    if (generation !== editProbe.generation || error.name === "AbortError" || error.message === "unauthorized" || signature !== [$("editType").value, base.value, key.value, $("editProxy").value, $("editHeaderOverrides").value].join("\n")) return;
     $("editProbeInfo").className = "probe-info error";
     const status = error.message.match(/HTTP (\d{3})/);
     const hint = status && ({ 401: "当前 Key 认证失败，请检查密钥", 403: "当前 Key 没有模型列表访问权限", 404: "未找到模型接口，请检查 Base URL 和接口类型", 407: "代理认证失败，请检查代理用户名和密码", 429: "上游请求过于频繁，请稍后重试" })[status[1]];
@@ -649,6 +651,7 @@ async function probeEditUpstream() {
 async function saveEditUpstream(event) {
   event.preventDefault();
   if (editProbe.saving) return false;
+  if (!validateHeaderOverrides()) { jumpEditor("editorHeaders"); $("editHeaderOverrides").reportValidity(); return false; }
   if (!validateModelMap()) { $("modelMapDetails").open = true; jumpEditor("editorModels"); $("editModelMap").reportValidity(); return false; }
   if (!$("editName").value.trim()) { $("editName").setCustomValidity("请输入上游名称"); jumpEditor("editorBasic"); $("editName").reportValidity(); return false; }
   const creating = editProbe.id === null;
@@ -657,7 +660,7 @@ async function saveEditUpstream(event) {
     if (!["http:", "https:"].includes(new URL($("editBase").value).protocol)) throw new Error();
   } catch { $("editBase").setCustomValidity("请输入以 http:// 或 https:// 开头的服务地址"); jumpEditor("editorConnection"); $("editBase").reportValidity(); return false; }
   if (!$("upstreamEditorForm").reportValidity()) return false;
-  const body = { name: $("editName").value.trim(), type: $("editType").value, base_url: $("editBase").value.trim().replace(/\/+$/, ""), proxy_id: Number($("editProxy").value), weight: Number($("editWeight").value), models: parseAllowlist($("editModels").value).join(","), model_map: $("editModelMap").value.trim() };
+  const body = { name: $("editName").value.trim(), type: $("editType").value, base_url: $("editBase").value.trim().replace(/\/+$/, ""), proxy_id: Number($("editProxy").value), weight: Number($("editWeight").value), models: parseAllowlist($("editModels").value).join(","), model_map: $("editModelMap").value.trim(), header_overrides: $("editHeaderOverrides").value.trim() };
   if (!creating) body.enabled = $("editEnabled").checked;
   if ($("editKey").value.trim()) body.api_key = $("editKey").value.trim();
   editProbe.saving = true; updateEditorDirty();
@@ -678,8 +681,8 @@ async function saveEditUpstream(event) {
   return false;
 }
 $("upstreamEditorForm").addEventListener("input", (event) => {
-  if (event.target.id !== "editModelMap" && event.target.setCustomValidity) event.target.setCustomValidity("");
-  if (["editBase", "editKey"].includes(event.target.id)) clearProbeResults();
+  if (!["editModelMap", "editHeaderOverrides"].includes(event.target.id) && event.target.setCustomValidity) event.target.setCustomValidity("");
+  if (["editBase", "editKey", "editHeaderOverrides"].includes(event.target.id)) clearProbeResults();
   updateEditorDirty();
 });
 $("upstreamEditorForm").addEventListener("change", updateEditorDirty);

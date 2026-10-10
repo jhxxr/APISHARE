@@ -35,6 +35,7 @@ func main() {
 		fmt.Println("failed to load settings:", err)
 	}
 	loadAutoPricingCache()
+	loadClientVersionCache()
 	if err := bootstrapAdmin(); err != nil {
 		fmt.Println("failed to bootstrap admin:", err)
 		os.Exit(1)
@@ -42,6 +43,7 @@ func main() {
 	go affinityCleanupLoop()
 	go limiterJanitorLoop()
 	go pricingRefresherLoop()
+	go clientVersionRefreshLoop()
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -90,6 +92,10 @@ func corsV1() gin.HandlerFunc {
 			"Authorization, Content-Type, x-api-key, x-goog-api-key, anthropic-version, anthropic-beta, X-Session-Id, X-Conversation-Id")
 		h.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		if c.Request.Method == http.MethodOptions {
+			if requested := c.GetHeader("Access-Control-Request-Headers"); requested != "" {
+				h.Set("Access-Control-Allow-Headers", requested)
+				h.Add("Vary", "Access-Control-Request-Headers")
+			}
 			c.AbortWithStatus(http.StatusNoContent)
 			return
 		}

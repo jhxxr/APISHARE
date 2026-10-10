@@ -112,6 +112,7 @@ func registerAdminRoutes(r *gin.Engine) {
 	})
 
 	auth := api.Group("", adminAuth())
+	registerClientVersionRoutes(auth)
 	auth.GET("/me", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": true, "admin_path": currentAdminPath(), "setup_required": adminSetupRequired()})
 	})
@@ -263,6 +264,10 @@ func registerAdminRoutes(r *gin.Engine) {
 			c.JSON(400, gin.H{"error": "base_url and api_key are required"})
 			return
 		}
+		if _, err := parseHeaderOverrides(u.HeaderOverrides); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
 		if err := validateUpstreamProxy(u.ProxyID); err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
@@ -288,15 +293,16 @@ func registerAdminRoutes(r *gin.Engine) {
 			return
 		}
 		var req struct {
-			Name     *string `json:"name"`
-			Type     *string `json:"type"`
-			BaseURL  *string `json:"base_url"`
-			APIKey   *string `json:"api_key"`
-			Weight   *int    `json:"weight"`
-			Models   *string `json:"models"`
-			ModelMap *string `json:"model_map"`
-			Enabled  *bool   `json:"enabled"`
-			ProxyID  *int64  `json:"proxy_id"`
+			Name            *string `json:"name"`
+			Type            *string `json:"type"`
+			BaseURL         *string `json:"base_url"`
+			APIKey          *string `json:"api_key"`
+			Weight          *int    `json:"weight"`
+			Models          *string `json:"models"`
+			ModelMap        *string `json:"model_map"`
+			Enabled         *bool   `json:"enabled"`
+			ProxyID         *int64  `json:"proxy_id"`
+			HeaderOverrides *string `json:"header_overrides"`
 		}
 		if c.BindJSON(&req) != nil {
 			return
@@ -321,6 +327,13 @@ func registerAdminRoutes(r *gin.Engine) {
 		}
 		if req.ModelMap != nil {
 			u.ModelMap = *req.ModelMap
+		}
+		if req.HeaderOverrides != nil {
+			if _, err := parseHeaderOverrides(*req.HeaderOverrides); err != nil {
+				c.JSON(400, gin.H{"error": err.Error()})
+				return
+			}
+			u.HeaderOverrides = *req.HeaderOverrides
 		}
 		if req.Enabled != nil {
 			u.Enabled = *req.Enabled
@@ -358,7 +371,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			return
 		}
 		start := time.Now()
-		models, err := probeUpstreamModelsWithProxy(c.Request.Context(), u.Type, u.BaseURL, u.APIKey, u.ProxyID)
+		models, err := probeUpstreamModelsWithProxy(c.Request.Context(), u.Type, u.BaseURL, u.APIKey, u.ProxyID, u.HeaderOverrides)
 		latency := time.Since(start).Milliseconds()
 		if err != nil {
 			c.JSON(200, gin.H{"ok": false, "latency_ms": latency, "error": err.Error()})
@@ -369,9 +382,13 @@ func registerAdminRoutes(r *gin.Engine) {
 
 	// probeUpstream 处理两种探测：未保存的上游（/upstream-probe，必须显式给全参数）
 	// 与已保存的上游（/upstreams/:id/probe，参数留空则用已存值）。
-	probeResult := func(c *gin.Context, typ, base, key string, proxyID int64) {
+	probeResult := func(c *gin.Context, typ, base, key string, proxyID int64, headers string) {
+		if _, err := parseHeaderOverrides(headers); err != nil {
+			c.JSON(400, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
 		start := time.Now()
-		models, err := probeUpstreamModelsWithProxy(c.Request.Context(), typ, base, key, proxyID)
+		models, err := probeUpstreamModelsWithProxy(c.Request.Context(), typ, base, key, proxyID, headers)
 		latency := time.Since(start).Milliseconds()
 		if err != nil {
 			c.JSON(200, gin.H{"ok": false, "latency_ms": latency, "error": err.Error()})
@@ -382,10 +399,11 @@ func registerAdminRoutes(r *gin.Engine) {
 
 	auth.POST("/upstream-probe", func(c *gin.Context) {
 		var req struct {
-			Type    string `json:"type"`
-			BaseURL string `json:"base_url"`
-			APIKey  string `json:"api_key"`
-			ProxyID int64  `json:"proxy_id"`
+			Type            string `json:"type"`
+			BaseURL         string `json:"base_url"`
+			APIKey          string `json:"api_key"`
+			ProxyID         int64  `json:"proxy_id"`
+			HeaderOverrides string `json:"header_overrides"`
 		}
 		if c.ShouldBindJSON(&req) != nil || req.Type == "" || req.BaseURL == "" || req.APIKey == "" {
 			c.JSON(400, gin.H{"ok": false, "error": "type, base_url and api_key are required"})
@@ -395,7 +413,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			c.JSON(400, gin.H{"ok": false, "error": "type must be openai, anthropic or gemini"})
 			return
 		}
-		probeResult(c, req.Type, req.BaseURL, req.APIKey, req.ProxyID)
+		probeResult(c, req.Type, req.BaseURL, req.APIKey, req.ProxyID, req.HeaderOverrides)
 	})
 
 	auth.POST("/upstreams/:id/probe", func(c *gin.Context) {
@@ -406,10 +424,11 @@ func registerAdminRoutes(r *gin.Engine) {
 			return
 		}
 		var req struct {
-			Type    string `json:"type"`
-			BaseURL string `json:"base_url"`
-			APIKey  string `json:"api_key"`
-			ProxyID *int64 `json:"proxy_id"`
+			Type            string  `json:"type"`
+			BaseURL         string  `json:"base_url"`
+			APIKey          string  `json:"api_key"`
+			ProxyID         *int64  `json:"proxy_id"`
+			HeaderOverrides *string `json:"header_overrides"`
 		}
 		// An empty body uses saved values; malformed edits must never silently
 		// fall back to the stored key and report a misleading success.
@@ -431,7 +450,11 @@ func registerAdminRoutes(r *gin.Engine) {
 		if req.ProxyID != nil {
 			proxyID = *req.ProxyID
 		}
-		probeResult(c, typ, base, key, proxyID)
+		headers := u.HeaderOverrides
+		if req.HeaderOverrides != nil {
+			headers = *req.HeaderOverrides
+		}
+		probeResult(c, typ, base, key, proxyID, headers)
 	})
 
 	// ---------- Logs ----------
