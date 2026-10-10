@@ -78,7 +78,7 @@ const flatModels = () => lines.flatMap(l=>l.models);
 const energy = () => overview?.summary.configured?clamp(Math.log10(1+tokens(overview.summary))/10,.12,1):.12;
 
 /* ---------- Canvas helpers (textures and in-world screens) ---------- */
-function makeCanvas(w,h) { const c=document.createElement("canvas");c.width=w;c.height=h;return [c,c.getContext("2d")]; }
+function makeCanvas(w,h,contextOptions) { const c=document.createElement("canvas");c.width=w;c.height=h;return [c,c.getContext("2d",contextOptions)]; }
 function fitStr(g,s,maxW) { s=String(s);if(g.measureText(s).width<=maxW)return s;while(s.length>2&&g.measureText(s+"…").width>maxW)s=s.slice(0,-1);return s+"…"; }
 function text(g,str,x,y,{size=24,font=SANS,weight=500,color="#fff",align="left",base="alphabetic",glow=0,glowColor,maxW,alpha=1}={}) {
  g.font=weight+" "+size+"px "+font;g.textAlign=align;g.textBaseline=base;
@@ -135,6 +135,7 @@ async function main() {
  composer.addPass(grade);
 
  // A dim neon environment so metal and wet surfaces have something to reflect.
+ let trainNoseEnvironment;
  {
   const env=new THREE.Scene(),pm=new THREE.PMREMGenerator(renderer);
   env.add(new THREE.Mesh(new THREE.BoxGeometry(30,10,30),new THREE.MeshBasicMaterial({color:0x05070c,side:THREE.BackSide})));
@@ -142,6 +143,13 @@ async function main() {
    const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,w>1?.2:8),new THREE.MeshBasicMaterial({color:new THREE.Color(c).multiplyScalar(3)}));m.position.set(x,y,z);env.add(m);
   }
   scene.environment=pm.fromScene(env,.04).texture;scene.environmentIntensity=.28;
+  // The nose faces the unlit station entrance. Give its metal and glass a soft
+  // reflected concourse wall and overhead strip, without brightening the whole station.
+  for(const [color,y,z,w,h] of [[0x283746,1,14,18,10],[0xc8dbe3,4.2,13,10,.65]]){
+   const card=new THREE.Mesh(new THREE.BoxGeometry(w,h,.1),new THREE.MeshBasicMaterial({color}));card.position.set(-2,y,z);env.add(card);
+  }
+  trainNoseEnvironment=pm.fromScene(env,.08,.1,100,{size:128}).texture;
+  env.traverse(object=>{if(object.isMesh){object.geometry.dispose();object.material.dispose();}});pm.dispose();
  }
 
  /* ---------- Procedural materials ---------- */
@@ -608,51 +616,150 @@ async function main() {
  adScreens.forEach((s,i)=>plane(8,2.7,screenMat(s),P(WALL_R-.04,2.05,17.5+i*16),-Math.PI/2));
 
  /* ---------- Trains ---------- */
+ // AI-authored albedo supplies the metal grain; lighting and reflections stay in the renderer.
+ // A small local fallback keeps trains available while the image loads, or if it cannot load.
+ const TRAIN_SKIN={w:3072,h:384,car:1024,windows:[32,176,560,704],windowW:120,windowY:110,windowH:114,doors:[328,856],doorW:136};
+ const [trainMetal,trainMetalG]=makeCanvas(512,512);
+ trainMetalG.fillStyle="#919ba5";trainMetalG.fillRect(0,0,512,512);
+ trainMetalG.fillStyle="rgba(255,255,255,.035)";for(let y=0;y<512;y+=3)trainMetalG.fillRect(0,y,512,1);
+ const [trainGrain,trainGrainG]=makeCanvas(512,512,{willReadFrequently:true});
+ const metalGrain=texFrom(trainGrain,[10,1],false),frontGrain=metalGrain.clone();frontGrain.repeat.set(.8,1);
+ function updateTrainGrain() {
+  trainGrainG.drawImage(trainMetal,0,0);
+  const pixels=trainGrainG.getImageData(0,0,512,512);
+  for(let i=0;i<pixels.data.length;i+=4){const gray=Math.round(pixels.data[i]*.2126+pixels.data[i+1]*.7152+pixels.data[i+2]*.0722);pixels.data[i]=pixels.data[i+1]=pixels.data[i+2]=gray;}
+  trainGrainG.putImageData(pixels,0,0);metalGrain.needsUpdate=frontGrain.needsUpdate=true;
+ }
+ updateTrainGrain();
  const trainTextures=new Map();
+ const trainSkinImage=new Image();trainSkinImage.decoding="async";
+ trainSkinImage.onload=()=>{
+  trainMetalG.drawImage(trainSkinImage,0,0,512,512);updateTrainGrain();
+  for(const set of trainTextures.values())for(const texture of Object.values(set))texture.dispose();
+  trainTextures.clear();
+  for(const train of [local,...expresses]){const line=train.line;if(line===undefined)continue;train.line=undefined;dressTrain(train,line);}
+  requestFrame();
+ };
+ trainSkinImage.src="/public/static/textures/train-brushed-metal-v1.webp";
+ function paintTrainMetal(g,w,h) {
+  g.fillStyle="#a2adb8";g.fillRect(0,0,w,h);
+  // Keep the generated detail at physical scale instead of stretching one image over 33 metres.
+  g.globalAlpha=.58;const tile=h;for(let x=0;x<w;x+=tile)g.drawImage(trainMetal,x,0,tile,tile);g.globalAlpha=1;
+ }
  function trainTex(line,kind) {
   const key=(line?.family||"none")+kind;if(trainTextures.has(key))return trainTextures.get(key);
   const color=line?.meta.color||"#7d8799";
-  const [c,g]=makeCanvas(2048,256),[e,eg]=makeCanvas(2048,256);
-  g.fillStyle="#1d222b";g.fillRect(0,0,2048,256);speckle(g,2048,256,9000,.08);streaks(g,2048,256,40,.3,40);
-  eg.fillStyle="#000";eg.fillRect(0,0,2048,256);
+  const {w,h,car:carW,windows,windowW,windowY,windowH,doors,doorW}=TRAIN_SKIN;
+  const [c,g]=makeCanvas(w,h),[e,eg]=makeCanvas(w,h),[surface,sg]=makeCanvas(w,h);
+  paintTrainMetal(g,w,h);eg.fillStyle="#000";eg.fillRect(0,0,w,h);
+  // Packed PBR map: green = roughness, blue = metalness; data has no sRGB conversion.
+  sg.fillStyle="rgb(0,148,210)";sg.fillRect(0,0,w,h);
+  g.fillStyle="#18252f";g.fillRect(0,86,w,154);sg.fillStyle="rgb(0,102,100)";sg.fillRect(0,86,w,154);
+  g.fillStyle="#283440";g.fillRect(0,0,w,32);g.fillRect(0,345,w,39);
+  // Painted route bands reflect the station, with only a narrow roof marker emitting light.
+  g.fillStyle=color;g.fillRect(0,280,w,17);g.fillRect(0,36,w,3);
+  sg.fillStyle="rgb(0,118,12)";sg.fillRect(0,280,w,17);sg.fillRect(0,36,w,3);
+  eg.fillStyle=color;eg.fillRect(0,36,w,1);
+  g.fillStyle="rgba(232,243,255,.42)";g.fillRect(0,306,w,1);g.fillRect(0,341,w,1);
   for(let car=0;car<3;car++){
-   const x0=car*2048/3;
-   g.fillStyle="#0b0d11";g.fillRect(x0,0,5,256);
-   for(let wi=0;wi<4;wi++){
-    const wx=x0+70+wi*150,ww=110,people=[0,1,2].filter(()=>Math.random()>.35).map(()=>({px:wx+rnd(10,ww-24),ph:rnd(34,60),pw:rnd(16,24)}));
+   const x0=car*carW;
+   g.fillStyle="#090d12";g.fillRect(x0,0,12,h);sg.fillStyle="rgb(0,224,0)";sg.fillRect(x0,0,12,h);
+   for(let dx=2;dx<12;dx+=3){g.fillStyle="#34404a";g.fillRect(x0+dx,44,1,296);}
+   function cabinWindow(wx,wy,ww,wh,passengers) {
+    g.fillStyle="#080e14";rrect(g,wx-5,wy-5,ww+10,wh+10,11);g.fill();
     for(const [ctx,lit] of [[g,false],[eg,true]]){
-     const gr=ctx.createLinearGradient(0,70,0,150);gr.addColorStop(0,lit?"#ffe6c0":"#e9d3b4");gr.addColorStop(1,lit?"#ffb878":"#c69a72");ctx.fillStyle=gr;rrect(ctx,wx,70,ww,80,10);ctx.fill();
-     // Passengers silhouetted against the cabin light.
-     ctx.fillStyle="rgba(10,8,8,.82)";for(const p of people){rrect(ctx,p.px,150-p.ph,p.pw,p.ph,8);ctx.fill();ctx.beginPath();ctx.arc(p.px+p.pw/2,150-p.ph-6,9,0,Math.PI*2);ctx.fill();}
+     const gr=ctx.createLinearGradient(0,wy,0,wy+wh);gr.addColorStop(0,lit?"#bdb29b":"#747b79");gr.addColorStop(.4,lit?"#786c59":"#424c51");gr.addColorStop(1,lit?"#302b25":"#192830");
+     ctx.fillStyle=gr;rrect(ctx,wx,wy,ww,wh,7);ctx.fill();ctx.save();ctx.clip();
+     ctx.fillStyle=lit?"#ddc7a0":"#a8aaa0";ctx.fillRect(wx+6,wy+7,ww-12,3);
+     ctx.fillStyle=lit?"#3e352b":"#293f4d";ctx.fillRect(wx,wy+wh-26,ww,18);
+     ctx.fillStyle=lit?"#5b5548":"#8c999d";ctx.fillRect(wx+ww*.75,wy+9,2,wh-16);
+     ctx.strokeStyle=lit?"#6c6250":"#9ba3a0";ctx.lineWidth=2;
+     for(const dx of [ww*.22,ww*.52]){ctx.beginPath();ctx.moveTo(wx+dx,wy+9);ctx.lineTo(wx+dx,wy+25);ctx.arc(wx+dx,wy+30,5,-Math.PI/2,Math.PI*1.5);ctx.stroke();}
+     ctx.fillStyle=lit?"#111419":"#111c24";
+     for(const p of passengers){rrect(ctx,p.x,wy+wh-p.h,p.w,p.h,7);ctx.fill();ctx.beginPath();ctx.arc(p.x+p.w/2,wy+wh-p.h-8,8,0,Math.PI*2);ctx.fill();}
+     ctx.restore();
     }
+    sg.fillStyle="rgb(0,48,0)";rrect(sg,wx-5,wy-5,ww+10,wh+10,11);sg.fill();
    }
-   for(const dx of [620,640]){g.strokeStyle="#0b0d11";g.lineWidth=3;g.strokeRect(x0+dx-30,40,60,200);}
-   text(g,line?line.meta.code+" "+(car+1):"",x0+20,40,{size:22,font:DISPLAY,weight:700,color:"#8b97a8"});
+   windows.forEach((dx,wi)=>{
+    const wx=x0+dx,people=(car+wi)%3===0?[]:[{x:wx+24,h:43,w:20},...((car+wi)%2?[{x:wx+72,h:57,w:22}]:[])];
+    cabinWindow(wx,windowY,windowW,windowH,people);
+   });
+   for(const dx of doors){
+    const x=x0+dx;g.fillStyle="#080e14";rrect(g,x-3,61,doorW+6,285,9);g.fill();
+    g.save();rrect(g,x,64,doorW,278,7);g.clip();paintTrainMetal(g,w,h);g.restore();
+    sg.fillStyle="rgb(0,162,185)";rrect(sg,x,64,doorW,278,7);sg.fill();
+    g.fillStyle=color;g.fillRect(x,280,doorW,17);sg.fillStyle="rgb(0,118,12)";sg.fillRect(x,280,doorW,17);
+    for(const offset of [13,doorW/2+9])cabinWindow(x+offset,104,46,116,[]);
+    g.fillStyle="#131d27";g.fillRect(x+doorW/2-1,65,2,277);
+    g.fillStyle="rgba(235,245,255,.65)";g.fillRect(x+doorW/2+2,66,1,273);
+    g.fillStyle="#34424e";g.fillRect(x+doorW/2-13,240,6,15);g.fillRect(x+doorW/2+8,240,6,15);
+    g.fillStyle="#d6b968";g.fillRect(x+doorW/2-7,251,4,4);g.fillRect(x+doorW/2+4,251,4,4);
+    eg.fillStyle="#84bd9b";eg.fillRect(x+doorW/2-5,54,10,3);
+   }
+   text(g,line?line.meta.code+" · "+String(car+1).padStart(2,"0"):"",x0+34,66,{size:19,font:MONO,weight:600,color:"#cad4da"});
+   text(g,"TOKEN METRO",x0+34,327,{size:14,font:DISPLAY,weight:600,color:"#34424d"});
+   for(let x=x0+40;x<x0+carW-15;x+=76){g.fillStyle="rgba(7,18,28,.35)";g.fillRect(x,351,33,2);}
   }
-  for(const ctx of [g,eg]){ctx.fillStyle=color;ctx.fillRect(0,186,2048,14);ctx.fillRect(0,26,2048,4);}
-  text(g,"TOKEN METRO",1500,238,{size:24,font:DISPLAY,weight:800,color:"#9aa6b8"});
-  const [f,fg]=makeCanvas(512,700),[fe,feg]=makeCanvas(512,700);
-  fg.fillStyle="#20262f";fg.fillRect(0,0,512,700);speckle(fg,512,700,3000,.08);
+  const [f,fg]=makeCanvas(512,700),[fe,feg]=makeCanvas(512,700),[fs,fsg]=makeCanvas(512,700);
+  paintTrainMetal(fg,512,700);fsg.fillStyle="rgb(0,146,210)";fsg.fillRect(0,0,512,700);
   feg.fillStyle="#000";feg.fillRect(0,0,512,700);
-  {const gr=fg.createLinearGradient(0,170,0,420);gr.addColorStop(0,"#1c3247");gr.addColorStop(1,"#05080d");fg.fillStyle=gr;rrect(fg,48,170,416,250,22);fg.fill();}
+  fg.fillStyle="#16232f";rrect(fg,25,38,462,406,48);fg.fill();fsg.fillStyle="rgb(0,76,8)";rrect(fsg,25,38,462,406,48);fsg.fill();
+  {const gr=fg.createLinearGradient(0,170,0,420);gr.addColorStop(0,"#233f50");gr.addColorStop(1,"#070f19");fg.fillStyle=gr;rrect(fg,48,170,416,250,22);fg.fill();fsg.fillStyle="rgb(0,28,0)";rrect(fsg,48,170,416,250,22);fsg.fill();}
+  // Wipers and glass seals retain their own dark finish against the brushed nose.
+  fg.strokeStyle="#060b10";fg.lineWidth=7;for(const x of [123,324]){fg.beginPath();fg.moveTo(x,397);fg.lineTo(x+48,296);fg.lineTo(x+114,286);fg.stroke();}
+  fg.fillStyle="#17212c";rrect(fg,41,522,430,78,23);fg.fill();fsg.fillStyle="rgb(0,192,10)";rrect(fsg,41,522,430,78,23);fsg.fill();
   for(const ctx of [fg,feg]){
    ctx.fillStyle="#05070b";ctx.fillRect(70,60,372,80);
-   text(ctx,line?line.meta.name.toUpperCase():"OUT OF SERVICE",256,112,{size:40,font:DISPLAY,weight:700,color:"#ffb547",align:"center",maxW:350,glow:10,glowColor:"#ff8a00"});
-   ctx.fillStyle=color;ctx.fillRect(0,470,512,18);
+   text(ctx,line?line.meta.name.toUpperCase():"OUT OF SERVICE",256,112,{size:36,font:DISPLAY,weight:700,color:"#e5ac55",align:"center",maxW:350});
+   if(ctx===fg){ctx.fillStyle=color;ctx.fillRect(0,470,512,18);}
    // Head lamps on the local service; tail lamps on expresses seen from behind.
-   const lamp=kind==="express"?"#ff3b3b":"#f4fbff";
-   for(const x of [100,412]){ctx.fillStyle=lamp;ctx.shadowColor=lamp;ctx.shadowBlur=30;ctx.beginPath();ctx.arc(x,560,34,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;}
+   const lamp=kind==="express"?"#ef4343":"#dcebf3";
+   for(const x of [100,412]){ctx.fillStyle=lamp;rrect(ctx,x-28,548,56,16,6);ctx.fill();}
   }
-  const result={side:texFrom(c),sideE:texFrom(e),front:texFrom(f),frontE:texFrom(fe)};
+  fsg.fillStyle="rgb(0,118,12)";fsg.fillRect(0,470,512,18);
+  fg.fillStyle="#26323c";fg.fillRect(156,642,200,5);fg.fillRect(156,656,200,5);fg.fillRect(156,670,200,5);
+  const result={side:texFrom(c),sideE:texFrom(e),sideSurface:texFrom(surface,null,false),front:texFrom(f),frontE:texFrom(fe),frontSurface:texFrom(fs,null,false)};
   trainTextures.set(key,result);return result;
  }
+ // One shared geometry/material per detail type keeps all four trains inexpensive.
+ const trimMat=new THREE.MeshStandardMaterial({color:0x80939e,roughness:.29,metalness:.88,envMap:scene.environment,envMapIntensity:.55});
+ const glassMat=new THREE.MeshPhysicalMaterial({color:0x78939f,metalness:0,roughness:.12,clearcoat:1,clearcoatRoughness:.08,transparent:true,opacity:.2,depthWrite:false,envMap:scene.environment,envMapIntensity:.9});
+ const noseGlassMat=glassMat.clone();noseGlassMat.envMap=trainNoseEnvironment;noseGlassMat.envMapIntensity=.65;
+ const trainUnderMat=new THREE.MeshStandardMaterial({color:0x101923,roughness:.72,metalness:.35});
+ const roundedPane=(w,h,r)=>{const s=new THREE.Shape();s.moveTo(-w/2+r,-h/2);s.lineTo(w/2-r,-h/2);s.quadraticCurveTo(w/2,-h/2,w/2,-h/2+r);s.lineTo(w/2,h/2-r);s.quadraticCurveTo(w/2,h/2,w/2-r,h/2);s.lineTo(-w/2+r,h/2);s.quadraticCurveTo(-w/2,h/2,-w/2,h/2-r);s.lineTo(-w/2,-h/2+r);s.quadraticCurveTo(-w/2,-h/2,-w/2+r,-h/2);return s;};
+ const windowPane=new THREE.ShapeGeometry(roundedPane(1,1,.06));
+ const windowRim=new THREE.ExtrudeGeometry((()=>{const s=roundedPane(1.07,1.08,.09),hole=roundedPane(1,1,.06);s.holes.push(hole);return s;})(),{depth:.012,bevelEnabled:true,bevelSegments:1,steps:1,bevelSize:.012,bevelThickness:.008});
+ const detailBox=new THREE.BoxGeometry(1,1,1),windshield=new THREE.ShapeGeometry(roundedPane(2.11,1.25,.11));
  function makeTrain(kind,extra={}) {
   const len=kind==="local"?33:30,group=new THREE.Group();
-  const body=new THREE.Mesh(new THREE.BoxGeometry(2.6,3.5,len),new THREE.MeshStandardMaterial({color:0x1b2029,roughness:.32,metalness:.85}));body.position.set(0,.78,-len/2);group.add(body);
-  const sideMat=new THREE.MeshStandardMaterial({roughness:.35,metalness:.55,emissive:0xffffff,emissiveIntensity:1.4});
+  const body=new THREE.Mesh(new THREE.BoxGeometry(2.6,3.5,len),new THREE.MeshStandardMaterial({color:0x3c4b59,roughness:.44,metalness:.72,bumpMap:metalGrain,bumpScale:.012,envMap:scene.environment,envMapIntensity:.65}));body.position.set(0,.78,-len/2);group.add(body);
+  const sideMat=new THREE.MeshPhysicalMaterial({roughness:.76,metalness:1,bumpMap:metalGrain,bumpScale:.009,clearcoat:.3,clearcoatRoughness:.32,emissive:0xffffff,emissiveIntensity:.55,envMap:scene.environment,envMapIntensity:.72});
   const side=new THREE.Mesh(new THREE.PlaneGeometry(len,3.3),sideMat);side.rotation.y=-Math.PI/2;side.position.set(-1.31,.82,-len/2);group.add(side);
-  const frontMat=new THREE.MeshStandardMaterial({roughness:.3,metalness:.6,emissive:0xffffff,emissiveIntensity:.9});
+  const frontMat=new THREE.MeshPhysicalMaterial({roughness:.72,metalness:1,bumpMap:frontGrain,bumpScale:.008,clearcoat:.4,clearcoatRoughness:.28,emissive:0xffffff,emissiveIntensity:1.2,envMap:trainNoseEnvironment,envMapIntensity:.9});
   const front=new THREE.Mesh(new THREE.PlaneGeometry(2.6,3.5),frontMat);front.position.set(0,.78,.01);group.add(front);
+  const details=new THREE.Group();group.add(details);
+  const {w,h,car:carW,windows,windowW,windowY,windowH,doors,doorW}=TRAIN_SKIN;
+  const sidePosition=(x,y,depth)=>new THREE.Vector3(-depth,.82+(h/2-y)*3.3/h,-len+x/w*len);
+  const panes=new THREE.InstancedMesh(windowPane,glassMat,24),rims=new THREE.InstancedMesh(windowRim,trimMat,24);
+  const underBoxes=new THREE.InstancedMesh(detailBox,trainUnderMat,4),trimBoxes=new THREE.InstancedMesh(detailBox,trimMat,2);
+  const detailMatrix=new THREE.Matrix4(),sideRotation=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),-Math.PI/2),noRotation=new THREE.Quaternion();
+  let paneIndex=0;
+  function paneAt(px,py,pw,ph){
+   const scale=new THREE.Vector3(pw/w*len,ph/h*3.3,1);
+   detailMatrix.compose(sidePosition(px+pw/2,py+ph/2,1.323),sideRotation,scale);rims.setMatrixAt(paneIndex,detailMatrix);
+   detailMatrix.compose(sidePosition(px+pw/2,py+ph/2,1.329),sideRotation,scale);panes.setMatrixAt(paneIndex++,detailMatrix);
+  }
+  for(let car=0;car<3;car++){
+   const x0=car*carW;for(const dx of windows)paneAt(x0+dx,windowY,windowW,windowH);
+   for(const dx of doors)for(const offset of [13,doorW/2+9])paneAt(x0+dx+offset,104,46,116);
+   detailMatrix.compose(sidePosition(x0+6,h/2,1.325),noRotation,new THREE.Vector3(.035,3.28,.08));underBoxes.setMatrixAt(car,detailMatrix);
+  }
+  [2.49,-.74].forEach((y,i)=>{detailMatrix.compose(new THREE.Vector3(-1.32,y,-len/2),noRotation,new THREE.Vector3(.04,.035,len));trimBoxes.setMatrixAt(i,detailMatrix);});
+  detailMatrix.compose(new THREE.Vector3(0,-.96,-len/2),noRotation,new THREE.Vector3(2.64,.25,len));underBoxes.setMatrixAt(3,detailMatrix);
+  details.add(rims,panes,trimBoxes,underBoxes);
+  const frontGlass=new THREE.Mesh(windshield,noseGlassMat);frontGlass.position.set(0,.78+(350-295)*3.5/700,.025);details.add(frontGlass);
+  // Decorative layers forward clicks to the same route as the train shell.
   let trail=null;
   if(kind==="express"){
    const [c,g]=makeCanvas(256,8),gr=g.createLinearGradient(0,0,256,0);gr.addColorStop(0,"rgba(255,255,255,1)");gr.addColorStop(1,"rgba(255,255,255,0)");g.fillStyle=gr;g.fillRect(0,0,256,8);
@@ -663,13 +770,15 @@ async function main() {
   }
   group.visible=false;scene.add(group);
   const train=Object.assign({kind,len,group,sideMat,frontMat,trail,line:undefined,d:999,v:0},extra);
-  for(const mesh of [body,side,front])pickable(mesh,{id:"train",tip:()=>train.line?train.line.meta.name+" · 点击查看线路":null,action:()=>train.line&&openLine(train.line)});
+  for(const mesh of [body,side,front,...details.children])pickable(mesh,{id:"train",tip:()=>train.line?train.line.meta.name+" · 点击查看线路":null,action:()=>train.line&&openLine(train.line)});
   return train;
  }
  function dressTrain(t,line) {
   if(t.line===line)return;t.line=line;
   const tex=trainTex(line,t.kind);
-  t.sideMat.map=tex.side;t.sideMat.emissiveMap=tex.sideE;t.frontMat.map=tex.front;t.frontMat.emissiveMap=tex.frontE;t.sideMat.needsUpdate=t.frontMat.needsUpdate=true;
+  t.sideMat.map=tex.side;t.sideMat.emissiveMap=tex.sideE;t.sideMat.roughnessMap=t.sideMat.metalnessMap=tex.sideSurface;
+  t.frontMat.map=tex.front;t.frontMat.emissiveMap=tex.frontE;t.frontMat.roughnessMap=t.frontMat.metalnessMap=tex.frontSurface;
+  t.sideMat.needsUpdate=t.frontMat.needsUpdate=true;
   if(t.trail)t.trail.material.color.set(line?.meta.color||"#7d8799").multiplyScalar(.9);
  }
  const local=makeTrain("local",{state:"away",timer:3,t:0,T:9,stopD:-8.5,from:230,cursor:0});
@@ -982,7 +1091,8 @@ async function main() {
  function pick(x,y) {
   if(introActive)return null;
   ndc.set(x/innerWidth*2-1,-(y/innerHeight)*2+1);raycaster.setFromCamera(ndc,camera);
-  const hit=raycaster.intersectObjects(pickables.filter(m=>m.visible&&m.parent.visible),false)[0];
+  const visible=mesh=>{for(let node=mesh;node;node=node.parent)if(!node.visible)return false;return true;};
+  const hit=raycaster.intersectObjects(pickables.filter(visible),false)[0];
   if(!hit)return null;
   const info=hit.object.userData.pick;let region=null;
   if(info.screen&&hit.uv){const px=hit.uv.x*info.screen.w,py=(1-hit.uv.y)*info.screen.h;region=[...info.screen.regions].reverse().find(r=>px>=r.x&&px<=r.x+r.w&&py>=r.y&&py<=r.y+r.h)||null;}

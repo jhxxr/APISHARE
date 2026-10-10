@@ -1,0 +1,10 @@
+Generation mode: built-in image_gen
+Use: train-brushed-metal-v1.webp, compressed to 1024 x 1024 WebP for the metro scene.
+
+Use case: stylized-concept
+Asset type: a seamless base-color/albedo material texture for the silver metal exterior of a 3D metro train in a neon-lit night station; this image will be sampled and tiled on real-time Three.js meshes.
+Primary request: Create one production-quality photorealistic satin brushed aluminum / stainless steel surface texture, square format, full frame edge to edge. Fine horizontal parallel brushing, exceptionally subtle hairline scratches, lightly mottled natural industrial grain and barely visible clean age patina. Refined silver with a cool neutral grey undertone. Mid-light base color, approximately #919ba5, very restrained variation so modeled geometry, lighting and reflections can do the work.
+Composition/framing: flat straight-on orthographic close-up of the continuous material surface with evenly distributed microdetail; no visible object, framing or perspective. All four edges must tile seamlessly.
+Lighting/mood: diffuse, completely even neutral unlit albedo appearance. Absolutely no baked directional lighting, reflections, specular flares, bright streaks or shadow gradients.
+Materials/textures: precise fine satin metallic brushing at realistic train panel scale; sparse tiny abrasions, premium maintained passenger train, no heavy rust or grunge.
+Constraints: SINGLE continuous uniform material, no panels, seams, bolts, doors, windows, text, logos, border, watermark, decorative lines or any scene. Do not render a train or a metal sheet lying in a scene. The entire image itself is the usable material texture. Horizontal grain, seamless, square.
