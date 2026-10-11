@@ -36,13 +36,27 @@ type PublicInterval struct {
 	Calls     int64  `json:"calls"`
 	Successes int64  `json:"successes"`
 }
+
+// Finite balances are retained even when another published pool is unlimited.
+type PublicQuotaPool struct {
+	QuotaUSD     float64 `json:"quota_usd"`
+	UsedUSD      float64 `json:"used_usd"`
+	RemainingUSD float64 `json:"remaining_usd"`
+	Unlimited    bool    `json:"unlimited"`
+}
+type PublicModelQuota struct {
+	Mode        string           `json:"mode"`
+	Shared      *PublicQuotaPool `json:"shared,omitempty"`
+	Independent *PublicQuotaPool `json:"independent,omitempty"`
+}
 type PublicModel struct {
 	PublicUsage
-	Family   string           `json:"family"`
-	Status   string           `json:"status"`
-	Uptime   *float64         `json:"uptime_percent"`
-	LastCall string           `json:"last_call"`
-	History  []PublicInterval `json:"history"`
+	Family   string            `json:"family"`
+	Status   string            `json:"status"`
+	Uptime   *float64          `json:"uptime_percent"`
+	LastCall string            `json:"last_call"`
+	History  []PublicInterval  `json:"history"`
+	Quota    *PublicModelQuota `json:"quota"`
 }
 type PublicSummary struct {
 	Configured       bool     `json:"configured"`
@@ -261,19 +275,9 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 		return nil, err
 	}
 	defer tx.Rollback()
-	var selected, unlimited int
-	var remaining float64
-	err = tx.QueryRow(`SELECT COUNT(*),COALESCE(SUM(CASE WHEN quota_usd<=0 THEN 1 ELSE 0 END),0),
- COALESCE(SUM(CASE WHEN quota_usd>0 THEN MAX(quota_usd-used_usd,0) ELSE 0 END),0),
- COALESCE(SUM(CASE WHEN quota_usd>0 THEN quota_usd ELSE 0 END),0),COALESCE(SUM(used_usd),0)
- FROM api_keys WHERE show_on_home=1`).Scan(&selected, &unlimited, &remaining, &result.Summary.QuotaUSD, &result.Summary.UsedUSD)
-	if err != nil {
+	modelQuotas := make(map[string]*PublicModelQuota)
+	if err := publicQuotaSummary(tx, &result.Summary, modelQuotas); err != nil {
 		return nil, err
-	}
-	result.Summary.Configured = selected > 0
-	result.Summary.Unlimited = unlimited > 0
-	if selected > 0 && unlimited == 0 {
-		result.Summary.RemainingUSD = &remaining
 	}
 	usage := make(map[string]PublicUsage)
 	err = publicRows(tx, `SELECT l.model,COUNT(*),SUM(CASE WHEN l.status BETWEEN 200 AND 299 THEN 1 ELSE 0 END),
@@ -398,7 +402,7 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 			}
 		}
 		result.Models = append(result.Models, PublicModel{PublicUsage: u, Family: family, Status: status,
-			Uptime: requestUptime(success, calls), LastCall: last.at, History: history})
+			Uptime: requestUptime(success, calls), LastCall: last.at, History: history, Quota: modelQuotas[model]})
 	}
 	sort.Slice(result.Models, func(i, j int) bool {
 		if result.Models[i].Family != result.Models[j].Family {

@@ -12,6 +12,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -610,9 +611,20 @@ func writeFormatError(c *gin.Context, format clientFormat, status int, msg strin
 	var body any
 	switch format {
 	case FormatAnthropic:
-		body = gin.H{"type": "error", "error": gin.H{"type": "api_error", "message": msg}}
+		typ := "api_error"
+		if status == http.StatusForbidden {
+			typ = "permission_error"
+		}
+		body = gin.H{"type": "error", "error": gin.H{"type": typ, "message": msg}}
 	case FormatGemini:
-		body = gin.H{"error": gin.H{"code": status, "message": msg, "status": "INTERNAL"}}
+		code := "INTERNAL"
+		if status == http.StatusForbidden {
+			code = "PERMISSION_DENIED"
+		}
+		if status == http.StatusPaymentRequired {
+			code = "RESOURCE_EXHAUSTED"
+		}
+		body = gin.H{"error": gin.H{"code": status, "message": msg, "status": code}}
 	case FormatOpenAIResponse:
 		body = gin.H{"error": gin.H{"message": msg, "code": status}}
 	default:

@@ -526,6 +526,7 @@ func TestProxyFailureFailsOverWithoutDirectRequest(t *testing.T) {
 		}
 	}
 	key := publicTestKey(t, "proxy-failover", 0, 0, false)
+	key.Models = "proxy-model"
 	affinitySet("sid:proxy-failover", first.ID)
 	r := gin.New()
 	r.POST("/v1/chat/completions", func(c *gin.Context) { c.Set("apiKey", *key) }, relayHandler(FormatOpenAIChat, false))

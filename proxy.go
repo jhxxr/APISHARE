@@ -104,6 +104,15 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			writeFormatError(c, format, http.StatusBadRequest, "missing or invalid 'model' in request")
 			return
 		}
+		// Enforce permissions before affinity, routing, retries or billing.
+		if !ak.allowsModel(cr.Model) {
+			writeFormatError(c, format, http.StatusForbidden, "model is not allowed for this API key")
+			return
+		}
+		if ak.quotaExhausted(cr.Model) {
+			writeFormatError(c, format, http.StatusPaymentRequired, "quota exhausted for model "+cr.Model)
+			return
+		}
 		if format == FormatGemini {
 			_, method, _ := parseGeminiAction(c.Param("action"))
 			cr.Stream = method == "streamGenerateContent"
@@ -220,7 +229,10 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 		}
 		cost := priceFor(task.model, prompt, completion)
 		if cost > 0 {
-			dbAddUsedUSD(ak.ID, cost)
+			_, independent := ak.ModelQuotas[task.model]
+			if err := dbChargeKey(ak.ID, task.model, cost, independent); err != nil {
+				log.Printf("[billing] key_id=%d model=%s: %v", ak.ID, task.model, err)
+			}
 		}
 		logStatus := info.Status
 		logError := ""

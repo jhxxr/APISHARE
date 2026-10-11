@@ -524,7 +524,7 @@ func TestOpenAIProtocolPersistenceAndMigration(t *testing.T) {
 
 func TestGeminiStreamRouteAndFixedOpenAIEndpoint(t *testing.T) {
 	modelsTestDB(t)
-	key := &ApiKey{Name: "protocol", Key: "sk-test-protocol", Enabled: true}
+	key := &ApiKey{Name: "protocol", Key: "sk-test-protocol", Enabled: true, Models: "alias"}
 	if err := dbInsertKey(key); err != nil {
 		t.Fatal(err)
 	}
@@ -570,7 +570,7 @@ func TestProtocolGatewayAuthRoutingAndBilling(t *testing.T) {
 			settingsCache.Pricing = map[string]Price{"alias": {In: 2, Out: 100}}
 			settingsMu.Unlock()
 			defer func() { settingsMu.Lock(); settingsCache = previous; settingsMu.Unlock() }()
-			key := &ApiKey{Name: "cross-protocol", Key: "sk-protocol-auth", Enabled: true, QPS: 100, Concurrency: 5}
+			key := &ApiKey{Name: "cross-protocol", Key: "sk-protocol-auth", Enabled: true, QPS: 100, Concurrency: 5, Models: "alias"}
 			if err := dbInsertKey(key); err != nil {
 				t.Fatal(err)
 			}
@@ -739,7 +739,7 @@ func TestProtocolEmptyToolArgumentsAndIncrementalDelivery(t *testing.T) {
 
 func TestFixedOpenAIProtocolKeepsEmbeddingsNative(t *testing.T) {
 	modelsTestDB(t)
-	key := &ApiKey{Name: "embedding", Key: "sk-embedding", Enabled: true}
+	key := &ApiKey{Name: "embedding", Key: "sk-embedding", Enabled: true, Models: "embedding-alias"}
 	if err := dbInsertKey(key); err != nil {
 		t.Fatal(err)
 	}

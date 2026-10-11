@@ -206,7 +206,7 @@ func modelsTestDB(t *testing.T) {
 
 func TestModelsEndpointOpenAIAndClaude(t *testing.T) {
 	modelsTestDB(t)
-	key := &ApiKey{Name: "member", Key: "sk-member", Enabled: true, QPS: 100, Concurrency: 10}
+	key := &ApiKey{Name: "member", Key: "sk-member", Enabled: true, QPS: 100, Concurrency: 10, Models: "model-a,model-b,model-c"}
 	if err := dbInsertKey(key); err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +306,7 @@ func TestModelsEndpointOpenAIAndClaude(t *testing.T) {
 	if err := dbAddUsedUSD(key.ID, 1); err != nil {
 		t.Fatal(err)
 	}
-	request("/v1/models", "sk-member", "", 402)
+	request("/v1/models", "sk-member", "", 200) // Discovery does not spend quota.
 	if count, _ := dbCountLogs(); count != 0 {
 		t.Fatal("model discovery billed/logged as an inference")
 	}

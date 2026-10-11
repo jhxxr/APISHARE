@@ -49,11 +49,6 @@ func keyAuth() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		if ak.QuotaUSD > 0 && ak.UsedUSD >= ak.QuotaUSD {
-			errJSON(c, http.StatusPaymentRequired, "quota exhausted for key "+ak.Name)
-			c.Abort()
-			return
-		}
 		c.Set("apiKey", *ak)
 		c.Next()
 	}

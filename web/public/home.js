@@ -171,6 +171,22 @@ function drawMinuteHistory(canvas,history) {
  let hovered=-1;
  canvas.addEventListener("pointermove",event=>{const index=Math.floor(event.offsetX/step);if(index===hovered)return;hovered=index;const d=history[index];if(d)canvas.title=intervalTitle(d);});
 }
+function renderModelQuota(model) {
+ const quota=model.quota;
+ if(!quota)return '<div class="model-quota quota-unpublished"><span class="quota-mode">未公开额度</span></div>';
+ const mode=({shared:"共享额度",independent:"独立额度",mixed:"共享＋独立"})[quota.mode]||"额度";
+ const poolHTML=(pool,independent)=>{
+  if(!pool)return "";
+  const depleted=!pool.unlimited&&pool.quota_usd>0&&pool.remaining_usd<=0;
+  const label=independent?"独立余量":"共享余量";
+  const amount=pool.unlimited&&pool.quota_usd===0?"不限额度":money(pool.remaining_usd);
+  const hint=pool.unlimited&&pool.quota_usd>0?"限额部分 · 另含不限额度":pool.quota_usd>0?"/ "+money(pool.quota_usd):"";
+  const percent=pool.quota_usd>0?Math.min(100,Math.max(0,pool.remaining_usd/pool.quota_usd*100)):0;
+  const track=independent&&pool.quota_usd>0?'<span class="quota-progress" role="meter" aria-label="'+esc(model.model)+' 的独立限额剩余比例" aria-valuenow="'+percent.toFixed(2)+'" aria-valuemin="0" aria-valuemax="100"><span style="width:'+percent+'%"></span></span>':"";
+  return '<div class="quota-pool '+(depleted?'is-depleted':'')+'"><span class="quota-label">'+label+'</span><strong>'+amount+'</strong>'+(hint?'<span class="quota-total">'+hint+'</span>':"")+track+(depleted?'<span class="quota-depleted">'+(independent?"独立":"共享")+'额度已用完</span>':"")+'</div>';
+ };
+ return '<div class="model-quota"><span class="quota-mode '+(quota.mode==='independent'?'is-independent':'')+'">'+mode+'</span><div class="quota-pools">'+poolHTML(quota.shared,false)+poolHTML(quota.independent,true)+'</div></div>';
+}
 function renderModels() {
  if(!overview)return;
  const activeModel=document.activeElement?.dataset.model;
@@ -182,7 +198,7 @@ function renderModels() {
  $("modelsGrid").innerHTML=list.map(m=>{
   const familyTag=({Anthropic:"C",Google:"G",OpenAI:"O",DeepSeek:"D",xAI:"X",Qwen:"Q",GLM:"Z"})[m.family]||"AI";
   const track=minute?'<div class="minute-track" data-model="'+esc(m.model)+'" tabindex="0" role="region" aria-label="'+esc(m.model)+' 的 24 小时分钟轨迹，可横向滚动"><canvas class="minute-canvas" aria-hidden="true"></canvas></div>':'<div class="uptime-bars" style="--history-buckets:'+m.history.length+'" aria-hidden="true">'+m.history.map(d=>'<span class="interval-bar '+(!d.calls?"":d.successes===d.calls?"success":!d.successes?"failure":"partial")+'" title="'+esc(intervalTitle(d))+'"></span>').join("")+'</div>';
-  return '<article class="model-card state-'+m.status+'" data-motion-key="'+esc(m.model)+'"><div class="model-identity"><span class="family-symbol" aria-hidden="true">'+familyTag+'</span><div class="model-name"><span class="family">'+esc(m.family)+'</span><h3>'+esc(m.model)+'</h3><span class="model-state"><i class="dot"></i>'+statusText[m.status]+'</span></div></div><div class="model-timeline">'+track+'<div class="history-labels"><span>'+esc(historyTime(m.history[0].start))+'</span><span>'+esc(historyTime(m.history.at(-1).end))+'</span></div></div><div class="model-uptime '+(m.uptime_percent===null?'no-results':'has-results')+'"><strong>'+rate(m.uptime_percent)+'</strong><span>24 小时请求成功率</span></div><div class="model-consumption"><div><strong title="'+fmt(tokens(m))+' Tokens">'+(overview.summary.configured?compact(tokens(m)):"—")+'</strong><span>Tokens</span></div><div><strong>'+ (overview.summary.configured?fmt(m.calls):"—")+'</strong><span>次调用</span></div><span class="last-call">'+relativeTime(m.last_call)+'</span></div><button class="model-history" type="button" data-model="'+esc(m.model)+'" aria-label="查看 '+esc(m.model)+' 的 24 小时调用历史">'+svg("arrow")+'<span>历史</span></button></article>';
+  return '<article class="model-card state-'+m.status+'" data-motion-key="'+esc(m.model)+'"><div class="model-identity"><span class="family-symbol" aria-hidden="true">'+familyTag+'</span><div class="model-name"><span class="family">'+esc(m.family)+'</span><h3>'+esc(m.model)+'</h3><span class="model-state"><i class="dot"></i>'+statusText[m.status]+'</span></div></div><div class="model-timeline">'+track+'<div class="history-labels"><span>'+esc(historyTime(m.history[0].start))+'</span><span>'+esc(historyTime(m.history.at(-1).end))+'</span></div></div><div class="model-uptime '+(m.uptime_percent===null?'no-results':'has-results')+'"><strong>'+rate(m.uptime_percent)+'</strong><span>24 小时请求成功率</span></div><div class="model-consumption"><div><strong title="'+fmt(tokens(m))+' Tokens">'+(overview.summary.configured?compact(tokens(m)):"—")+'</strong><span>Tokens</span></div><div><strong>'+ (overview.summary.configured?fmt(m.calls):"—")+'</strong><span>次调用</span></div><span class="last-call">'+relativeTime(m.last_call)+'</span></div><button class="model-history" type="button" data-model="'+esc(m.model)+'" aria-label="查看 '+esc(m.model)+' 的 24 小时调用历史">'+svg("arrow")+'<span>历史</span></button>'+renderModelQuota(m)+'</article>';
  }).join("")||'<div class="empty-state">'+svg("layers")+'<h3>'+(query||status?"没有匹配的模型":overview.models_loading?"模型列表正在更新":"模型服务即将上线")+'</h3><p>'+(query||status?"试试其他模型名称或状态。":"模型准备就绪后，将在这里展示服务状态。")+'</p></div>';
  if(activeModel){[...$("modelsGrid").querySelectorAll(activeTrack?".minute-track":"button")].find(b=>b.dataset.model===activeModel)?.focus({preventScroll:true});}
  if(minute){const models=new Map(list.map(m=>[m.model,m]));$("modelsGrid").querySelectorAll(".minute-track").forEach(track=>{drawMinuteHistory(track.querySelector("canvas"),models.get(track.dataset.model).history);track.scrollLeft=scrollPositions.get(track.dataset.model)??track.scrollWidth;});}

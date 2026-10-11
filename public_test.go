@@ -26,7 +26,7 @@ func publicTestDB(t *testing.T) {
 }
 func publicTestKey(t *testing.T, name string, quota, used float64, home bool) *ApiKey {
 	t.Helper()
-	k := &ApiKey{Name: name, Key: "sk-private-" + name, QuotaUSD: quota, UsedUSD: used, Enabled: true, QPS: 3, Concurrency: 5, ShowOnHome: home, Note: "private-note"}
+	k := &ApiKey{Name: name, Key: "sk-private-" + name, QuotaUSD: quota, UsedUSD: used, Enabled: true, QPS: 3, Concurrency: 5, ShowOnHome: home, Note: "private-note", Models: "gpt-alpha,claude-beta,gemini-unused"}
 	if err := dbInsertKey(k); err != nil {
 		t.Fatal(err)
 	}
@@ -141,6 +141,93 @@ func TestPublicOverviewEmptyAndUnlimited(t *testing.T) {
 		t.Fatalf("unlimited must not pretend to be zero/finite: %+v", got.Summary)
 	}
 }
+func TestPublicModelQuotasFollowPublishedBindings(t *testing.T) {
+	publicTestDB(t)
+	u := &Upstream{Name: "private-quota-upstream", Type: "openai", BaseURL: "https://private.invalid", APIKey: "private-credential", Weight: 1, Enabled: true,
+		Models: "a,b,c,client-alias,backend-model,unpublished", ModelMap: `{"client-alias":"backend-model"}`}
+	if err := dbInsertUpstream(u); err != nil {
+		t.Fatal(err)
+	}
+	insert := func(name, models string, shared float64, home bool, independent map[string]ModelQuota) *ApiKey {
+		t.Helper()
+		key := &ApiKey{Name: name, Key: "sk-private-" + name, Models: models, QuotaUSD: shared, Enabled: true, ShowOnHome: home, ModelQuotas: independent}
+		if err := dbInsertKey(key); err != nil {
+			t.Fatal(err)
+		}
+		return key
+	}
+	a := insert("quota-a", "a,b,client-alias", 100, true, map[string]ModelQuota{"b": {QuotaUSD: 30}, "client-alias": {QuotaUSD: 10}})
+	b := insert("quota-b", "a,c", 50, true, map[string]ModelQuota{"a": {QuotaUSD: 40}, "c": {QuotaUSD: 20}})
+	overdrawn := insert("overdrawn", "a", 10, true, nil)
+	insert("hidden-budget", "a,b,unpublished", 999, false, map[string]ModelQuota{"b": {QuotaUSD: 999}})
+	insert("unbound-budget", "", 999, true, nil)
+	for _, charge := range []struct {
+		key         *ApiKey
+		model       string
+		cost        float64
+		independent bool
+	}{{a, "a", 20, false}, {a, "b", 35, true}, {a, "client-alias", 3, true}, {b, "a", 5, true}, {b, "c", 8, true}, {overdrawn, "a", 15, false}} {
+		if err := dbChargeKey(charge.key.ID, charge.model, charge.cost, charge.independent); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Historical/stale budgets for unbound models must never become public balances.
+	if _, err := db.Exec(`INSERT INTO api_key_model_quotas(key_id,model,quota_usd,used_usd) VALUES(?,?,?,?)`, a.ID, "c", 1000, 0); err != nil {
+		t.Fatal(err)
+	}
+	read := func() *PublicOverview {
+		t.Helper()
+		got, err := buildPublicOverview(time.Now(), "hour")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	got := read()
+	models := make(map[string]PublicModel)
+	for _, model := range got.Models {
+		models[model.Model] = model
+	}
+	alpha := models["a"].Quota
+	if alpha == nil || alpha.Mode != "mixed" || alpha.Shared == nil || alpha.Independent == nil ||
+		alpha.Shared.QuotaUSD != 110 || alpha.Shared.RemainingUSD != 80 || alpha.Independent.QuotaUSD != 40 || alpha.Independent.RemainingUSD != 35 {
+		t.Fatalf("mixed pools must follow each key's mode and clamp individually: %+v", alpha)
+	}
+	for model, remaining := range map[string]float64{"b": 0, "c": 12, "client-alias": 7} {
+		quota := models[model].Quota
+		if quota == nil || quota.Mode != "independent" || quota.Shared != nil || quota.Independent.RemainingUSD != remaining {
+			t.Fatalf("independent quota for %s: %+v", model, quota)
+		}
+	}
+	if models["b"].Status != "idle" || models["b"].Uptime != nil || models["unpublished"].Quota != nil || models["backend-model"].Quota != nil {
+		t.Fatal("budget exhaustion changed uptime, or unpublished/internal models gained balances")
+	}
+	if got.Summary.QuotaUSD != 210 || got.Summary.RemainingUSD == nil || *got.Summary.RemainingUSD != 134 {
+		t.Fatalf("model balances changed the deduplicated overview: %+v", got.Summary)
+	}
+	encoded, _ := json.Marshal(got)
+	for _, private := range []string{"sk-private", "quota-a", "quota-b", "hidden-budget", "private-credential", `"key_id"`, `"key_name"`, `"key_count"`} {
+		if strings.Contains(string(encoded), private) {
+			t.Fatalf("public quota response disclosed %s", private)
+		}
+	}
+	insert("unlimited-budget", "b", 0, true, map[string]ModelQuota{"b": {QuotaUSD: 0}})
+	got = read()
+	for _, model := range got.Models {
+		if model.Model == "b" && (model.Quota == nil || !model.Quota.Independent.Unlimited || model.Quota.Independent.QuotaUSD != 30 || model.Quota.Independent.RemainingUSD != 0) {
+			t.Fatalf("unlimited budgets must retain finite balances: %+v", model.Quota)
+		}
+	}
+	a.ShowOnHome = false
+	if err := dbUpdateKey(a); err != nil {
+		t.Fatal(err)
+	}
+	for _, model := range read().Models {
+		if model.Model == "client-alias" && model.Quota != nil {
+			t.Fatal("unpublishing a key left its model balance visible")
+		}
+	}
+}
 func TestPublicMigrationKeepsExistingKeysPrivate(t *testing.T) {
 	d, err := sql.Open("sqlite", "file:"+filepathToSlash(filepath.Join(t.TempDir(), "legacy.db")))
 	if err != nil {
@@ -239,6 +326,7 @@ func TestUnavailableRoutingRecordsFailure(t *testing.T) {
 	publicTestDB(t)
 	gin.SetMode(gin.TestMode)
 	k := publicTestKey(t, "published", 100, 0, true)
+	k.Models = "text-embedding-fixture"
 	r := gin.New()
 	r.POST("/call", func(c *gin.Context) { c.Set("apiKey", *k); c.Next() }, relayHandler(FormatOpenAIChat, true))
 	w := httptest.NewRecorder()

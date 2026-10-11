@@ -50,10 +50,12 @@ CREATE TABLE IF NOT EXISTS api_keys (
   key TEXT NOT NULL UNIQUE,
   quota_usd REAL NOT NULL DEFAULT 0,
   used_usd REAL NOT NULL DEFAULT 0,
+  shared_used_usd REAL NOT NULL DEFAULT 0,
   qps REAL NOT NULL DEFAULT 3,
   concurrency INTEGER NOT NULL DEFAULT 5,
   enabled INTEGER NOT NULL DEFAULT 1,
   show_on_home INTEGER NOT NULL DEFAULT 0,
+  models TEXT NOT NULL DEFAULT '',
   note TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT ''
 );
@@ -99,6 +101,13 @@ CREATE TABLE IF NOT EXISTS call_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_logs_created ON call_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_logs_key_created ON call_logs(key_id,created_at);
+CREATE TABLE IF NOT EXISTS api_key_model_quotas (
+  key_id INTEGER NOT NULL,
+  model TEXT NOT NULL,
+  quota_usd REAL,
+  used_usd REAL NOT NULL DEFAULT 0,
+  PRIMARY KEY(key_id,model)
+);
 CREATE TABLE IF NOT EXISTS settings (
   k TEXT PRIMARY KEY,
   v TEXT NOT NULL DEFAULT ''
@@ -117,7 +126,7 @@ CREATE TABLE IF NOT EXISTS session_affinity (
 	if err != nil {
 		return err
 	}
-	hasHome := false
+	hasHome, hasModels, hasSharedUsed := false, false, false
 	for rows.Next() {
 		var cid, notNull, pk int
 		var name, typ string
@@ -128,6 +137,12 @@ CREATE TABLE IF NOT EXISTS session_affinity (
 		}
 		if name == "show_on_home" {
 			hasHome = true
+		}
+		if name == "models" {
+			hasModels = true
+		}
+		if name == "shared_used_usd" {
+			hasSharedUsed = true
 		}
 	}
 	err = rows.Err()
@@ -140,6 +155,29 @@ CREATE TABLE IF NOT EXISTS session_affinity (
 	}
 	if err != nil {
 		return err
+	}
+	// An empty allowlist denies model access until an administrator binds models.
+	if !hasModels {
+		if _, err = db.Exec(`ALTER TABLE api_keys ADD COLUMN models TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	if !hasSharedUsed {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, err := tx.Exec(`ALTER TABLE api_keys ADD COLUMN shared_used_usd REAL NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+		// Before independent budgets existed, all historical spending was shared.
+		if _, err := tx.Exec(`UPDATE api_keys SET shared_used_usd=used_usd`); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
 	}
 	rows, err = db.Query(`SELECT name FROM pragma_table_info('upstreams') WHERE name='proxy_id'`)
 	if err != nil {
@@ -193,17 +231,20 @@ CREATE TABLE IF NOT EXISTS session_affinity (
 // ---------- models ----------
 
 type ApiKey struct {
-	ID          int64   `json:"id"`
-	Name        string  `json:"name"`
-	Key         string  `json:"key"`
-	QuotaUSD    float64 `json:"quota_usd"`
-	UsedUSD     float64 `json:"used_usd"`
-	QPS         float64 `json:"qps"`
-	Concurrency int     `json:"concurrency"`
-	Enabled     bool    `json:"enabled"`
-	ShowOnHome  bool    `json:"show_on_home"`
-	Note        string  `json:"note"`
-	CreatedAt   string  `json:"created_at"`
+	ID            int64                 `json:"id"`
+	Name          string                `json:"name"`
+	Key           string                `json:"key"`
+	QuotaUSD      float64               `json:"quota_usd"`
+	UsedUSD       float64               `json:"used_usd"`
+	SharedUsedUSD float64               `json:"shared_used_usd"`
+	QPS           float64               `json:"qps"`
+	Concurrency   int                   `json:"concurrency"`
+	Enabled       bool                  `json:"enabled"`
+	ShowOnHome    bool                  `json:"show_on_home"`
+	Models        string                `json:"models"` // comma-separated client model IDs; empty denies access
+	ModelQuotas   map[string]ModelQuota `json:"model_quotas"`
+	Note          string                `json:"note"`
+	CreatedAt     string                `json:"created_at"`
 }
 
 type Upstream struct {
@@ -282,35 +323,56 @@ func boolToInt(b bool) int {
 // ---------- api_keys ----------
 
 func dbGetKeyByKey(key string) (*ApiKey, error) {
-	row := db.QueryRow(`SELECT id,name,key,quota_usd,used_usd,qps,concurrency,enabled,note,created_at,show_on_home
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	row := tx.QueryRow(`SELECT id,name,key,quota_usd,used_usd,qps,concurrency,enabled,note,created_at,show_on_home,models,shared_used_usd
 		FROM api_keys WHERE key=?`, key)
 	ak := &ApiKey{}
 	var enabled, home int
 	if err := row.Scan(&ak.ID, &ak.Name, &ak.Key, &ak.QuotaUSD, &ak.UsedUSD, &ak.QPS,
-		&ak.Concurrency, &enabled, &ak.Note, &ak.CreatedAt, &home); err != nil {
+		&ak.Concurrency, &enabled, &ak.Note, &ak.CreatedAt, &home, &ak.Models, &ak.SharedUsedUSD); err != nil {
 		return nil, err
 	}
 	ak.Enabled = enabled == 1
 	ak.ShowOnHome = home == 1
-	return ak, nil
+	if err := dbLoadModelQuotas(tx, ak); err != nil {
+		return nil, err
+	}
+	return ak, tx.Commit()
 }
 
 func dbGetKeyByID(id int64) (*ApiKey, error) {
-	row := db.QueryRow(`SELECT id,name,key,quota_usd,used_usd,qps,concurrency,enabled,note,created_at,show_on_home
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	row := tx.QueryRow(`SELECT id,name,key,quota_usd,used_usd,qps,concurrency,enabled,note,created_at,show_on_home,models,shared_used_usd
 		FROM api_keys WHERE id=?`, id)
 	ak := &ApiKey{}
 	var enabled, home int
 	if err := row.Scan(&ak.ID, &ak.Name, &ak.Key, &ak.QuotaUSD, &ak.UsedUSD, &ak.QPS,
-		&ak.Concurrency, &enabled, &ak.Note, &ak.CreatedAt, &home); err != nil {
+		&ak.Concurrency, &enabled, &ak.Note, &ak.CreatedAt, &home, &ak.Models, &ak.SharedUsedUSD); err != nil {
 		return nil, err
 	}
 	ak.Enabled = enabled == 1
 	ak.ShowOnHome = home == 1
-	return ak, nil
+	if err := dbLoadModelQuotas(tx, ak); err != nil {
+		return nil, err
+	}
+	return ak, tx.Commit()
 }
 
 func dbListKeys() ([]ApiKey, error) {
-	rows, err := db.Query(`SELECT id,name,key,quota_usd,used_usd,qps,concurrency,enabled,note,created_at,show_on_home
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.Query(`SELECT id,name,key,quota_usd,used_usd,qps,concurrency,enabled,note,created_at,show_on_home,models,shared_used_usd
 		FROM api_keys ORDER BY id DESC`)
 	if err != nil {
 		return nil, err
@@ -321,40 +383,86 @@ func dbListKeys() ([]ApiKey, error) {
 		var ak ApiKey
 		var enabled, home int
 		if err := rows.Scan(&ak.ID, &ak.Name, &ak.Key, &ak.QuotaUSD, &ak.UsedUSD, &ak.QPS,
-			&ak.Concurrency, &enabled, &ak.Note, &ak.CreatedAt, &home); err != nil {
+			&ak.Concurrency, &enabled, &ak.Note, &ak.CreatedAt, &home, &ak.Models, &ak.SharedUsedUSD); err != nil {
 			return nil, err
 		}
 		ak.Enabled = enabled == 1
 		ak.ShowOnHome = home == 1
 		out = append(out, ak)
 	}
-	return out, rows.Err()
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if err := dbLoadModelQuotas(tx, &out[i]); err != nil {
+			return nil, err
+		}
+	}
+	return out, tx.Commit()
 }
 
 func dbInsertKey(ak *ApiKey) error {
-	res, err := db.Exec(`INSERT INTO api_keys(name,key,quota_usd,used_usd,qps,concurrency,enabled,note,created_at,show_on_home)
-		VALUES(?,?,?,?,?,?,?,?,?,?)`,
-		ak.Name, ak.Key, ak.QuotaUSD, ak.UsedUSD, ak.QPS, ak.Concurrency, boolToInt(ak.Enabled), ak.Note, nowStr(), boolToInt(ak.ShowOnHome))
-	if err == nil {
-		ak.ID, _ = res.LastInsertId()
+	tx, err := db.Begin()
+	if err != nil {
+		return err
 	}
-	return err
+	defer tx.Rollback()
+	// Imported keys without independent budgets retain their existing shared spend.
+	if len(ak.ModelQuotas) == 0 && ak.SharedUsedUSD == 0 {
+		ak.SharedUsedUSD = ak.UsedUSD
+	}
+	res, err := tx.Exec(`INSERT INTO api_keys(name,key,quota_usd,used_usd,qps,concurrency,enabled,note,created_at,show_on_home,models,shared_used_usd)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+		ak.Name, ak.Key, ak.QuotaUSD, ak.UsedUSD, ak.QPS, ak.Concurrency, boolToInt(ak.Enabled), ak.Note, nowStr(), boolToInt(ak.ShowOnHome), ak.Models, ak.SharedUsedUSD)
+	if err != nil {
+		return err
+	}
+	ak.ID, err = res.LastInsertId()
+	if err != nil {
+		return err
+	}
+	if err := dbSaveModelQuotas(tx, ak); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func dbUpdateKey(ak *ApiKey) error {
-	_, err := db.Exec(`UPDATE api_keys SET name=?,quota_usd=?,qps=?,concurrency=?,enabled=?,note=?,show_on_home=? WHERE id=?`,
-		ak.Name, ak.QuotaUSD, ak.QPS, ak.Concurrency, boolToInt(ak.Enabled), ak.Note, boolToInt(ak.ShowOnHome), ak.ID)
-	return err
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`UPDATE api_keys SET name=?,quota_usd=?,qps=?,concurrency=?,enabled=?,note=?,show_on_home=?,models=? WHERE id=?`,
+		ak.Name, ak.QuotaUSD, ak.QPS, ak.Concurrency, boolToInt(ak.Enabled), ak.Note, boolToInt(ak.ShowOnHome), ak.Models, ak.ID)
+	if err != nil {
+		return err
+	}
+	if err := dbSaveModelQuotas(tx, ak); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func dbDeleteKey(id int64) error {
-	_, err := db.Exec(`DELETE FROM api_keys WHERE id=?`, id)
-	return err
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM api_key_model_quotas WHERE key_id=?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM api_keys WHERE id=?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func dbAddUsedUSD(keyID int64, cost float64) error {
-	_, err := db.Exec(`UPDATE api_keys SET used_usd = used_usd + ? WHERE id=?`, cost, keyID)
-	return err
+	return dbChargeKey(keyID, "", cost, false)
 }
 
 // ---------- upstreams ----------

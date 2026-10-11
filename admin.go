@@ -124,6 +124,18 @@ func registerAdminRoutes(r *gin.Engine) {
 	registerOutboundProxyRoutes(auth)
 
 	// ---------- API Keys ----------
+	auth.GET("/keys/models", func(c *gin.Context) {
+		models, err := availableModels(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "无法获取可用模型，请检查上游连接"})
+			return
+		}
+		ids := make([]string, 0, len(models))
+		for _, model := range models {
+			ids = append(ids, model.ID)
+		}
+		c.JSON(http.StatusOK, gin.H{"models": ids})
+	})
 	auth.GET("/keys", func(c *gin.Context) {
 		keys, err := dbListKeys()
 		if err != nil {
@@ -135,14 +147,20 @@ func registerAdminRoutes(r *gin.Engine) {
 
 	auth.POST("/keys", func(c *gin.Context) {
 		var req struct {
-			Name        string  `json:"name"`
-			QuotaUSD    float64 `json:"quota_usd"`
-			QPS         float64 `json:"qps"`
-			Concurrency int     `json:"concurrency"`
-			Note        string  `json:"note"`
-			ShowOnHome  bool    `json:"show_on_home"`
+			Name        string                `json:"name"`
+			QuotaUSD    float64               `json:"quota_usd"`
+			QPS         float64               `json:"qps"`
+			Concurrency int                   `json:"concurrency"`
+			Note        string                `json:"note"`
+			ShowOnHome  bool                  `json:"show_on_home"`
+			Models      string                `json:"models"`
+			ModelQuotas map[string]ModelQuota `json:"model_quotas"`
 		}
 		if c.BindJSON(&req) != nil {
+			return
+		}
+		if strings.TrimSpace(req.Models) != "" && normalizeKeyModels(req.Models) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请填写有效模型 ID；留空表示不允许调用任何模型"})
 			return
 		}
 		if req.Name == "" {
@@ -163,12 +181,23 @@ func registerAdminRoutes(r *gin.Engine) {
 			Enabled:     true,
 			Note:        req.Note,
 			ShowOnHome:  req.ShowOnHome,
+			Models:      normalizeKeyModels(req.Models),
+			ModelQuotas: req.ModelQuotas,
+		}
+		if err := validateKeyQuotas(ak); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
 		}
 		if err := dbInsertKey(ak); err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(200, ak) // key 完整值仅此一次返回
+		ak, err := dbGetKeyByID(ak.ID)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, ak)
 	})
 
 	auth.PATCH("/keys/:id", func(c *gin.Context) {
@@ -179,13 +208,15 @@ func registerAdminRoutes(r *gin.Engine) {
 			return
 		}
 		var req struct {
-			Name        *string  `json:"name"`
-			QuotaUSD    *float64 `json:"quota_usd"`
-			QPS         *float64 `json:"qps"`
-			Concurrency *int     `json:"concurrency"`
-			Enabled     *bool    `json:"enabled"`
-			Note        *string  `json:"note"`
-			ShowOnHome  *bool    `json:"show_on_home"`
+			Name        *string                `json:"name"`
+			QuotaUSD    *float64               `json:"quota_usd"`
+			QPS         *float64               `json:"qps"`
+			Concurrency *int                   `json:"concurrency"`
+			Enabled     *bool                  `json:"enabled"`
+			Note        *string                `json:"note"`
+			ShowOnHome  *bool                  `json:"show_on_home"`
+			Models      *string                `json:"models"`
+			ModelQuotas *map[string]ModelQuota `json:"model_quotas"`
 		}
 		if c.BindJSON(&req) != nil {
 			return
@@ -211,7 +242,32 @@ func registerAdminRoutes(r *gin.Engine) {
 		if req.ShowOnHome != nil {
 			ak.ShowOnHome = *req.ShowOnHome
 		}
+		if req.Models != nil {
+			if strings.TrimSpace(*req.Models) != "" && normalizeKeyModels(*req.Models) == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "请填写有效模型 ID；留空表示不允许调用任何模型"})
+				return
+			}
+			ak.Models = normalizeKeyModels(*req.Models)
+		}
+		if req.ModelQuotas != nil {
+			ak.ModelQuotas = *req.ModelQuotas
+		} else if req.Models != nil {
+			for model := range ak.ModelQuotas {
+				if !ak.allowsModel(model) {
+					delete(ak.ModelQuotas, model)
+				}
+			}
+		}
+		if err := validateKeyQuotas(ak); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		if err := dbUpdateKey(ak); err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		ak, err = dbGetKeyByID(id)
+		if err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
 		}

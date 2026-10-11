@@ -379,6 +379,7 @@ func modelsHandler(c *gin.Context) {
 		modelError(c, 502, "unable to load available models; check upstream connections")
 		return
 	}
+	models = c.MustGet("apiKey").(ApiKey).filterModels(models)
 	start, end, more := 0, len(models), false
 	if claude {
 		if after != "" || before != "" {
@@ -424,6 +425,11 @@ func modelsHandler(c *gin.Context) {
 
 func modelHandler(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
+	ak := c.MustGet("apiKey").(ApiKey)
+	if !ak.allowsModel(c.Param("model")) {
+		modelError(c, http.StatusNotFound, "model not found")
+		return
+	}
 	models, err := availableModels(c.Request.Context())
 	if err != nil {
 		modelError(c, 502, "unable to load available models; check upstream connections")

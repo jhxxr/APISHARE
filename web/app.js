@@ -124,6 +124,7 @@ function dismissNewKey() { $("newKeyShow").classList.add("hidden"); $("newKeyVal
 
 /* Authentication and navigation */
 function showLogin() {
+  if ($("keyModelsDialog").open) { savingKeyModels = false; closeKeyModels(); }
   if ($("actionDialog").open) resolveAction(false);
   if ($("editModal").open) finishCloseEditor();
   $("loginView").classList.remove("hidden");
@@ -339,9 +340,10 @@ function renderKeys() {
   $("keyTotal").textContent = keysCache.length;
   $("keysTable").querySelector("tbody").innerHTML = keys.map((key) => {
     const masked = key.key.length > 16 ? key.key.slice(0, 8) + "••••" + key.key.slice(-4) : "••••••••";
-    const used = key.quota_usd > 0 ? Math.min(100, key.used_usd / key.quota_usd * 100) : 0;
+    const modelIDs = parseAllowlist(key.models);
+    const modelSummary = '<small class="key-model-summary" title="' + esc(modelIDs.join(", ")) + '">可用模型：' + (modelIDs.length ? modelIDs.length + " 个" : "未绑定，无法调用") + '</small>';
     const keyCell = '<div class="key-value"><code>' + esc(masked) + '</code><button type="button" class="text-btn key-copy" onclick="copyKey(' + key.id + ')" aria-label="复制 ' + esc(key.name) + ' 的完整密钥" title="复制完整密钥">' + icon("copy") + '<span>复制</span></button></div>';
-    return '<tr><td class="cell-stack"><strong>' + esc(key.name) + '</strong><small>#' + key.id + ' · ' + esc((key.created_at || "").slice(0, 10)) + '</small></td><td>' + keyCell + '</td><td class="quota-cell"><span>' + fmtUSD(key.used_usd) + ' <span class="muted">/ ' + (key.quota_usd > 0 ? fmtUSD(key.quota_usd) : "不限") + '</span></span>' + (key.quota_usd > 0 ? '<div class="quota-track" role="meter" aria-label="额度使用" aria-valuenow="' + used + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + used + '%"></span></div>' : "") + '</td><td><code>' + key.qps + " / " + key.concurrency + '</code></td><td><span class="badge ' + (key.enabled ? "on" : "off") + '">' + (key.enabled ? "启用" : "停用") + '</span></td><td><label class="home-share-control"><input type="checkbox" ' + (key.show_on_home ? 'checked ' : '') + 'aria-label="在公开首页汇总 ' + esc(key.name) + ' 的余量和用量" onchange="toggleHomeShare(' + key.id + ', this)"><span>首页展示</span></label></td><td><div class="row-actions"><button class="text-btn" onclick="editQuota(' + key.id + ", " + key.quota_usd + ')" aria-label="修改 ' + esc(key.name) + ' 的额度">额度</button><button class="text-btn" onclick="toggleKey(' + key.id + ", " + !key.enabled + ', this)" aria-label="' + (key.enabled ? "停用 " : "启用 ") + esc(key.name) + '">' + (key.enabled ? "停用" : "启用") + '</button><button class="icon-btn danger" onclick="deleteKey(' + key.id + ')" aria-label="删除 ' + esc(key.name) + '" title="删除密钥">' + icon("trash") + '</button></div></td></tr>';
+    return '<tr><td class="cell-stack"><strong>' + esc(key.name) + '</strong><small>#' + key.id + ' · ' + esc((key.created_at || "").slice(0, 10)) + '</small>' + modelSummary + '</td><td>' + keyCell + '</td><td class="quota-cell">' + renderKeyQuotaSummary(key) + '</td><td><code>' + key.qps + " / " + key.concurrency + '</code></td><td><span class="badge ' + (key.enabled ? "on" : "off") + '">' + (key.enabled ? "启用" : "停用") + '</span></td><td><label class="home-share-control"><input type="checkbox" ' + (key.show_on_home ? 'checked ' : '') + 'aria-label="在公开首页汇总 ' + esc(key.name) + ' 的余量和用量" onchange="toggleHomeShare(' + key.id + ', this)"><span>首页展示</span></label></td><td><div class="row-actions"><button class="text-btn" onclick="openKeyModels(' + key.id + ')" aria-label="设置 ' + esc(key.name) + ' 的模型与额度">模型与额度</button><button class="text-btn" onclick="toggleKey(' + key.id + ", " + !key.enabled + ', this)" aria-label="' + (key.enabled ? "停用 " : "启用 ") + esc(key.name) + '">' + (key.enabled ? "停用" : "启用") + '</button><button class="icon-btn danger" onclick="deleteKey(' + key.id + ')" aria-label="删除 ' + esc(key.name) + '" title="删除密钥">' + icon("trash") + '</button></div></td></tr>';
   }).join("") || emptyRow(7, query ? "没有匹配的密钥" : "创建你的第一个 API 密钥", query ? "试试其他名称。" : "为成员分配独立的访问权限和调用额度。", query ? "" : "toggleKeyComposer(true)", "创建密钥", "key");
   labelTableCells("keysTable");
 }
@@ -350,12 +352,13 @@ async function createKey(event) {
   const form = event.currentTarget, button = form.querySelector('[type="submit"]');
   const name = $("keyName").value.trim();
   if (!name) { $("keyName").setCustomValidity("请输入密钥名称"); $("keyName").reportValidity(); return false; }
+  if (!validateKeyModels("key")) return false;
   setBusy(button, true, "正在生成…");
   try {
-    const key = await api("api/keys", { method: "POST", body: JSON.stringify({ name, quota_usd: Number($("keyQuota").value) || 0, qps: Number($("keyQps").value) || 3, concurrency: Number($("keyConc").value) || 5 }) });
+    const key = await api("api/keys", { method: "POST", body: JSON.stringify({ name, ...keyQuotaPayload("key"), qps: Number($("keyQps").value) || 3, concurrency: Number($("keyConc").value) || 5, models: parseAllowlist($("keyModels").value).join(",") }) });
     $("newKeyValue").textContent = key.key;
     $("newKeyShow").classList.remove("hidden");
-    form.reset(); toggleKeyComposer(false);
+    form.reset(); resetKeyModelPicker("key"); toggleKeyComposer(false);
     await loadKeys(); toast("密钥已创建");
   } catch (error) { reportError(error); } finally { setBusy(button, false); }
   return false;
@@ -375,12 +378,6 @@ async function toggleHomeShare(id, checkbox) {
   } catch (error) { checkbox.checked = !selected; reportError(error, "首页展示设置失败"); }
   finally { checkbox.disabled = false; }
 }
-async function editQuota(id, current) {
-  const value = await askAction({ title: "修改密钥额度", description: "设置总额度（USD）。填入 0 表示不限制额度，已使用的费用会保留。", confirm: "保存额度", input: current });
-  if (value === false) return;
-  try { await api("api/keys/" + id, { method: "PATCH", body: JSON.stringify({ quota_usd: Number(value) }) }); await loadKeys(); toast("额度已更新"); }
-  catch (error) { reportError(error); }
-}
 async function deleteKey(id) {
   const key = keysCache.find((item) => item.id === id);
   if (!await askAction({ title: "删除 API 密钥？", description: (key ? "“" + key.name + "”" : "该密钥") + "删除后，使用它的请求会被拒绝。此操作无法撤销。", confirm: "删除密钥", danger: true })) return;
@@ -389,7 +386,7 @@ async function deleteKey(id) {
 }
 
 /* Upstream list */
-function parseAllowlist(value) { return [...new Set((value || "").split(/[,，\n]/).map((model) => model.trim()).filter(Boolean))]; }
+function parseAllowlist(value) { return [...new Set((value || "").split(/[,，\r\n]/).map((model) => model.trim()).filter(Boolean))]; }
 function providerIcon(type) { return '<span class="provider-icon ' + esc(type) + '" aria-hidden="true">' + ({ openai: "O", anthropic: "A", gemini: "G" }[type] || "API") + '</span>'; }
 async function loadUpstreams(quiet = false) {
   const version = requestVersions.upstreams = (requestVersions.upstreams || 0) + 1;
@@ -797,7 +794,7 @@ async function saveSettings(event) {
 }
 
 /* Reusable accessible confirmation and quota dialogs. */
-function syncModalLock() { document.body.classList.toggle("modal-open", $("editModal").open || $("actionDialog").open); }
+function syncModalLock() { document.body.classList.toggle("modal-open", $("editModal").open || $("actionDialog").open || $("keyModelsDialog").open); }
 function setPricingError(message) {
   $("pricingError").textContent = message;
   $("pricingError").classList.toggle("hidden", !message);
@@ -861,6 +858,7 @@ document.querySelectorAll("svg.icon").forEach((svg) => { svg.setAttribute("aria-
 $("todayLabel").textContent = new Date().toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai", month: "long", day: "numeric", weekday: "long" });
 initDeployment();
 initOutboundProxies();
+initKeyModels();
 syncSidebar();
 (async function init() {
   if (!token) { showLogin(); return; }
