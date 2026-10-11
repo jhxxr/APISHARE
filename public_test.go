@@ -318,7 +318,7 @@ func TestPublicVendorAssetsCompressedAndCached(t *testing.T) {
 	}
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest("GET", "/public/static/metro.js", nil))
-	if w.Header().Get("Content-Encoding") != "" || w.Header().Get("Cache-Control") != "" {
+	if w.Header().Get("Content-Encoding") != "" || w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("plain request must stay uncompressed and uncached: %v", w.Header())
 	}
 }

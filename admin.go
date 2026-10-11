@@ -725,6 +725,17 @@ func serveAdminFile(c *gin.Context, sub fs.FS, name string) {
 		ct = "text/css; charset=utf-8"
 	case ".html":
 		ct = "text/html; charset=utf-8"
+		b = versionHTMLAssets(b, webFS)
+		c.Header("Cache-Control", "no-store")
+	}
+	// Unversioned assets must not acquire browser/CDN heuristic freshness.
+	// Only a URL matching the actual embedded content can be cached long-term.
+	if c.Writer.Header().Get("Cache-Control") == "" {
+		if c.Query("v") == webAssetVersion(b) {
+			c.Header("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			c.Header("Cache-Control", "no-store")
+		}
 	}
 	c.Header("X-Content-Type-Options", "nosniff")
 	c.Header("X-Frame-Options", "DENY")
