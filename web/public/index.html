@@ -35,6 +35,7 @@
     <symbol id="close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
     <symbol id="copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></symbol>
     <symbol id="clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="megaphone" viewBox="0 0 24 24"><path d="m3 10 17-6v16L3 14v-4ZM7 15l2 6h4l-2-5M20 9l2-1m-2 7 2 1"/></symbol>
   </svg>
   <main>
     <div id="heroStage" class="hero-stage">
@@ -45,6 +46,7 @@
         <div class="scene-grain"></div>
       </div>
       <a class="metro-entry" href="/metro"><span class="metro-entry-lamp" aria-hidden="true"></span><span>进入 3D 站台</span><small aria-hidden="true">TOKEN METRO ↗</small></a>
+      <a id="announcementEntry" class="announcement-entry hidden" href="#announcements"><svg class="icon" aria-hidden="true"><use href="#megaphone"/></svg><span id="announcementEntryLabel">最新公告</span><strong id="announcementEntryTitle"></strong><svg class="icon" aria-hidden="true"><use href="#arrow"/></svg></a>
       <div class="hero-readout">
         <h1 id="heroTitle" class="token-total"><span class="token-prefix">累计 Token 用量</span><strong id="heroTokens" aria-hidden="true">—</strong></h1>
         <p id="heroTokenNote" class="token-unit">正在读取 Token 用量</p>
@@ -59,6 +61,11 @@
     </div>
     <div class="model-ribbon"><span class="ribbon-label"><svg class="icon" aria-hidden="true"><use href="#layers"/></svg> 模型目录</span><p class="today-models"><span id="todayModels">正在读取模型…</span></p><span class="ribbon-tail" aria-hidden="true">ONE API. MORE IDEAS. ↗</span></div>
     <div class="container">
+    <section id="announcements" class="announcements-section hidden" aria-labelledby="announcementsHeading" tabindex="-1">
+      <div class="section-heading"><div><p class="eyebrow">LATEST UPDATES</p><h2 id="announcementsHeading">公告与动态</h2></div><span class="announcements-note">服务信息 · 置顶优先</span></div>
+      <p id="announcementLoadError" class="announcement-load-error hidden" role="status"></p>
+      <div id="announcementList"></div>
+    </section>
     <section id="overview" class="overview" aria-labelledby="pageTitle" tabindex="-1">
       <div class="hero">
         <div><p class="eyebrow">01 / THE BIG PICTURE</p><h2 id="pageTitle">每一份用量，都有迹可循。</h2><p class="hero-description">共享余量、调用趋势与真实反馈，一目了然。</p></div>
@@ -99,6 +106,7 @@
     </div>
   </main>
   <dialog id="historyDialog" class="history-dialog" aria-labelledby="historyHeading" aria-describedby="historyDescription"><div class="dialog-heading"><div><p class="eyebrow">24-HOUR REQUEST HISTORY</p><h2 id="historyHeading"></h2></div><button id="closeHistory" class="icon-button" type="button" aria-label="关闭调用历史"><svg class="icon"><use href="#close"/></svg></button></div><p id="historyDescription">最近 24 小时的真实调用结果。灰色时段表示没有调用。</p><div id="historyHourControl" class="history-hour-control hidden"><label for="historyHour">查看时段</label><select id="historyHour"></select></div><div class="history-scroll"><table><thead><tr><th scope="col">时间段</th><th scope="col">调用</th><th scope="col">成功</th><th scope="col">Uptime</th></tr></thead><tbody id="historyRows"></tbody></table></div></dialog>
+  <dialog id="announcementDialog" class="history-dialog announcement-dialog" aria-labelledby="announcementHeading"><div class="dialog-heading"><div><p id="announcementDialogMeta" class="eyebrow"></p><h2 id="announcementHeading"></h2></div><button id="closeAnnouncement" class="icon-button" type="button" aria-label="关闭公告"><svg class="icon" aria-hidden="true"><use href="#close"/></svg></button></div><p id="announcementBody" class="announcement-body"></p></dialog>
   <div id="toast" class="toast hidden" role="status"></div>
 </body>
 </html>

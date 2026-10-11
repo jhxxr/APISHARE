@@ -36,6 +36,7 @@
     <symbol id="i-edit" viewBox="0 0 24 24"><path d="m15 4 5 5M4 20l4-1L21 6a2 2 0 0 0-4-4L4 15l-1 6 5-2"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7"/></symbol>
     <symbol id="i-shield" viewBox="0 0 24 24"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z"/><path d="m8 12 3 3 5-6"/></symbol>
+    <symbol id="i-megaphone" viewBox="0 0 24 24"><path d="m3 10 17-6v16L3 14v-4ZM7 15l2 6h4l-2-5M20 9l2-1m-2 7 2 1"/></symbol>
   </svg>
 
   <div id="loginView" class="login-wrap hidden">
@@ -62,6 +63,7 @@
         <button data-tab="upstreams" class="tab"><svg class="icon"><use href="#i-layers"/></svg><span>上游服务</span><span id="navUpCount" class="nav-count">—</span></button>
         <button data-tab="proxies" class="tab"><svg class="icon"><use href="#i-link"/></svg><span>代理配置</span></button>
         <button data-tab="logs" class="tab"><svg class="icon"><use href="#i-activity"/></svg><span>调用日志</span></button>
+        <button data-tab="announcements" class="tab"><svg class="icon"><use href="#i-megaphone"/></svg><span>公告管理</span></button>
         <div class="nav-divider"></div>
         <button data-tab="settings" class="tab"><svg class="icon"><use href="#i-sliders"/></svg><span>工作空间设置</span></button>
         <button data-tab="deployment" class="tab"><svg class="icon"><use href="#i-shield"/></svg><span>部署配置</span></button>
@@ -130,6 +132,25 @@
           </div>
           <div class="card-block list-card"><div class="list-toolbar"><div class="list-title"><h2>已配置代理</h2><span id="proxyListCount" class="count-pill">—</span></div><label class="search-field"><svg class="icon"><use href="#i-search"/></svg><input id="proxySearch" placeholder="搜索名称或地址…" aria-label="搜索代理" oninput="renderProxies()"></label></div><div class="table-wrap"><table id="proxiesTable" class="tbl"><thead><tr><th scope="col">代理名称</th><th scope="col">连接地址</th><th scope="col">认证</th><th scope="col">关联上游</th><th scope="col">启用</th><th scope="col" class="actions-heading">操作</th></tr></thead><tbody></tbody></table></div></div>
           <div class="inline-note"><svg class="icon"><use href="#i-info"/></svg> 修改后对新的请求生效。停用代理会阻止关联上游通过它发起请求；删除前需要解除所有上游关联。</div>
+        </section>
+
+        <section id="tab-announcements" class="panel hidden">
+          <div class="page-heading"><div><span class="eyebrow">NEWS & UPDATES</span><h1>公告管理</h1><p>发布服务动态、模型更新与维护通知。</p></div><button class="btn" onclick="openAnnouncementComposer()"><svg class="icon"><use href="#i-plus"/></svg> 新建公告</button></div>
+          <div id="announcementComposer" class="card-block composer hidden">
+            <div class="block-heading"><div><h2 id="announcementComposerTitle">新建公告</h2><p>已发布的内容将在公开主页展示。</p></div><button type="button" class="icon-btn" onclick="closeAnnouncementComposer()" aria-label="关闭公告表单"><svg class="icon"><use href="#i-close"/></svg></button></div>
+            <form id="announcementForm" onsubmit="return saveAnnouncement(event)">
+              <fieldset id="announcementFields" class="announcement-fields">
+                <label class="field"><span>公告标题 <span class="required">*</span></span><input id="announcementTitle" required maxlength="120" placeholder="例如：新增模型已上线"></label>
+                <label class="field"><span>公告正文 <span class="required">*</span></span><textarea id="announcementContent" required maxlength="10000" rows="8" placeholder="填写最新信息、变更说明或维护安排…" aria-describedby="announcementContentHint"></textarea><small id="announcementContentHint">支持换行，最多 10,000 个字符。正文按纯文本展示。</small></label>
+                <label class="check-label"><input id="announcementPinned" type="checkbox">置顶公告 <span class="muted">优先在主页展示</span></label>
+                <details class="announcement-preview"><summary>查看展示预览</summary><h3 id="announcementPreviewTitle"></h3><p id="announcementPreviewContent"></p></details>
+              </fieldset>
+              <p id="announcementFormError" class="form-error hidden" role="alert" tabindex="-1"></p>
+              <div class="form-actions"><button type="button" class="btn ghost" onclick="closeAnnouncementComposer()">取消</button><button id="announcementDraftButton" type="submit" class="btn ghost" data-publish="false">保存草稿</button><button id="announcementPublishButton" type="submit" class="btn" data-publish="true"><svg class="icon"><use href="#i-megaphone"/></svg> 发布公告</button></div>
+            </form>
+          </div>
+          <div class="card-block list-card"><div class="list-toolbar"><div class="list-title"><h2>全部公告</h2><span id="announcementListCount" class="count-pill">—</span></div><div class="toolbar-filters"><label class="search-field"><svg class="icon"><use href="#i-search"/></svg><input id="announcementSearch" type="search" placeholder="搜索公告标题或正文…" aria-label="搜索公告" oninput="renderAnnouncements()"></label><select id="announcementFilter" aria-label="按公告状态筛选" onchange="renderAnnouncements()"><option value="">全部状态</option><option value="published">已发布</option><option value="draft">草稿</option></select></div></div><div class="table-wrap"><table id="announcementsTable" class="tbl"><thead><tr><th scope="col">公告</th><th scope="col">状态</th><th scope="col">发布时间（北京）</th><th scope="col" class="actions-heading">操作</th></tr></thead><tbody></tbody></table></div></div>
+          <div class="inline-note"><svg class="icon"><use href="#i-info"/></svg> 主页展示最近 5 条已发布公告，置顶优先。草稿仅管理员可见；撤下后会从主页移除。<a href="/" target="_blank" rel="noopener">查看公开主页 ↗</a></div>
         </section>
 
         <section id="tab-logs" class="panel hidden">
@@ -231,6 +252,7 @@
   <script src="static/proxies.js"></script>
   <script src="static/headers.js"></script>
   <script src="static/keys.js"></script>
+  <script src="static/announcements.js"></script>
   <script src="static/app.js"></script>
 </body>
 </html>

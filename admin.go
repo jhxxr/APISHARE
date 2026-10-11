@@ -122,6 +122,7 @@ func registerAdminRoutes(r *gin.Engine) {
 	})
 	registerDeploymentRoutes(auth)
 	registerOutboundProxyRoutes(auth)
+	registerAnnouncementRoutes(auth)
 
 	// ---------- API Keys ----------
 	auth.GET("/keys/models", func(c *gin.Context) {

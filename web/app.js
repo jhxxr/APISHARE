@@ -28,7 +28,7 @@ function editorUpstreamType() {
 function editorOpenAIProtocol() {
   return { "openai-chat": "chat", "openai-responses": "responses" }[$("editType").value] || "auto";
 }
-const tabNames = { dashboard: "概览", keys: "API 密钥", upstreams: "上游服务", proxies: "代理配置", logs: "调用日志", settings: "工作空间设置", deployment: "部署配置" };
+const tabNames = { dashboard: "概览", keys: "API 密钥", upstreams: "上游服务", proxies: "代理配置", logs: "调用日志", announcements: "公告管理", settings: "工作空间设置", deployment: "部署配置" };
 const validTab = (name) => Object.hasOwn(tabNames, name);
 let token = localStorage.getItem(TOKEN_KEY) || "";
 let activeTab = "dashboard";
@@ -124,6 +124,7 @@ function dismissNewKey() { $("newKeyShow").classList.add("hidden"); $("newKeyVal
 
 /* Authentication and navigation */
 function showLogin() {
+  resetAnnouncementComposer();
   if ($("keyModelsDialog").open) { savingKeyModels = false; closeKeyModels(); }
   if ($("actionDialog").open) resolveAction(false);
   if ($("editModal").open) finishCloseEditor();
@@ -216,6 +217,7 @@ async function loadCurrentTab() {
   if (activeTab === "upstreams") return loadUpstreams();
   if (activeTab === "proxies") return loadProxies();
   if (activeTab === "logs") return loadLogs(logsPage);
+  if (activeTab === "announcements") return loadAnnouncements();
   if (activeTab === "settings") return loadSettings();
   if (activeTab === "deployment") return loadDeployment();
 }
@@ -848,7 +850,7 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && $("sidebar").classList.contains("is-open") && !$("editModal").open) toggleSidebar(false);
   if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && $("editModal").open && !$("actionDialog").open && !editProbe.saving) { event.preventDefault(); $("upstreamEditorForm").requestSubmit(); }
 });
-window.addEventListener("beforeunload", (event) => { if (editorDirty() || deploymentDirty()) { event.preventDefault(); event.returnValue = ""; } });
+window.addEventListener("beforeunload", (event) => { if (editorDirty() || deploymentDirty() || announcementDirty()) { event.preventDefault(); event.returnValue = ""; } });
 let resizeFrame = 0;
 window.addEventListener("resize", () => {
   if (resizeFrame) cancelAnimationFrame(resizeFrame);
@@ -859,6 +861,7 @@ $("todayLabel").textContent = new Date().toLocaleDateString("zh-CN", { timeZone:
 initDeployment();
 initOutboundProxies();
 initKeyModels();
+initAnnouncements();
 syncSidebar();
 (async function init() {
   if (!token) { showLogin(); return; }

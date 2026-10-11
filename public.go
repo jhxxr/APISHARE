@@ -125,6 +125,7 @@ func registerPublic(r *gin.Engine) {
 		}
 		c.JSON(http.StatusOK, overview)
 	})
+	r.GET("/api/public/announcements", publicAnnouncementsHandler)
 }
 func requestUptime(successes, calls int64) *float64 {
 	if calls == 0 {

@@ -112,6 +112,17 @@ CREATE TABLE IF NOT EXISTS settings (
   k TEXT PRIMARY KEY,
   v TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS announcements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  published INTEGER NOT NULL DEFAULT 0,
+  pinned INTEGER NOT NULL DEFAULT 0,
+  published_at TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_announcements_public ON announcements(published,pinned DESC,published_at DESC,id DESC);
 CREATE TABLE IF NOT EXISTS session_affinity (
   skey TEXT PRIMARY KEY,
   upstream_id INTEGER NOT NULL,

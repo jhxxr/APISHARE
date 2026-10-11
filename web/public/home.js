@@ -1,4 +1,4 @@
-/* Public dashboard: only the anonymous, aggregate endpoint is requested. */
+/* Public dashboard: only anonymous aggregate and published announcement endpoints are requested. */
 const $ = id => document.getElementById(id);
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 const fmt = value => Number(value || 0).toLocaleString("zh-CN");
@@ -57,6 +57,46 @@ function rollHeroNumber(value) {
 window.addEventListener("public-motion-change",()=>{if(!window.pageMotion?.isRunning())finishHeroRoll();});
 const statusText = {operational:"运行正常",incident:"最近调用失败",idle:"暂无近期调用"};
 let overview=null, metric="calls", historyInterval="hour", historyModel=null, autoUpdate=true, refreshing=false, toastTimer=0, heroAnimated=false;
+let announcements=null, announcementVersion="";
+function announcementDate(value) {
+ return new Date(value).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
+}
+function renderPublicAnnouncements() {
+ const items=announcements||[],first=items[0],version=JSON.stringify(items);
+ $("announcements").classList.toggle("hidden",!first);
+ $("announcementEntry").classList.toggle("hidden",!first);
+ if(!first){$("announcementList").replaceChildren();announcementVersion=version;return;}
+ $("announcementEntryLabel").textContent=first.pinned?"置顶公告":"最新公告";
+ $("announcementEntryTitle").textContent=first.title;
+ $("announcementEntry").title=first.title;
+ if(version===announcementVersion)return;
+ announcementVersion=version;
+ const date=item=>'<time datetime="'+esc(item.published_at)+'">'+esc(announcementDate(item.published_at))+' · 北京时间</time>';
+ const badge=item=>item.pinned?'<span class="announcement-badge">置顶</span>':"";
+ $("announcementList").innerHTML='<article class="announcement-feature"><div class="announcement-meta">'+badge(first)+date(first)+'</div><h3>'+esc(first.title)+'</h3><p class="announcement-excerpt">'+esc(first.content)+'</p><button type="button" class="announcement-read" data-announcement="'+Number(first.id)+'">查看全文 '+svg("arrow")+'</button></article>'+(items.length>1?'<details class="announcement-archive"><summary>更多公告 <span>'+fmt(items.length-1)+' 条</span></summary><div>'+items.slice(1).map(item=>'<button class="announcement-row" type="button" data-announcement="'+Number(item.id)+'"><span>'+badge(item)+'<strong>'+esc(item.title)+'</strong></span>'+date(item)+svg("arrow")+'</button>').join("")+'</div></details>':"");
+}
+async function refreshAnnouncements(signal) {
+ try {
+  const response=await fetch("/api/public/announcements",{credentials:"omit",cache:"no-store",signal});
+  if(!response.ok)throw new Error();
+  const items=await response.json();
+  if(!Array.isArray(items))throw new Error();
+  announcements=items;renderPublicAnnouncements();$("announcementLoadError").classList.add("hidden");
+ } catch {
+  $("announcements").classList.remove("hidden");
+  $("announcementLoadError").textContent=announcements?.length?"公告更新失败，当前显示上次读取的内容。可点击页尾“刷新”重试。":"暂时无法读取公告，可点击页尾“刷新”重试。";
+  $("announcementLoadError").classList.remove("hidden");
+ }
+}
+function showAnnouncement(id) {
+ const item=announcements?.find(item=>item.id===id);if(!item)return;
+ $("announcementHeading").textContent=item.title;
+ $("announcementDialogMeta").textContent=(item.pinned?"置顶公告 · ":"公告 · ")+announcementDate(item.published_at)+" · 北京时间";
+ $("announcementBody").textContent=item.content;
+ $("announcementDialog").showModal();document.body.classList.add("modal-open");$("closeAnnouncement").focus();
+}
+function closeAnnouncement() { $("announcementDialog").close();document.body.classList.remove("modal-open"); }
+function publicDialogOpen() { return $("historyDialog").open||$("announcementDialog").open; }
 function finishIntro() {
  document.documentElement.classList.remove("intro-active");
  document.removeEventListener("keydown",skipIntro);
@@ -229,6 +269,7 @@ async function refresh() {
  $("uptimeHour").disabled=true;$("uptimeMinute").disabled=true;$("modelsGrid").setAttribute("aria-busy","true");
  if(overview&&overview.history_interval!==historyInterval)$("uptimeWindowLabel").textContent="正在读取"+(historyInterval==="minute"?"分钟":"小时")+"记录…";
  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),10000);
+ const announcementTask=refreshAnnouncements(controller.signal);
  try {
   const response=await fetch("/api/public/overview?interval="+historyInterval,{credentials:"omit",cache:"no-store",signal:controller.signal});
   if(!response.ok)throw new Error("服务数据暂时无法更新");
@@ -247,8 +288,12 @@ async function refresh() {
   $("errorBanner").classList.remove("hidden");
   $("overallStatus").className="status-badge idle";$("overallStatus").innerHTML='<span class="dot"></span>数据更新异常';
   $("refreshNote").textContent="更新失败";
- } finally { clearTimeout(timeout);refreshing=false;$("refreshNow").disabled=false;$("refreshNow").setAttribute("aria-busy","false");$("uptimeHour").disabled=false;$("uptimeMinute").disabled=false;$("modelsGrid").setAttribute("aria-busy","false"); }
+ } finally { await announcementTask;clearTimeout(timeout);refreshing=false;$("refreshNow").disabled=false;$("refreshNow").setAttribute("aria-busy","false");$("uptimeHour").disabled=false;$("uptimeMinute").disabled=false;$("modelsGrid").setAttribute("aria-busy","false"); }
 }
+$("announcementList").addEventListener("click",event=>{const button=event.target.closest("button[data-announcement]");if(button)showAnnouncement(Number(button.dataset.announcement));});
+$("closeAnnouncement").addEventListener("click",closeAnnouncement);
+$("announcementDialog").addEventListener("cancel",event=>{event.preventDefault();closeAnnouncement();});
+$("announcementEntry").addEventListener("click",()=>$("announcements").focus({preventScroll:true}));
 $("modelSearch").addEventListener("input",renderModels);$("statusFilter").addEventListener("change",renderModels);
 document.querySelectorAll("[data-metric]").forEach(b=>b.addEventListener("click",()=>{metric=b.dataset.metric;renderTrend(true);}));
 document.querySelectorAll("[data-history-interval]").forEach(b=>b.addEventListener("click",()=>{if(refreshing||historyInterval===b.dataset.historyInterval)return;historyInterval=b.dataset.historyInterval;refresh();}));
@@ -261,8 +306,8 @@ $("autoRefresh").addEventListener("click",()=>{autoUpdate=!autoUpdate;$("autoRef
 $("refreshNow").addEventListener("click",refresh);
 $("copyAddress").addEventListener("click",async()=>{const address=location.origin+"/v1";try{await copyToClipboard(address);notify("OpenAI 接入地址已复制");}catch{notify("复制失败，请手动复制接入地址："+address);}});
 document.querySelectorAll("svg.icon").forEach(s=>s.setAttribute("aria-hidden","true"));
-document.addEventListener("visibilitychange",()=>{if(!document.hidden&&autoUpdate&&!$("historyDialog").open)refresh();});
-setInterval(()=>{if(autoUpdate&&!document.hidden&&!$("historyDialog").open)refresh();},30000);
+document.addEventListener("visibilitychange",()=>{if(!document.hidden&&autoUpdate&&!publicDialogOpen())refresh();});
+setInterval(()=>{if(autoUpdate&&!document.hidden&&!publicDialogOpen())refresh();},30000);
 window.addEventListener("resize",()=>{finishHeroRoll();measureHeroType();},{passive:true});
 document.fonts?.ready.then(measureHeroType);
 refresh();
