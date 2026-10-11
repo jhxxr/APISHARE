@@ -185,7 +185,15 @@ func TestHeaderOverridesRelayFormatsAndStreams(t *testing.T) {
 					}
 					if stream {
 						w.Header().Set("Content-Type", "text/event-stream")
-						fmt.Fprint(w, "data: {}\n\n")
+						// Use complete protocol streams; an empty event is an interrupted response.
+						switch tc.typ {
+						case "anthropic":
+							fmt.Fprint(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+						case "gemini":
+							fmt.Fprint(w, "data: {\"candidates\":[{\"finishReason\":\"STOP\"}]}\n\n")
+						default:
+							fmt.Fprint(w, "data: [DONE]\n\n")
+						}
 						return
 					}
 					w.Header().Set("Content-Type", "application/json")

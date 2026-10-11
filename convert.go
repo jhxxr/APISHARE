@@ -6,14 +6,12 @@ package main
 // 路径分两类：
 //   - 原生透传：客户端格式与其原生上游类型匹配时，请求/响应字节原样转发
 //     （工具调用、图片、思考块等全功能无损）；
-//   - 跨格式转换：客户端格式与上游类型不一致时，走 canon 转换，支持文本对话
-//     （system、多轮、max_tokens、temperature、流式逐字转换、真实 usage 计费）。
-//     带 tools 的跨格式请求会明确报错，请为该模型配置原生格式上游。
+//   - 跨格式转换：通过 canon 转换文本、图片、函数工具和工具结果，响应按客户端
+//     协议返回。无法映射的内容会明确报错，原生路径仍透传完整请求。
 
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -44,19 +42,30 @@ func (f clientFormat) nativeUpstreamType() string {
 // ---------- 规范化请求 ----------
 
 type canonMsg struct {
-	Role string // user | assistant（system 单独放在 System）
-	Text string
+	Role     string // user | assistant（system 单独放在 System）
+	Text     string
+	Parts    []canonPart
+	Calls    []canonCall
+	ToolID   string
+	ToolName string
 }
 
 type canonReq struct {
-	Model       string
-	System      string
-	Messages    []canonMsg
-	MaxTokens   int
-	Temperature *float64
-	Stream      bool
-	HasTools    bool
-	InputText   string // system + 首条 user 消息，用于会话指纹与 token 估算
+	Model           string
+	System          string
+	Messages        []canonMsg
+	MaxTokens       int
+	Temperature     *float64
+	Stream          bool
+	Tools           []canonTool
+	ToolChoice      string
+	ToolName        string
+	Parallel        *bool
+	Stop            []string
+	TopP            *float64
+	ReasoningEffort string
+	ConversionError error
+	InputText       string // system + 首条 user 消息，用于会话指纹与 token 估算
 }
 
 // ---------- 通用 JSON 小工具 ----------
@@ -111,7 +120,7 @@ func flattenText(raw json.RawMessage) string {
 
 func rawMap(body []byte) (map[string]json.RawMessage, error) {
 	var m map[string]json.RawMessage
-	if err := json.Unmarshal(body, &m); err != nil {
+	if err := json.Unmarshal(body, &m); err != nil || m == nil {
 		return nil, fmt.Errorf("invalid JSON body")
 	}
 	return m, nil
@@ -161,17 +170,25 @@ func buildInputText(system string, msgs []canonMsg) string {
 // ---------- 客户端请求解析（→ canon） ----------
 
 func parseClientRequest(format clientFormat, body []byte, pathModel string) (*canonReq, error) {
+	var cr *canonReq
+	var err error
 	switch format {
 	case FormatOpenAIChat:
-		return parseOpenAIChat(body)
+		cr, err = parseOpenAIChat(body)
 	case FormatOpenAIResponse:
-		return parseOpenAIResponses(body)
+		cr, err = parseOpenAIResponses(body)
 	case FormatAnthropic:
-		return parseAnthropicMessages(body)
+		cr, err = parseAnthropicMessages(body)
 	case FormatGemini:
-		return parseGeminiBody(body, pathModel)
+		cr, err = parseGeminiBody(body, pathModel)
+	default:
+		return nil, fmt.Errorf("unknown client format")
 	}
-	return nil, fmt.Errorf("unknown client format")
+	if err == nil {
+		// Conversion validation is deferred so native requests retain all provider features.
+		cr.ConversionError = enrichCanonRequest(cr, format, body)
+	}
+	return cr, err
 }
 
 func parseOpenAIChat(body []byte) (*canonReq, error) {
@@ -187,7 +204,6 @@ func parseOpenAIChat(body []byte) (*canonReq, error) {
 		MaxTokens:   intField(m, "max_tokens", "max_completion_tokens"),
 		Temperature: floatPtrField(m, "temperature"),
 	}
-	_, cr.HasTools = m["tools"]
 	var msgs []struct {
 		Role    string          `json:"role"`
 		Content json.RawMessage `json:"content"`
@@ -237,7 +253,6 @@ func parseOpenAIResponses(body []byte) (*canonReq, error) {
 		MaxTokens:   typed.MaxOutputTokens,
 		Temperature: typed.Temperature,
 	}
-	_, cr.HasTools = m["tools"]
 
 	var input string
 	if json.Unmarshal(m["input"], &input) == nil {
@@ -250,9 +265,8 @@ func parseOpenAIResponses(body []byte) (*canonReq, error) {
 		}
 		if json.Unmarshal(m["input"], &items) == nil {
 			for _, it := range items {
-				// function_call / function_call_output / reasoning 等无法跨格式转换
+				// Structured items are handled by enrichCanonRequest; this pass only estimates text.
 				if it.Type != "" && it.Type != "message" {
-					cr.HasTools = true
 					continue
 				}
 				role := it.Role
@@ -285,7 +299,6 @@ func parseAnthropicMessages(body []byte) (*canonReq, error) {
 		MaxTokens:   typed.MaxTokens,
 		Temperature: typed.Temperature,
 	}
-	_, cr.HasTools = m["tools"]
 	cr.System = flattenText(m["system"])
 	var msgs []struct {
 		Role    string          `json:"role"`
@@ -311,7 +324,6 @@ func parseGeminiBody(body []byte, pathModel string) (*canonReq, error) {
 	}
 	cr := &canonReq{Model: pathModel}
 	cr.System = flattenText(m["systemInstruction"])
-	_, cr.HasTools = m["tools"]
 	var gc struct {
 		MaxOutputTokens int      `json:"maxOutputTokens"`
 		Temperature     *float64 `json:"temperature"`
@@ -340,93 +352,6 @@ func parseGeminiBody(body []byte, pathModel string) (*canonReq, error) {
 	}
 	cr.InputText = buildInputText(cr.System, cr.Messages)
 	return cr, nil
-}
-
-// ---------- 上游请求渲染（canon → 上游格式） ----------
-
-func renderUpstreamBody(upType string, cr *canonReq, model string) []byte {
-	switch upType {
-	case "anthropic":
-		mt := cr.MaxTokens
-		if mt <= 0 {
-			mt = 4096 // Anthropic 必填
-		}
-		m := map[string]any{"model": model, "max_tokens": mt, "stream": cr.Stream}
-		if cr.System != "" {
-			m["system"] = cr.System
-		}
-		if cr.Temperature != nil {
-			m["temperature"] = *cr.Temperature
-		}
-		msgs := make([]map[string]any, 0, len(cr.Messages))
-		for _, msg := range cr.Messages {
-			msgs = append(msgs, map[string]any{"role": msg.Role, "content": msg.Text})
-		}
-		m["messages"] = msgs
-		b, _ := json.Marshal(m)
-		return b
-	case "gemini":
-		m := map[string]any{}
-		if cr.System != "" {
-			m["systemInstruction"] = map[string]any{"parts": []any{map[string]any{"text": cr.System}}}
-		}
-		contents := make([]map[string]any, 0, len(cr.Messages))
-		for _, msg := range cr.Messages {
-			role := "user"
-			if msg.Role == "assistant" {
-				role = "model"
-			}
-			contents = append(contents, map[string]any{"role": role, "parts": []any{map[string]any{"text": msg.Text}}})
-		}
-		m["contents"] = contents
-		gc := map[string]any{}
-		if cr.MaxTokens > 0 {
-			gc["maxOutputTokens"] = cr.MaxTokens
-		}
-		if cr.Temperature != nil {
-			gc["temperature"] = *cr.Temperature
-		}
-		if len(gc) > 0 {
-			m["generationConfig"] = gc
-		}
-		b, _ := json.Marshal(m)
-		return b
-	default: // openai
-		msgs := make([]map[string]any, 0, len(cr.Messages)+1)
-		if cr.System != "" {
-			msgs = append(msgs, map[string]any{"role": "system", "content": cr.System})
-		}
-		for _, msg := range cr.Messages {
-			msgs = append(msgs, map[string]any{"role": msg.Role, "content": msg.Text})
-		}
-		m := map[string]any{"model": model, "messages": msgs, "stream": cr.Stream}
-		if cr.Stream {
-			m["stream_options"] = map[string]any{"include_usage": true}
-		}
-		if cr.MaxTokens > 0 {
-			m["max_tokens"] = cr.MaxTokens
-		}
-		if cr.Temperature != nil {
-			m["temperature"] = *cr.Temperature
-		}
-		b, _ := json.Marshal(m)
-		return b
-	}
-}
-
-// upstreamEndpoint 转换路径下各上游类型的请求路径。
-func upstreamEndpoint(upType, model string, stream bool) string {
-	switch upType {
-	case "anthropic":
-		return "/v1/messages"
-	case "gemini":
-		if stream {
-			return "/v1beta/models/" + model + ":streamGenerateContent?alt=sse"
-		}
-		return "/v1beta/models/" + model + ":generateContent"
-	default:
-		return "/v1/chat/completions"
-	}
 }
 
 // ---------- 上游响应解析 ----------
@@ -629,6 +554,16 @@ func parseResponsesSSEEvent(payload string) (string, upstreamUsage) {
 
 // parseNativeNonStream 解析原生透传的非流式响应（计费用），文本仅作估算兜底。
 func parseNativeNonStream(format clientFormat, body []byte, info *relayInfo) {
+	defer func() {
+		var j map[string]any
+		if json.Unmarshal(body, &j) == nil {
+			usage := object(j["usage"])
+			if format == FormatGemini {
+				usage = object(j["usageMetadata"])
+			}
+			info.mergeUsage(readUsage(usage, format))
+		}
+	}()
 	switch format {
 	case FormatOpenAIResponse:
 		var j struct {
@@ -684,165 +619,6 @@ func writeFormatError(c *gin.Context, format clientFormat, status int, msg strin
 		body = gin.H{"error": gin.H{"message": msg, "type": "apishare_error", "code": status}}
 	}
 	c.JSON(status, body)
-}
-
-// ---------- 转换路径的客户端响应渲染 ----------
-
-func writeConvertedNonStream(c *gin.Context, format clientFormat, model, text string, u upstreamUsage) {
-	p, q := u.Prompt, u.Completion
-	var body any
-	switch format {
-	case FormatAnthropic:
-		body = gin.H{
-			"id": "msg_conv", "type": "message", "role": "assistant", "model": model,
-			"content":     []any{gin.H{"type": "text", "text": text}},
-			"stop_reason": "end_turn", "stop_sequence": nil,
-			"usage": gin.H{"input_tokens": p, "output_tokens": q},
-		}
-	case FormatGemini:
-		body = gin.H{
-			"candidates": []any{gin.H{
-				"content":      gin.H{"parts": []any{gin.H{"text": text}}, "role": "model"},
-				"finishReason": "STOP", "index": 0,
-			}},
-			"usageMetadata": gin.H{"promptTokenCount": p, "candidatesTokenCount": q, "totalTokenCount": p + q},
-			"modelVersion":  model,
-		}
-	case FormatOpenAIResponse:
-		body = gin.H{
-			"id": "resp_conv", "object": "response", "status": "completed", "model": model,
-			"output": []any{gin.H{
-				"type": "message", "id": "msg_conv", "status": "completed", "role": "assistant",
-				"content": []any{gin.H{"type": "output_text", "text": text, "annotations": []any{}}},
-			}},
-			"usage": gin.H{"input_tokens": p, "output_tokens": q, "total_tokens": p + q},
-		}
-	default:
-		body = gin.H{
-			"id": "chatcmpl-conv", "object": "chat.completion", "model": model,
-			"choices": []any{gin.H{
-				"index": 0, "finish_reason": "stop",
-				"message": gin.H{"role": "assistant", "content": text},
-			}},
-			"usage": gin.H{"prompt_tokens": p, "completion_tokens": q, "total_tokens": p + q},
-		}
-	}
-	c.JSON(200, body)
-}
-
-// convertedStream 把上游增量转换成客户端格式的 SSE 流。
-type convertedStream struct {
-	format    clientFormat
-	model     string
-	fullText  strings.Builder
-	wantUsage bool // openai chat：客户端是否要求 include_usage 尾块
-	started   bool
-	blkOpen   bool // anthropic content_block 是否已开启
-}
-
-func newConvertedStream(c *gin.Context, format clientFormat, model string, wantUsage bool) *convertedStream {
-	w := &convertedStream{format: format, model: model, wantUsage: wantUsage}
-	c.Writer.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
-	c.Writer.Header().Set("Cache-Control", "no-cache")
-	c.Writer.Header().Set("X-Accel-Buffering", "no")
-	return w
-}
-
-func (w *convertedStream) sse(c *gin.Context, v any) {
-	b, _ := json.Marshal(v)
-	c.Writer.WriteString("data: " + string(b) + "\n\n")
-	if fl, ok := c.Writer.(http.Flusher); ok {
-		fl.Flush()
-	}
-}
-
-func (w *convertedStream) start(c *gin.Context) {
-	if w.started {
-		return
-	}
-	w.started = true
-	c.Writer.WriteHeader(200)
-	switch w.format {
-	case FormatAnthropic:
-		w.sse(c, gin.H{"type": "message_start", "message": gin.H{
-			"id": "msg_conv", "type": "message", "role": "assistant", "model": w.model,
-			"content": []any{}, "usage": gin.H{"input_tokens": 0, "output_tokens": 0},
-		}})
-		w.sse(c, gin.H{"type": "content_block_start", "index": 0,
-			"content_block": gin.H{"type": "text", "text": ""}})
-		w.blkOpen = true
-	case FormatOpenAIResponse:
-		w.sse(c, gin.H{"type": "response.created", "response": gin.H{
-			"id": "resp_conv", "object": "response", "status": "in_progress", "model": w.model,
-			"output": []any{},
-		}})
-	}
-}
-
-func (w *convertedStream) delta(c *gin.Context, text string) {
-	if text == "" {
-		return
-	}
-	w.start(c)
-	w.fullText.WriteString(text)
-	switch w.format {
-	case FormatAnthropic:
-		w.sse(c, gin.H{"type": "content_block_delta", "index": 0,
-			"delta": gin.H{"type": "text_delta", "text": text}})
-	case FormatGemini:
-		w.sse(c, gin.H{"candidates": []any{gin.H{
-			"content": gin.H{"parts": []any{gin.H{"text": text}}, "role": "model"},
-			"index":   0,
-		}}})
-	case FormatOpenAIResponse:
-		w.sse(c, gin.H{"type": "response.output_text.delta", "delta": text})
-	default:
-		w.sse(c, gin.H{"id": "chatcmpl-conv", "object": "chat.completion.chunk", "model": w.model,
-			"choices": []any{gin.H{"index": 0, "delta": gin.H{"content": text}}}})
-	}
-}
-
-func (w *convertedStream) finish(c *gin.Context, u upstreamUsage) {
-	w.start(c)
-	text := w.fullText.String()
-	switch w.format {
-	case FormatAnthropic:
-		if w.blkOpen {
-			w.sse(c, gin.H{"type": "content_block_stop", "index": 0})
-		}
-		w.sse(c, gin.H{"type": "message_delta",
-			"delta": gin.H{"stop_reason": "end_turn", "stop_sequence": nil},
-			"usage": gin.H{"output_tokens": u.Completion, "input_tokens": u.Prompt}})
-		w.sse(c, gin.H{"type": "message_stop"})
-	case FormatGemini:
-		w.sse(c, gin.H{"candidates": []any{gin.H{
-			"content":      gin.H{"parts": []any{gin.H{"text": ""}}, "role": "model"},
-			"finishReason": "STOP", "index": 0,
-		}}, "usageMetadata": gin.H{
-			"promptTokenCount": u.Prompt, "candidatesTokenCount": u.Completion,
-			"totalTokenCount": u.Prompt + u.Completion,
-		}})
-	case FormatOpenAIResponse:
-		w.sse(c, gin.H{"type": "response.completed", "response": gin.H{
-			"id": "resp_conv", "object": "response", "status": "completed", "model": w.model,
-			"output": []any{gin.H{
-				"type": "message", "id": "msg_conv", "status": "completed", "role": "assistant",
-				"content": []any{gin.H{"type": "output_text", "text": text, "annotations": []any{}}},
-			}},
-			"usage": gin.H{"input_tokens": u.Prompt, "output_tokens": u.Completion,
-				"total_tokens": u.Prompt + u.Completion},
-		}})
-	default:
-		if w.wantUsage {
-			w.sse(c, gin.H{"id": "chatcmpl-conv", "object": "chat.completion.chunk", "model": w.model,
-				"choices": []any{},
-				"usage":   gin.H{"prompt_tokens": u.Prompt, "completion_tokens": u.Completion, "total_tokens": u.Prompt + u.Completion}})
-		}
-		c.Writer.WriteString("data: [DONE]\n\n")
-		if fl, ok := c.Writer.(http.Flusher); ok {
-			fl.Flush()
-		}
-	}
 }
 
 // ---------- Gemini 路径解析 ----------

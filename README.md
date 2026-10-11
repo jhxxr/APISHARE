@@ -19,24 +19,49 @@ API Share 是一个轻量的 API 分发网关，统一接入 OpenAI Chat、OpenA
 | Gemini | `POST /v1beta/models/{model}:generateContent` 与 `:streamGenerateContent` | `x-goog-api-key` 或 `Authorization` 或 `?key=` | Gemini CLI、google-genai SDK |
 | 模型列表 / 详情 | `GET /v1/models`、`GET /v1/models/{model}` | OpenAI Bearer 或 Claude `x-api-key` | OpenAI / Anthropic SDK |
 
-以上所有端点都支持流式与非流式。
+对话生成端点支持流式与非流式；Embeddings 与模型目录返回 JSON。
 
-### 上游类型（出站）
+### 上游请求格式（出站）
 
-| 类型 | 适用供应商 | Base URL 示例 |
-|---|---|---|
-| `openai` | OpenAI、**xAI Grok**（api.x.ai 即 OpenAI 兼容）、DeepSeek、GLM、Qwen、本地 vLLM/Ollama 等 | `https://api.openai.com`、`https://api.x.ai` |
-| `anthropic` | Anthropic 官方 API | `https://api.anthropic.com` |
-| `gemini` | Google AI 官方 API | `https://generativelanguage.googleapis.com` |
+| 后台选项 | 管理 API 设置 | 生成端点 | Base URL 示例 |
+|---|---|---|---|
+| OpenAI Chat Completions | `type: "openai"` + `openai_protocol: "chat"` | `/v1/chat/completions` | `https://api.openai.com`、`https://api.x.ai` |
+| OpenAI Responses | `type: "openai"` + `openai_protocol: "responses"` | `/v1/responses` | `https://api.openai.com` 或支持 Responses 的兼容服务 |
+| Anthropic Messages | `type: "anthropic"` | `/v1/messages` | `https://api.anthropic.com` |
+| Gemini generateContent | `type: "gemini"` | `:generateContent` / `:streamGenerateContent` | `https://generativelanguage.googleapis.com` |
+
+OpenAI 兼容供应商包括 xAI Grok、DeepSeek、GLM、Qwen、本地 vLLM/Ollama 等；按服务实际支持的接口选择 Chat Completions 或 Responses。
 
 ### 跨格式转换
 
-客户端格式与上游类型不一致时自动转换（内部走规范化表示）：
+**上游接口与客户端格式独立配置**。在「上游服务 → 基本信息」选择上游实际支持的接口，客户端通过自己的端点请求同一个模型，网关转换请求，并将响应转回客户端格式。例如：
 
-- 支持：system、多轮对话、max_tokens、temperature、流式（逐增量转换，非伪流式）、真实 usage 计费（上游报多少算多少）
-- **不支持：工具调用（tools）等高级特性的跨格式转换**——带 tools 的请求若被路由到需要转换的上游，会返回 400 并提示为该模型配置原生格式上游；同格式直连（如 Claude Code → Anthropic 上游）功能完全无损
-- 路由优先级（`pickUpstream`）：原生格式+显式白名单 ＞ 其他格式+显式白名单 ＞ 原生格式+通配 ＞ 其他格式+通配。想精确控制就给每个上游配模型白名单
+```text
+Anthropic SDK / Claude Code → /v1/messages
+  → 网关转换 → OpenAI 上游 /v1/chat/completions
+  → 网关转换 → Anthropic message / SSE 事件
+```
+
+后台将 OpenAI 分成两个独立选项，列表显示与筛选也分别区分。两者在管理 API 中均使用 `type: "openai"`，由 `openai_protocol` 固定出站格式：
+
+| 后台选项 / API 设置 | 出站行为 |
+|---|---|
+| OpenAI Chat Completions / `chat` | 所有对话请求统一发送到 `/v1/chat/completions`；仅支持 Chat 的第三方上游选此项；后台新连接默认选此项 |
+| OpenAI Responses / `responses` | 所有对话请求统一发送到 `/v1/responses`；只支持 Responses 的上游选此项 |
+| OpenAI · 旧配置（跟随客户端） / `auto` 或空值 | 沿用旧行为：OpenAI Chat / Responses 请求使用对应端点，Anthropic / Gemini 请求转换为 Chat；仅编辑旧连接时显示此选项，升级或修改其他字段不会改变其格式 |
+
+支持四种客户端格式与四种上游接口（Chat、Responses、Anthropic、Gemini）的互相转换：
+
+- system、多轮文本、max_tokens、temperature、top_p、函数工具定义、工具选择、工具调用与工具结果；支持多个工具和分段工具参数，模型映射仍然生效。
+- 图片支持 OpenAI URL / data URL、Anthropic URL / base64、Gemini inlineData / fileData。转入 Gemini 的远程图片需要 MIME 类型；没有 MIME 时返回明确错误，可改用 base64。Chat Completions 的工具结果只支持文本；图片工具结果不能转入此接口。
+- SSE 逐增量转换文本、思考文本与工具参数，保留工具调用 ID、停止原因和真实 usage，包含上游明确返回的 0 Token。Gemini 的函数调用要求完整 JSON，因此只缓冲工具参数；上游忽略 stream 并返回 JSON 时，将完整结果包装成客户端 SSE。
+- Responses 生成完整的输出项、增量、完成事件；Anthropic 生成带 `event:` 名称的 Messages 事件。上游错误、非法工具参数与缺少结束事件的断流会返回客户端错误并记为失败，不补发成功结束事件。
+- 原生路径透传完整请求与响应。跨供应商转换无法保留 prompt cache 控制、思考签名或加密推理状态；历史 Anthropic thinking 与 Gemini thought 块不会作为普通文本重新发给其他供应商。
+- 内置服务端工具、音频/视频/文档块、结构化输出配置、Responses 的 `previous_response_id` / `conversation` / reasoning 输入项等不支持跨格式转换，返回 400。转换路径请发送完整会话，特殊特性请使用原生接口。Responses 上游不支持 stop 序列；跨入 Anthropic / Gemini 时不支持 OpenAI reasoning effort，Gemini 不支持关闭并行工具调用。
+- 路由优先级（`pickUpstream`）：原生格式+显式白名单 ＞ 其他格式+显式白名单 ＞ 原生格式+通配 ＞ 其他格式+通配。Chat 与 Responses 分别判断原生匹配；想精确控制就给每个上游配模型白名单。
 - 会话粘性对转换路径同样生效
+
+设计参考：[New API 的 OpenAI 适配器](https://github.com/QuantumNous/new-api/blob/main/relay/channel/openai/adaptor.go)通过转换器接收 Claude / Gemini 请求；[Sub2API 的 Messages 分发](https://github.com/Wei-Shaw/sub2api/blob/main/backend/internal/service/openai_gateway_messages.go)按上游协议选择 Anthropic 直通、Chat 转换或 Responses 转换。本项目采用自己的规范化表示与转换实现。
 
 ## 核心特性
 
@@ -45,7 +70,7 @@ API Share 是一个轻量的 API 分发网关，统一接入 OpenAI Chat、OpenA
 - **计费（自动官方定价）**：启动时与每日自动同步 **LiteLLM 官方牌价镜像库**（各厂商无定价 API，这是 LiteLLM/sub2api 一类网关通用的官方定价来源，覆盖 OpenAI / Anthropic / Gemini / Grok / DeepSeek 等全部现行型号，含 Bedrock/Vertex 键名形态归一化）。计费优先级：**手动覆盖 > 官方定价 > 内置兜底表 > default(0)**。用量优先取上游真实 usage（OpenAI 流式自动注入 `include_usage`；Anthropic 解析 `message_start/message_delta`；Gemini 解析 `usageMetadata`；Responses 解析 `response.completed`），缺失时 tiktoken 本地估算
 - **限流**：每 Key 独立 QPS 令牌桶 + 并发信号量
 - **公开首页 `/`**：首屏展示当前模型与累计 Token，下滑查看公开余量、用量趋势、模型分布和真实调用 Uptime。后台按密钥勾选参与合计，公开接口不返回密钥、名称、数量、上游地址或凭证。
-- **管理后台（默认 `/admin`）**：Key 签发与额度、上游管理（三种类型 + 连通性测试）、调用日志（含格式/上游/usage/费用）、价格表与调度参数；未注册路径一律 404
+- **管理后台（默认 `/admin`）**：Key 签发与额度、上游管理（四种请求格式 + 连通性测试）、调用日志（含格式/上游/usage/费用）、价格表与调度参数；未注册路径一律 404
 - **上游独立代理**：后台集中管理 HTTP / HTTPS / SOCKS5 / SOCKS5h 代理及认证，每个上游可单独选择；模型调用、流式响应、连通性测试和模型目录获取均通过所选代理。
 - **自定义请求头**：每个上游可独立设置固定请求头、客户端请求头透传、正则匹配与变量替换；原生和跨格式转发、流式响应、连接测试及模型目录获取均生效。
 - **单文件部署**：前端内嵌 Go 二进制，SQLite（WAL）存储，零外部依赖
@@ -75,7 +100,7 @@ $env:API_DB = "apishare.db"
 首次启动先创建 SQLite 数据库文件，管理员密码和后台路径在首次配置页面保存。
 
 1. 打开 `http://127.0.0.1:8080/`，新部署自动跳转到独立的 `/setup/` 配置页。填写管理员密码、确认密码和后台路径后保存，配置写入数据库并自动进入新后台。无需预先登录；配置完成后，首页恢复为公开服务页面；
-2. 「上游」页添加上游：选类型、填 Base URL（不含 `/v1`/`/v1beta`，如 `https://api.openai.com`）、API Key、权重、**模型白名单**（强烈建议填写，跨格式路由靠它）；
+2. 「上游」页添加上游：直接选择上游请求格式：OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 或 Gemini generateContent。填 Base URL（不含 `/v1`/`/v1beta`，如 `https://api.openai.com`）、API Key、权重、**模型白名单**（强烈建议填写，跨格式路由靠它）；
 3. 「API 密钥」页创建访问密钥，设置额度（USD，0=不限）、QPS 和并发限制；
 4. 「设置」页确认自动定价已同步（可手动"立即刷新"；GitHub raw 不可达时把定价源 URL 换成镜像，如 `https://cdn.jsdelivr.net/gh/BerriAI/litellm@main/model_prices_and_context_window.json`）。价格表 JSON 只需放**手动覆盖**项和 `default` 兜底价，其余模型自动用官方价。后台可随时用"查询模型单价"核对某模型的价格与来源。
 
@@ -246,7 +271,7 @@ go run ./cmd/mockupstream -addr :18082 -name mockB
 
 - tiktoken 首次使用会联网下载词表（缓存在系统临时目录），离线自动退化为字符启发式估算；上游返回真实 usage 时以 usage 为准。
 - Gemini 只支持 `generateContent` / `streamGenerateContent`（流式统一按 SSE `alt=sse` 处理，官方 SDK 均使用该模式）；`countTokens` 等其他方法不转发。
-- 跨格式转换的流式响应中，Anthropic 客户端拿到的 `message_start.usage.input_tokens` 为 0，真实输入用量在末尾 `message_delta.usage` 中（原生直连无此问题）。
+- 跨格式流式响应中，若上游在首个增量前没有报告 usage，Anthropic 的 `message_start.usage.input_tokens` 为 0；最终真实用量在 `message_delta.usage` 中。原生路径沿用上游事件。
 - 已下架型号（如 grok-4）在现行官方价格库中无标价，按 default(0) 记账不扣费；需要计费就在价格表里手动覆盖。
 - 上游健康状态（连续失败/冷却）在内存中，重启后清零。
 - 建议在前端挂 nginx/caddy 做 HTTPS；`/healthz` 可用于探活。

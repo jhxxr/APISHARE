@@ -209,6 +209,7 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline
 .count-pill { padding: 1px 7px; border: 1px solid #d6dfeb; border-radius: 5px; background: var(--panel-soft); color: var(--muted); font: 10px/1.6 var(--mono); }
 .toolbar-filters { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .toolbar-filters select { width: 120px; min-height: 36px; padding: 7px 8px; border-color: var(--border-strong); font-size: 11px; }
+#upstreamTypeFilter { width: 200px; }
 .table-wrap { overflow: auto; overscroll-behavior-x: contain; }
 .tbl { width: 100%; border-collapse: collapse; text-align: left; font-variant-numeric: tabular-nums; }
 .tbl th { padding: 12px 19px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: #f7f9fc; color: var(--muted); font-size: 10px; font-weight: 500; white-space: nowrap; }
@@ -641,6 +642,9 @@ kbd { padding: 2px 4px; border: 1px solid var(--border-strong); border-radius: 3
   .toolbar-filters { flex: 1 0 100%; width: 100%; gap: 8px; }
   .endpoint-cell > span { font-size: 12px; }
   .toolbar-filters select { width: 110px; flex: 0 0 auto; }
+  #tab-upstreams .toolbar-filters { flex-wrap: wrap; }
+  #tab-upstreams .toolbar-filters .search-field { flex-basis: 100%; }
+  #upstreamTypeFilter { width: 100%; }
   .upstream-summary { gap: 14px; padding: 18px 14px; justify-content: space-between; }
   .upstream-summary > div { gap: 8px; }
   .summary-icon { display: none; }

@@ -104,8 +104,15 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			writeFormatError(c, format, http.StatusBadRequest, "missing or invalid 'model' in request")
 			return
 		}
+		if format == FormatGemini {
+			_, method, _ := parseGeminiAction(c.Param("action"))
+			cr.Stream = method == "streamGenerateContent"
+		}
 
 		endpoint := nativeEndpoint(format, cr)
+		if nativeOnly {
+			endpoint = c.Request.URL.Path
+		}
 		task := &relayTask{
 			format:     format,
 			endpoint:   endpoint,
@@ -141,15 +148,15 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			// 上次可能就是通过跨格式转换落到该上游的）
 			if i == 0 {
 				if id, ok := affinityGet(skey); ok {
-					if u, err := dbGetUpstream(id); err == nil && u.Enabled &&
-						u.servesModel(cr.Model) && healthAvailable(u.ID) {
+					if u, err := dbGetUpstream(id); err == nil && u.Enabled && u.Weight > 0 &&
+						u.servesModel(cr.Model) && healthAvailable(u.ID) && (!nativeOnly || u.Type == nativeType) {
 						up = u
 					}
 				}
 			}
 			if up == nil {
 				var err error
-				up, err = pickUpstream(nativeType, cr.Model, tried, task.nativeOnly)
+				up, err = pickUpstream(format, cr.Model, tried, task.nativeOnly)
 				if err != nil {
 					attemptErr = err
 					break // Finalize once so unavailable models also contribute a failed request.
@@ -258,7 +265,8 @@ func insertFailureLog(ak ApiKey, upID int64, upName string, task *relayTask, sta
 func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wrote bool, err error) {
 	info = relayInfo{UpstreamID: up.ID, UpstreamName: up.Name}
 	upModel := up.mapModel(task.model)
-	native := up.Type == task.format.nativeUpstreamType()
+	wireFormat := up.wireFormat(task.format)
+	native := wireFormat == task.format || task.nativeOnly
 
 	var url string
 	var reqBody []byte
@@ -273,16 +281,13 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 			}
 		}
 	} else {
-		// 跨格式转换：tools 无法无损转换，明确报错
-		if task.canon.HasTools {
-			msg := fmt.Sprintf("model %q on upstream %q (%s) requires cross-format conversion, which does not support tool calls; add a native %s upstream for this model",
-				task.model, up.Name, up.Type, task.format.nativeUpstreamType())
-			writeFormatError(c, task.format, http.StatusBadRequest, msg)
+		reqBody, err = renderProtocolRequest(wireFormat, task.canon, upModel)
+		if err != nil {
+			writeFormatError(c, task.format, http.StatusBadRequest, err.Error())
 			info.Status = http.StatusBadRequest
 			return info, true, nil
 		}
-		reqBody = renderUpstreamBody(up.Type, task.canon, upModel)
-		url = upstreamURL(up.BaseURL, upstreamEndpoint(up.Type, upModel, task.stream))
+		url = upstreamURL(up.BaseURL, nativeEndpoint(wireFormat, &canonReq{Model: upModel, Stream: task.stream}))
 	}
 
 	req, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, url, bytes.NewReader(reqBody))
@@ -362,31 +367,36 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		return info, true, nil
 	}
 
-	// ---------- 跨格式转换 ----------
-	if task.stream {
-		if isSSE {
-			err = relaySSEConverted(c, resp, up.Type, task, &info)
-			return info, true, err
-		}
-		// 上游未按 SSE 返回，按非流式处理
-		b, rerr := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
-		if rerr != nil {
-			return info, false, rerr
-		}
-		text, u := parseUpstreamNonStream(up.Type, b)
-		info.OutputText.WriteString(text)
-		info.mergeUsage(u)
-		writeConvertedNonStream(c, task.format, task.model, text, u)
-		return info, true, nil
+	if task.stream && isSSE {
+		err = relayProtocolSSE(c, resp, wireFormat, task, &info)
+		return info, true, err
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 	if err != nil {
 		return info, false, err
 	}
-	text, u := parseUpstreamNonStream(up.Type, b)
-	info.OutputText.WriteString(text)
-	info.mergeUsage(u)
-	writeConvertedNonStream(c, task.format, task.model, text, u)
+	result, err := parseProtocolResponse(wireFormat, b)
+	if err != nil {
+		return info, false, err
+	}
+	info.OutputText.WriteString(result.text())
+	info.mergeUsage(result.Usage)
+	if task.stream {
+		// A JSON-only upstream still returns an SSE envelope to a streaming client.
+		writer := newProtocolStream(c, task.format, task.model, task.wantUsageChunk)
+		for i, block := range result.Blocks {
+			if err = writer.push(c, streamDelta{Key: fmt.Sprintf("block_%d", i), Block: block}, result.Usage); err != nil {
+				writer.fail(c)
+				return info, true, err
+			}
+		}
+		err = writer.finish(c, result.Usage, result.Finish, result.StopSequence)
+		if err != nil {
+			writer.fail(c)
+		}
+		return info, true, err
+	}
+	c.JSON(http.StatusOK, renderProtocolResponse(task.format, task.model, "", result))
 	return info, true, nil
 }
 
@@ -439,35 +449,20 @@ func recordNativeEvent(format clientFormat, payload string, info *relayInfo) {
 		info.OutputText.WriteString(delta)
 	}
 	info.mergeUsage(u)
-}
-
-// relaySSEConverted 跨格式流式转换：解析上游 SSE，逐增量渲染为客户端格式。
-func relaySSEConverted(c *gin.Context, resp *http.Response, upType string, task *relayTask, info *relayInfo) error {
-	writer := newConvertedStream(c, task.format, task.model, task.wantUsageChunk)
-	reader := bufio.NewReaderSize(resp.Body, 1<<16)
-
-	for {
-		line, rerr := reader.ReadString('\n')
-		if line != "" {
-			if strings.HasPrefix(line, "data:") {
-				payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-				if payload != "" && payload != "[DONE]" {
-					delta, u := parseUpstreamSSEChunk(upType, payload)
-					if delta != "" {
-						info.OutputText.WriteString(delta)
-						writer.delta(c, delta)
-					}
-					info.mergeUsage(u)
-				}
-			}
+	// Presence, rather than a positive value, distinguishes real zero usage from missing usage.
+	var j map[string]any
+	if json.Unmarshal([]byte(payload), &j) == nil {
+		usage := object(j["usage"])
+		if format == FormatGemini {
+			usage = object(j["usageMetadata"])
 		}
-		if rerr != nil {
-			if rerr == io.EOF {
-				writer.finish(c, upstreamUsage{Prompt: info.PromptTok, Completion: info.CompletionTok})
-				return nil
-			}
-			return rerr
+		if format == FormatAnthropic && str(j["type"]) == "message_start" {
+			usage = object(object(j["message"])["usage"])
 		}
+		if format == FormatOpenAIResponse {
+			usage = object(object(j["response"])["usage"])
+		}
+		info.mergeUsage(readUsage(usage, format))
 	}
 }
 

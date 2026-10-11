@@ -111,7 +111,7 @@ function setHeaderTemplate(kind) {
   if (kind === "passthrough") headers = { "*": true };
   if (kind === "example") {
     headers = { "*": true, "re:^X-Trace-.*$": true, "X-Foo": "{client_header:X-Foo}" };
-    const type = $("editType").value;
+    const type = editorUpstreamType();
     headers[type === "anthropic" ? "x-api-key" : type === "gemini" ? "x-goog-api-key" : "Authorization"] = type === "openai" ? "Bearer {api_key}" : "{api_key}";
   }
   $("editHeaderOverrides").value = headers ? JSON.stringify(headers, null, 2) : "";

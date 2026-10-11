@@ -99,17 +99,17 @@ func (u *Upstream) mapModel(clientModel string) string {
 
 // pickUpstream 在健康且服务该模型的候选中按优先级分层后加权随机选择。
 //
-// 跨格式转换设计：候选不限于客户端原生类型的上游——只要某个上游（任意类型）
+// 跨格式转换设计：候选不限于客户端原生格式的上游——只要某个上游（任意格式）
 // 服务该模型就可以入选，按以下优先级取最优层：
-//  1. 原生类型 + 显式白名单命中   （格式对、模型也对，最佳）
-//  2. 其他类型 + 显式白名单命中   （模型对，需要跨格式转换）
-//  3. 原生类型 + 通配             （格式对，模型是否真支持由上游裁决）
-//  4. 其他类型 + 通配             （兜底）
+//  1. 原生格式 + 显式白名单命中   （格式对、模型也对，最佳）
+//  2. 其他格式 + 显式白名单命中   （模型对，需要跨格式转换）
+//  3. 原生格式 + 通配             （格式对，模型是否真支持由上游裁决）
+//  4. 其他格式 + 通配             （兜底）
 //
 // nativeOnly=true 时（如 embeddings）只考虑原生类型。
 //
 // exclude 里的上游（本轮已试过的）不重复选择。weight<=0 的上游不接新流量。
-func pickUpstream(upType, model string, exclude map[int64]bool, nativeOnly bool) (*Upstream, error) {
+func pickUpstream(format clientFormat, model string, exclude map[int64]bool, nativeOnly bool) (*Upstream, error) {
 	ups, err := dbListUpstreams()
 	if err != nil {
 		return nil, err
@@ -126,17 +126,18 @@ func pickUpstream(upType, model string, exclude map[int64]bool, nativeOnly bool)
 		}
 		var tier int
 		if nativeOnly {
-			if u.Type != upType {
+			if u.Type != format.nativeUpstreamType() {
 				continue
 			}
 			tier = 0
 		} else {
+			native := u.wireFormat(format) == format
 			switch {
-			case u.Type == upType && explicit:
+			case native && explicit:
 				tier = 1
-			case u.Type != upType && explicit:
+			case !native && explicit:
 				tier = 2
-			case u.Type == upType:
+			case native:
 				tier = 3
 			default:
 				tier = 4

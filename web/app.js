@@ -14,8 +14,20 @@ const fmtTime = (value) => {
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
 };
 const number = (value) => Number(value || 0).toLocaleString("zh-CN");
-const providerNames = { openai: "OpenAI 兼容", anthropic: "Anthropic", gemini: "Gemini" };
+const upstreamFormatNames = { "openai-chat": "OpenAI Chat Completions", "openai-responses": "OpenAI Responses", "openai-auto": "OpenAI · 旧配置（跟随客户端）", anthropic: "Anthropic Messages", gemini: "Gemini generateContent" };
 const providerURLs = { openai: "https://api.openai.com", anthropic: "https://api.anthropic.com", gemini: "https://generativelanguage.googleapis.com" };
+function upstreamFormat(upstream) {
+  if (!upstream) return "openai-chat";
+  if (upstream.type !== "openai") return upstream.type;
+  return { chat: "openai-chat", responses: "openai-responses" }[upstream.openai_protocol] || "openai-auto";
+}
+function editorUpstreamType() {
+  const format = $("editType").value;
+  return format.startsWith("openai-") ? "openai" : format;
+}
+function editorOpenAIProtocol() {
+  return { "openai-chat": "chat", "openai-responses": "responses" }[$("editType").value] || "auto";
+}
 const tabNames = { dashboard: "概览", keys: "API 密钥", upstreams: "上游服务", proxies: "代理配置", logs: "调用日志", settings: "工作空间设置", deployment: "部署配置" };
 const validTab = (name) => Object.hasOwn(tabNames, name);
 let token = localStorage.getItem(TOKEN_KEY) || "";
@@ -392,12 +404,12 @@ async function loadUpstreams(quiet = false) {
 }
 function renderUpstreams() {
   const query = $("upstreamSearch").value.trim().toLowerCase(), type = $("upstreamTypeFilter").value;
-  const list = upsCache.filter((item) => (!type || item.type === type) && [item.name, item.base_url, item.models, item.type].join(" ").toLowerCase().includes(query));
+  const list = upsCache.filter((item) => (!type || upstreamFormat(item) === type) && [item.name, item.base_url, item.models, item.type, upstreamFormatNames[upstreamFormat(item)]].join(" ").toLowerCase().includes(query));
   $("upstreamTotal").textContent = upsCache.length;
   $("upstreamHealthy").textContent = upsCache.filter((item) => item.enabled && item.healthy).length;
   $("upstreamModelCount").textContent = new Set(upsCache.flatMap((item) => parseAllowlist(item.models))).size;
   $("upstreamListCount").textContent = list.length + (list.length !== upsCache.length ? " / " + upsCache.length : "");
-  $("upsTable").querySelector("tbody").innerHTML = list.map((item) => '<tr><td><div class="provider-cell">' + providerIcon(item.type) + '<span class="cell-stack"><strong>' + esc(item.name || "未命名上游") + '</strong><small>' + esc(providerNames[item.type] || item.type) + ' · #' + item.id + '</small></span></div></td><td class="endpoint-cell"><span>' + esc(item.base_url) + '</span><small>' + esc(item.key_masked) + '</small><small>代理：' + esc(upstreamProxyLabel(item.proxy_id)) + '</small></td><td class="cell-stack"><strong>' + (parseAllowlist(item.models).length ? parseAllowlist(item.models).length + " 个模型" : "全部模型") + '</strong><small>权重 ' + item.weight + '</small></td><td><span class="badge ' + (item.healthy ? "on" : "warn") + '">' + (item.healthy ? "健康" : "冷却中") + '</span>' + (item.fails ? '<span class="cell-stack"><small>连续失败 ' + item.fails + ' 次</small></span>' : "") + '</td><td><button class="toggle-btn" role="switch" aria-checked="' + !!item.enabled + '" aria-label="' + (item.enabled ? "停用 " : "启用 ") + esc(item.name) + '" onclick="toggleUpstream(' + item.id + ", " + !item.enabled + ', this)"><span></span></button></td><td><div class="row-actions"><button class="text-btn" onclick="openEditUpstream(' + item.id + ')" aria-label="编辑 ' + esc(item.name) + '">' + icon("edit") + '编辑</button><button class="icon-btn" onclick="testUpstream(' + item.id + ', this)" aria-label="测试 ' + esc(item.name) + '" title="测试连接">' + icon("activity") + '</button><button class="icon-btn danger" onclick="deleteUpstream(' + item.id + ')" aria-label="删除 ' + esc(item.name) + '" title="删除上游">' + icon("trash") + '</button></div></td></tr>').join("") || emptyRow(6, query || type ? "没有匹配的上游" : "连接你的第一个上游", query || type ? "调整搜索条件或接口类型。" : "支持 OpenAI 兼容、Anthropic 与 Gemini 接口。", query || type ? "" : "openCreateUpstream()", "添加上游");
+  $("upsTable").querySelector("tbody").innerHTML = list.map((item) => '<tr><td><div class="provider-cell">' + providerIcon(item.type) + '<span class="cell-stack"><strong>' + esc(item.name || "未命名上游") + '</strong><small>' + esc(upstreamFormatNames[upstreamFormat(item)] || item.type) + ' · #' + item.id + '</small></span></div></td><td class="endpoint-cell"><span>' + esc(item.base_url) + '</span><small>' + esc(item.key_masked) + '</small><small>代理：' + esc(upstreamProxyLabel(item.proxy_id)) + '</small></td><td class="cell-stack"><strong>' + (parseAllowlist(item.models).length ? parseAllowlist(item.models).length + " 个模型" : "全部模型") + '</strong><small>权重 ' + item.weight + '</small></td><td><span class="badge ' + (item.healthy ? "on" : "warn") + '">' + (item.healthy ? "健康" : "冷却中") + '</span>' + (item.fails ? '<span class="cell-stack"><small>连续失败 ' + item.fails + ' 次</small></span>' : "") + '</td><td><button class="toggle-btn" role="switch" aria-checked="' + !!item.enabled + '" aria-label="' + (item.enabled ? "停用 " : "启用 ") + esc(item.name) + '" onclick="toggleUpstream(' + item.id + ", " + !item.enabled + ', this)"><span></span></button></td><td><div class="row-actions"><button class="text-btn" onclick="openEditUpstream(' + item.id + ')" aria-label="编辑 ' + esc(item.name) + '">' + icon("edit") + '编辑</button><button class="icon-btn" onclick="testUpstream(' + item.id + ', this)" aria-label="测试 ' + esc(item.name) + '" title="测试连接">' + icon("activity") + '</button><button class="icon-btn danger" onclick="deleteUpstream(' + item.id + ')" aria-label="删除 ' + esc(item.name) + '" title="删除上游">' + icon("trash") + '</button></div></td></tr>').join("") || emptyRow(6, query || type ? "没有匹配的上游" : "连接你的第一个上游", query || type ? "调整搜索条件或接口类型。" : "支持 OpenAI Chat Completions、Responses、Anthropic 与 Gemini 接口。", query || type ? "" : "openCreateUpstream()", "添加上游");
   labelTableCells("upsTable");
 }
 async function toggleUpstream(id, enabled, button) {
@@ -447,7 +459,10 @@ async function openEditor(upstream) {
   editProbe.saving = false; editProbe.closing = false; editProbe.models = [];
   $("upstreamEditorForm").reset();
   $("upstreamEditorForm").querySelectorAll(".form-error").forEach((error) => error.classList.add("hidden"));
-  const values = { editName: upstream?.name || "", editType: upstream?.type || "openai", editBase: upstream?.base_url || providerURLs.openai, editKey: "", editHeaderOverrides: upstream?.header_overrides || "", editWeight: upstream ? upstream.weight : 1, editModels: upstream?.models || "", editModelMap: upstream?.model_map || "" };
+  const format = upstreamFormat(upstream);
+  $("legacyOpenAIFormatOption").hidden = format !== "openai-auto";
+  $("legacyOpenAIFormatOption").disabled = format !== "openai-auto";
+  const values = { editName: upstream?.name || "", editType: format, editBase: upstream?.base_url || providerURLs.openai, editKey: "", editHeaderOverrides: upstream?.header_overrides || "", editWeight: upstream ? upstream.weight : 1, editModels: upstream?.models || "", editModelMap: upstream?.model_map || "" };
   Object.entries(values).forEach(([id, value]) => { $(id).value = value; $(id).setCustomValidity(""); $(id).removeAttribute("aria-invalid"); });
   renderProxyOptions(upstream?.proxy_id || 0);
   editProbe.selected = new Set(parseAllowlist($("editModels").value));
@@ -481,12 +496,18 @@ async function openEditor(upstream) {
   loadClientHeaderVersions();
 }
 function updateEditorProvider(changed = true) {
-  const type = $("editType").value;
+  const format = $("editType").value, type = editorUpstreamType();
   if (changed && editProbe.id === null && Object.values(providerURLs).includes($("editBase").value)) $("editBase").value = providerURLs[type];
   $("editorProviderIcon").className = "provider-icon " + type;
   $("editorProviderIcon").textContent = { openai: "O", anthropic: "A", gemini: "G" }[type];
   $("editorProviderIcon").setAttribute("aria-hidden", "true");
-  $("providerHint").textContent = { openai: "支持 OpenAI、DeepSeek、Grok 等 OpenAI 兼容接口。", anthropic: "使用 Anthropic 原生 Messages 接口，支持 Claude 模型。", gemini: "使用 Google Gemini 原生 generateContent 接口。" }[type];
+  $("providerHint").textContent = {
+    "openai-chat": "上游固定使用 /v1/chat/completions。适用于支持 Chat Completions 的 OpenAI 兼容服务。",
+    "openai-responses": "上游固定使用 /v1/responses。请确认上游支持 Responses 接口。",
+    "openai-auto": "旧连接沿用原有行为：跟随 OpenAI 客户端接口，其他格式转换为 Chat。可改选上游实际支持的固定格式。",
+    anthropic: "上游使用 Anthropic 原生 /v1/messages 接口。",
+    gemini: "上游使用 Gemini 原生 generateContent / streamGenerateContent 接口。"
+  }[format];
   $("editBase").placeholder = providerURLs[type];
   $("editModels").placeholder = { openai: "gpt-4o, deepseek-chat", anthropic: "claude-sonnet-4-20250514, claude-opus-4-20250514", gemini: "gemini-2.5-flash, gemini-2.5-pro" }[type];
   if (changed) { clearProbeResults(); updateEditorDirty(); }
@@ -624,7 +645,7 @@ async function probeEditUpstream() {
   const generation = editProbe.generation;
   editProbe.controller = new AbortController();
   const signature = [$("editType").value, base.value, key.value, $("editProxy").value, $("editHeaderOverrides").value].join("\n");
-  const body = { type: $("editType").value, base_url: base.value.trim(), proxy_id: Number($("editProxy").value), header_overrides: $("editHeaderOverrides").value.trim() };
+  const body = { type: editorUpstreamType(), base_url: base.value.trim(), proxy_id: Number($("editProxy").value), header_overrides: $("editHeaderOverrides").value.trim() };
   if (key.value.trim()) body.api_key = key.value.trim();
   $("editProbeInfo").className = "probe-info";
   $("editProbeInfo").textContent = key.value.trim() ? "正在使用当前填写的 Key 获取模型…" : "正在使用已保存的 Key 获取模型…";
@@ -660,7 +681,8 @@ async function saveEditUpstream(event) {
     if (!["http:", "https:"].includes(new URL($("editBase").value).protocol)) throw new Error();
   } catch { $("editBase").setCustomValidity("请输入以 http:// 或 https:// 开头的服务地址"); jumpEditor("editorConnection"); $("editBase").reportValidity(); return false; }
   if (!$("upstreamEditorForm").reportValidity()) return false;
-  const body = { name: $("editName").value.trim(), type: $("editType").value, base_url: $("editBase").value.trim().replace(/\/+$/, ""), proxy_id: Number($("editProxy").value), weight: Number($("editWeight").value), models: parseAllowlist($("editModels").value).join(","), model_map: $("editModelMap").value.trim(), header_overrides: $("editHeaderOverrides").value.trim() };
+  const body = { name: $("editName").value.trim(), type: editorUpstreamType(), base_url: $("editBase").value.trim().replace(/\/+$/, ""), proxy_id: Number($("editProxy").value), weight: Number($("editWeight").value), models: parseAllowlist($("editModels").value).join(","), model_map: $("editModelMap").value.trim(), header_overrides: $("editHeaderOverrides").value.trim() };
+  body.openai_protocol = editorOpenAIProtocol();
   if (!creating) body.enabled = $("editEnabled").checked;
   if ($("editKey").value.trim()) body.api_key = $("editKey").value.trim();
   editProbe.saving = true; updateEditorDirty();
