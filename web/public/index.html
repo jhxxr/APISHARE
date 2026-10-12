@@ -13,7 +13,9 @@
       document.documentElement.classList.add("intro-active");
     })();
   </script>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23c47d60'/%3E%3Cpath d='M16 7 5 13l11 6 11-6-11-6ZM5 18l11 6 11-6M5 23l11 6 11-6' fill='none' stroke='%232e2b24' stroke-width='1.8' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="icon" type="image/png" sizes="32x32" href="/public/static/brand/apishare-favicon-v2.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="/public/static/brand/apishare-icon-v2.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/public/static/brand/apishare-touch-icon-v2.png">
   <link rel="stylesheet" href="/public/static/home.css">
   <link rel="preload" href="/public/static/fonts/space-grotesk.ttf" as="font" type="font/ttf" crossorigin>
   <script src="/public/static/clipboard.js" defer></script>
@@ -45,6 +47,7 @@
         <canvas id="particleScene" class="particle-scene"></canvas>
         <div class="scene-grain"></div>
       </div>
+      <a class="public-brand" href="/" aria-label="API Share 首页"><img src="/public/static/brand/apishare-icon-v2.png" width="44" height="44" alt=""><span>API Share</span></a>
       <a id="announcementEntry" class="announcement-entry hidden" href="#announcements"><svg class="icon" aria-hidden="true"><use href="#megaphone"/></svg><span id="announcementEntryLabel">最新公告</span><strong id="announcementEntryTitle"></strong><svg class="icon" aria-hidden="true"><use href="#arrow"/></svg></a>
       <div class="hero-readout">
         <h1 id="heroTitle" class="token-total"><span class="token-prefix">全站累计 Token 用量</span><strong id="heroTokens" aria-hidden="true">—</strong></h1>

@@ -30,6 +30,9 @@ func keyViewRequest(r *gin.Engine, method, path, body string, cookie *http.Cooki
 	request := httptest.NewRequest(method, "https://share.example"+path, strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Origin", "https://share.example")
+	if method != http.MethodGet {
+		request.Header.Set(keyViewRequestHeader, "key-view")
+	}
 	if cookie != nil {
 		request.AddCookie(cookie)
 	}
@@ -50,11 +53,14 @@ func keyViewLogin(t *testing.T, r *gin.Engine, key string, old *http.Cookie) (*h
 		t.Fatal(err)
 	}
 	cookies := w.Result().Cookies()
-	if len(cookies) != 1 {
+	if len(cookies) != 2 {
 		t.Fatalf("session cookies: %+v", cookies)
 	}
-	cookie := cookies[0]
-	if cookie.Name != keyViewCookie || !cookie.HttpOnly || !cookie.Secure || cookie.SameSite != http.SameSiteStrictMode || cookie.Path != "/api/key" || cookie.MaxAge != 7*24*3600 {
+	if cookies[0].Path != "/api/key" || cookies[0].MaxAge >= 0 {
+		t.Fatal("legacy cookie was not cleared")
+	}
+	cookie := cookies[1]
+	if cookie.Name != keyViewCookie || !cookie.HttpOnly || !cookie.Secure || cookie.SameSite != http.SameSiteStrictMode || cookie.Path != "/" || cookie.MaxAge != 7*24*3600 {
 		t.Fatalf("query cookie attributes: %+v", cookie)
 	}
 	return cookie, got
@@ -245,6 +251,65 @@ func TestKeyViewInvalidInputOriginAndLoginRateLimit(t *testing.T) {
 		r.ServeHTTP(w, request)
 		if w.Code != 403 {
 			t.Fatalf("cross-origin mutation allowed: %s %d", method, w.Code)
+		}
+	}
+}
+
+func TestKeyViewEmbeddedAndProxiedRequests(t *testing.T) {
+	r := keyViewTestRouter(t)
+	ak := publicTestKey(t, "origin-compatibility", 10, 0, false)
+	body, _ := json.Marshal(map[string]string{"key": ak.Key})
+	for _, origin := range []string{"null", "https://public-preview.example", ""} {
+		request := httptest.NewRequest(http.MethodPost, "http://backend.internal/api/key/session", strings.NewReader(string(body)))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Origin", origin)
+		request.Header.Set("Sec-Fetch-Site", "cross-site")
+		request.Header.Set(keyViewRequestHeader, "key-view")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, request)
+		if w.Code != http.StatusOK {
+			t.Fatalf("embedded/proxy metadata rejected a marked request: %q %d %s", origin, w.Code, w.Body.String())
+		}
+		cookies := w.Result().Cookies()
+		if len(cookies) != 2 {
+			t.Fatal("query session missing")
+		}
+		request = httptest.NewRequest(http.MethodDelete, "http://backend.internal/api/key/session", nil)
+		request.Header.Set("Origin", origin)
+		request.Header.Set("Sec-Fetch-Site", "cross-site")
+		request.Header.Set(keyViewRequestHeader, "key-view")
+		request.AddCookie(cookies[1])
+		w = httptest.NewRecorder()
+		r.ServeHTTP(w, request)
+		if w.Code != http.StatusNoContent {
+			t.Fatalf("embedded/proxy logout rejected: %q %d", origin, w.Code)
+		}
+	}
+}
+
+func TestKeyViewMutationsRequireHeaderAndDenyCORS(t *testing.T) {
+	r := keyViewTestRouter(t)
+	for _, method := range []string{http.MethodPost, http.MethodDelete} {
+		for _, marker := range []string{"", "wrong"} {
+			request := httptest.NewRequest(method, "https://share.example/api/key/session", strings.NewReader(`{"key":"anything"}`))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Origin", "https://share.example")
+			request.Header.Set("Sec-Fetch-Site", "same-origin")
+			request.Header.Set(keyViewRequestHeader, marker)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, request)
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("unmarked mutation accepted: %s %q %d", method, marker, w.Code)
+			}
+		}
+		request := httptest.NewRequest(http.MethodOptions, "https://share.example/api/key/session", nil)
+		request.Header.Set("Origin", "https://foreign.example")
+		request.Header.Set("Access-Control-Request-Method", method)
+		request.Header.Set("Access-Control-Request-Headers", "content-type,"+keyViewRequestHeader)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, request)
+		if w.Code >= 200 && w.Code < 300 || w.Header().Get("Access-Control-Allow-Origin") != "" || w.Header().Get("Access-Control-Allow-Headers") != "" {
+			t.Fatalf("foreign origin granted preflight permission: %d %v", w.Code, w.Header())
 		}
 	}
 }

@@ -5,7 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f6f8fb">
   <title>API Share · 工作空间</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23e7f5ee'/%3E%3Cpath d='M16 7 5 13l11 6 11-6-11-6ZM5 18l11 6 11-6M5 23l11 6 11-6' fill='none' stroke='%23047857' stroke-width='1.8' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="icon" type="image/png" sizes="32x32" href="/public/static/brand/apishare-favicon-v2.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="/public/static/brand/apishare-icon-v2.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/public/static/brand/apishare-touch-icon-v2.png">
   <link rel="stylesheet" href="static/style.css">
 </head>
 <body>
@@ -40,7 +42,7 @@
   </svg>
 
   <div id="loginView" class="login-wrap hidden">
-    <div class="login-brand"><span class="brand-mark"><svg class="icon"><use href="#i-layers"/></svg></span><span>API Share</span></div>
+    <div class="login-brand"><span class="brand-mark" aria-hidden="true"><img src="/public/static/brand/apishare-icon-v2.png" width="34" height="34" alt=""></span><span>API Share</span></div>
     <form id="loginForm" class="login-card" onsubmit="return doLogin(event)">
       <span class="eyebrow">YOUR API WORKSPACE</span><h1>管理你的 API 工作空间</h1><p>统一连接模型服务，管理访问权限与调用用量。</p>
       <label class="field" for="loginPassword"><span>管理员密码</span><input id="loginPassword" type="password" placeholder="输入密码，进入工作空间" autocomplete="current-password" required></label>
@@ -54,7 +56,7 @@
   <div id="appView" class="app-shell hidden">
     <button id="sidebarOverlay" class="sidebar-overlay hidden" type="button" aria-label="关闭导航" onclick="toggleSidebar(false)"></button>
     <aside id="sidebar" class="sidebar" aria-label="主导航">
-      <a class="brand" href="#dashboard" onclick="switchTab('dashboard'); return false;"><span class="brand-mark"><svg class="icon"><use href="#i-layers"/></svg></span><span>API Share<span class="brand-caption">API GATEWAY CONSOLE</span></span></a>
+      <a class="brand" href="#dashboard" onclick="switchTab('dashboard'); return false;"><span class="brand-mark" aria-hidden="true"><img src="/public/static/brand/apishare-icon-v2.png" width="34" height="34" alt=""></span><span>API Share<span class="brand-caption">API GATEWAY CONSOLE</span></span></a>
       <div class="workspace-switch"><span class="workspace-avatar">A</span><span><strong>我的工作空间</strong><small>管理员空间</small></span><span class="workspace-label">本地</span></div>
       <p class="nav-label">工作空间</p>
       <nav class="tabs">

@@ -31,7 +31,9 @@ button, input, select, a { outline-offset: 4px; }
 :focus-visible { outline: 2px solid var(--accent); }
 ::selection { background: #e7c2a9; color: #3d3929; }
 .hidden { display: none !important; }
-.announcement-entry { position: absolute; z-index: 3; top: max(24px,env(safe-area-inset-top)); left: 36px; max-width: calc(100% - 340px); display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 10px 16px; border: 1px solid var(--border); border-radius: 24px; background: var(--surface); color: var(--accent); font-size: 12px; }
+.public-brand { position: absolute; z-index: 3; top: max(24px,env(safe-area-inset-top)); left: 36px; display: inline-flex; align-items: center; gap: 10px; min-height: 44px; color: var(--text); font-size: 18px; font-weight: 600; letter-spacing: -.4px; }
+.public-brand img { display: block; width: 44px; height: 44px; flex: 0 0 auto; object-fit: contain; }
+.announcement-entry { position: absolute; z-index: 3; top: max(24px,env(safe-area-inset-top)); left: 230px; max-width: calc(100% - 266px); display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 10px 16px; border: 1px solid var(--border); border-radius: 24px; background: var(--surface); color: var(--accent); font-size: 12px; }
 .announcement-entry > span { flex: 0 0 auto; }
 .announcement-entry strong { min-width: 0; font-weight: 500; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .announcement-entry .icon { width: 16px; height: 16px; }
@@ -61,11 +63,14 @@ button, input, select, a { outline-offset: 4px; }
 .announcement-dialog .announcement-body { margin: 24px 0 0; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 15px; line-height: 1.9; }
 .announcement-load-error { margin-bottom: 16px; color: var(--red); font-size: 13px; }
 @media (max-width: 800px) {
- .announcement-entry { left: 24px; }
+ .public-brand { left: 24px; }
+ .announcement-entry { left: 210px; max-width: calc(100% - 234px); }
  .announcements-section { padding-top: 32px; }
  .announcement-feature { padding: 22px; }
 }
 @media (max-width: 540px) {
+ .public-brand { left: 18px; font-size: 16px; }
+ .public-brand img { width: 40px; height: 40px; }
  .announcement-entry { top: max(78px,calc(env(safe-area-inset-top) + 68px)); left: 18px; right: 18px; max-width: none; }
  .announcement-entry strong { flex: 1; }
  .announcements-section > .section-heading { gap: 12px; }

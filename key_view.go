@@ -19,6 +19,7 @@ import (
 
 const keyViewCookie = "apishare_key_view"
 const keyViewLifetime = 7 * 24 * time.Hour
+const keyViewRequestHeader = "X-APIShare-Request"
 
 type KeyQuotaPool struct {
 	QuotaUSD     float64 `json:"quota_usd"`
@@ -90,18 +91,17 @@ func setKeyViewCookie(c *gin.Context, token string, age int) {
 		secure = true
 	}
 	c.SetSameSite(http.SameSiteStrictMode)
-	c.SetCookie(keyViewCookie, token, age, "/api/key", "", secure, true)
+	// Root scope also works when a browser/proxy mounts the page under a prefix.
+	// This cookie is still accepted only by the read-only key-view routes.
+	c.SetCookie(keyViewCookie, "", -1, "/api/key", "", secure, true)
+	c.SetCookie(keyViewCookie, token, age, "/", "", secure, true)
 }
 
-func sameKeyViewOrigin(c *gin.Context) bool {
-	if c.GetHeader("Sec-Fetch-Site") == "cross-site" {
-		return false
-	}
-	if origin := c.GetHeader("Origin"); origin != "" {
-		u, err := url.Parse(origin)
-		return err == nil && (u.Scheme == "http" || u.Scheme == "https") && strings.EqualFold(u.Host, c.Request.Host)
-	}
-	return true
+func validKeyViewRequest(c *gin.Context) bool {
+	// Require a non-safelisted header on mutations. Foreign browser origins
+	// cannot send it without a CORS preflight, which these routes never allow.
+	// This works even when an embedded browser or proxy rewrites Origin/Host.
+	return c.GetHeader(keyViewRequestHeader) == "key-view"
 }
 
 var keyViewAttempts = struct {
@@ -140,8 +140,8 @@ func registerKeyView(r *gin.Engine) {
 	g.Use(func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 		c.Header("X-Content-Type-Options", "nosniff")
-		if c.Request.Method != http.MethodGet && !sameKeyViewOrigin(c) {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "请在本站查询密钥。"})
+		if c.Request.Method != http.MethodGet && !validKeyViewRequest(c) {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "查询请求不完整，请刷新页面后重试。"})
 			return
 		}
 		c.Next()

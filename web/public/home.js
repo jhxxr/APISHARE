@@ -203,7 +203,7 @@ function drawMinuteHistory(canvas,history) {
  let hovered=-1;
  canvas.addEventListener("pointermove",event=>{const index=Math.floor(event.offsetX/step);if(index===hovered)return;hovered=index;const d=history[index];if(d)canvas.title=intervalTitle(d);});
 }
-let keyOverview=null,keyBusy=false,keyEpoch=0,keyMessage="完整密钥不会保存在浏览器中。",keyMessageError=false;
+let keyOverview=null,keyBusy=false,keyEpoch=0,keyMessage="完整密钥不会保存在浏览器中。",keyMessageError=false,keyFormError=false;
 function setKeyMessage(message,error=false) { keyMessage=message;keyMessageError=error;renderKeyAccount(); }
 function renderKeyAccount() {
  $("keyForm").classList.toggle("hidden",!!keyOverview);
@@ -237,11 +237,11 @@ async function refreshKeyOverview(signal) {
   const state=await response.json();if(epoch!==keyEpoch||keyBusy)return;
   if(!state.authenticated){
    keyOverview=null;
-   setKeyMessage(hadKey?"查询会话已失效，请重新输入密钥。":"完整密钥不会保存在浏览器中。",hadKey);
+   if(hadKey||!keyFormError)setKeyMessage(hadKey?"查询会话已失效，请重新输入密钥。":"完整密钥不会保存在浏览器中。",hadKey);
    renderModels();return;
   }
   const next=state.overview;
-  keyOverview=next;
+  keyOverview=next;keyFormError=false;
   setKeyMessage("额度更新于 "+new Date(next.updated_at).toLocaleTimeString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false})+" · 仅当前密钥可见");
   renderModels();
  } catch {
@@ -254,21 +254,21 @@ async function verifyKey(event) {
  keyBusy=true;keyEpoch++;setKeyMessage("正在验证密钥…");
  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),10000);
  try {
-  const response=await fetch("/api/key/session",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key}),credentials:"same-origin",cache:"no-store",signal:controller.signal});
+  const response=await fetch("/api/key/session",{method:"POST",headers:{"Content-Type":"application/json","X-APIShare-Request":"key-view"},body:JSON.stringify({key}),credentials:"same-origin",cache:"no-store",signal:controller.signal});
   const result=await response.json().catch(()=>({}));
   if(!response.ok)throw new Error(result.error||"暂时无法验证密钥，请稍后重试。");
-  keyOverview=result;$("keyInput").value="";keyMessage="已验证 · 查询会话有效期 7 天";keyMessageError=false;
+  keyOverview=result;$("keyInput").value="";keyMessage="已验证 · 查询会话有效期 7 天";keyMessageError=false;keyFormError=false;
   notify("已显示当前密钥额度");
- } catch(error) { keyMessage=error.name==="AbortError"?"查询超时，请稍后重试。":error.message;keyMessageError=true; }
+ } catch(error) { keyMessage=error.name==="AbortError"?"查询超时，请稍后重试。":error.message;keyMessageError=true;keyFormError=true; }
  finally {clearTimeout(timeout);keyBusy=false;renderKeyAccount();renderModels();if(keyOverview)$("switchKey").focus({preventScroll:true});else $("keyInput").focus({preventScroll:true});}
 }
 async function clearKey(switching=false) {
  if(keyBusy)return;keyBusy=true;keyEpoch++;renderKeyAccount();
  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),10000);
  try {
-  const response=await fetch("/api/key/session",{method:"DELETE",credentials:"same-origin",cache:"no-store",signal:controller.signal});
+  const response=await fetch("/api/key/session",{method:"DELETE",headers:{"X-APIShare-Request":"key-view"},credentials:"same-origin",cache:"no-store",signal:controller.signal});
   if(!response.ok)throw new Error();
-  keyEpoch++;keyOverview=null;$("keyInput").value="";
+  keyEpoch++;keyOverview=null;keyFormError=false;$("keyInput").value="";
   keyMessage=switching?"输入另一个密钥查看对应额度。":"已退出，个人额度已隐藏。";keyMessageError=false;
  } catch {keyMessage="退出失败，请稍后重试。";keyMessageError=true;}
  finally {clearTimeout(timeout);keyBusy=false;renderKeyAccount();renderModels();if(!keyOverview)$("keyInput").focus({preventScroll:true});}
