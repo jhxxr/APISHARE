@@ -57,6 +57,7 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 	}
 	cr.Messages = nil
 	cr.System = ""
+	var systemForInput string
 	if v, ok := m["top_p"].(float64); ok {
 		cr.TopP = &v
 	}
@@ -184,9 +185,36 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 		}
 	case FormatAnthropic:
 		cr.System = contentText(m["system"])
+		systemForInput = cr.System
 		for _, v := range array(m["messages"]) {
 			j := object(v)
 			role := str(j["role"])
+			if role == "system" {
+				// Claude Code can inject system instructions between conversation turns.
+				// Other protocols receive them through the canonical system prompt.
+				if j["clear_at"] != nil && j["clear_at"] != "never" {
+					return unsupported("Anthropic system message clear_at")
+				}
+				if j["output_config"] != nil {
+					return unsupported("Anthropic system message output_config")
+				}
+				parts, err := parseCanonParts(format, j["content"])
+				if err != nil {
+					return err
+				}
+				for _, p := range parts {
+					if p.Kind != "text" {
+						return unsupported("Anthropic system message content (only text is supported)")
+					}
+				}
+				if text := partsText(parts); text != "" {
+					cr.System = joinSystem(cr.System, text)
+					if len(cr.Messages) == 0 {
+						systemForInput = cr.System
+					}
+				}
+				continue
+			}
 			if s, ok := j["content"].(string); ok {
 				appendMessage(canonMsg{Role: role, Text: s, Parts: []canonPart{{Kind: "text", Text: s}}})
 				continue
@@ -311,7 +339,11 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 		}
 	}
 	if len(cr.Messages) > 0 || cr.System != "" {
-		cr.InputText = buildInputText(cr.System, cr.Messages)
+		if format != FormatAnthropic {
+			systemForInput = cr.System
+		}
+		// Mid-conversation instructions must not change the stable session prefix.
+		cr.InputText = buildInputText(systemForInput, cr.Messages)
 	}
 	return nil
 }

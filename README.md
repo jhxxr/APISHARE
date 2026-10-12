@@ -53,6 +53,7 @@ Anthropic SDK / Claude Code → /v1/messages
 支持四种客户端格式与四种上游接口（Chat、Responses、Anthropic、Gemini）的互相转换：
 
 - system、多轮文本、max_tokens、temperature、top_p、函数工具定义、工具选择、工具调用与工具结果；支持多个工具和分段工具参数，模型映射仍然生效。
+- 兼容 Claude Code 在 Anthropic `messages[]` 中插入的纯文本 `role: "system"`：跨格式转换时按出现顺序合并到目标接口的系统指令，保留其他对话、图片和工具调用，且不让中途插入的指令改变会话指纹。转换后无法保留这些指令的原始生效位置；原生 Anthropic 路径仍透传完整请求。消息级 `clear_at`（除 `never`）、`output_config` 和工具增删块等特性不支持跨格式转换，会返回明确错误。
 - 图片支持 OpenAI URL / data URL、Anthropic URL / base64、Gemini inlineData / fileData。转入 Gemini 的远程图片需要 MIME 类型；没有 MIME 时返回明确错误，可改用 base64。Chat Completions 的工具结果只支持文本；图片工具结果不能转入此接口。
 - SSE 逐增量转换文本、思考文本与工具参数，保留工具调用 ID、停止原因和真实 usage，包含上游明确返回的 0 Token。Gemini 的函数调用要求完整 JSON，因此只缓冲工具参数；上游忽略 stream 并返回 JSON 时，将完整结果包装成客户端 SSE。
 - Responses 生成完整的输出项、增量、完成事件；Anthropic 生成带 `event:` 名称的 Messages 事件。上游错误、非法工具参数与缺少结束事件的断流会返回客户端错误并记为失败，不补发成功结束事件。
