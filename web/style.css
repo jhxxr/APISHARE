@@ -762,7 +762,4 @@ kbd { padding: 2px 4px; border: 1px solid var(--border-strong); border-radius: 3
 
 /* Public homepage controls in the private workspace. */
 .public-preview-link { display: flex; justify-content: flex-end; margin-bottom: -10px; }
-.home-share-control { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; cursor: pointer; color: var(--accent); font-size: 12px; white-space: nowrap; }
-.home-share-control input { width: 18px; height: 18px; padding: 0; margin: 0; accent-color: var(--accent); cursor: pointer; }
-.home-share-control input:disabled { opacity: .5; cursor: progress; }
-@media (max-width: 600px) { .public-preview-link { justify-content: flex-start; margin-bottom: 0; } .home-share-control { justify-content: flex-start; } }
+@media (max-width: 600px) { .public-preview-link { justify-content: flex-start; margin-bottom: 0; } }

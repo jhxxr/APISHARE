@@ -345,7 +345,7 @@ function renderKeys() {
     const modelIDs = parseAllowlist(key.models);
     const modelSummary = '<small class="key-model-summary" title="' + esc(modelIDs.join(", ")) + '">可用模型：' + (modelIDs.length ? modelIDs.length + " 个" : "未绑定，无法调用") + '</small>';
     const keyCell = '<div class="key-value"><code>' + esc(masked) + '</code><button type="button" class="text-btn key-copy" onclick="copyKey(' + key.id + ')" aria-label="复制 ' + esc(key.name) + ' 的完整密钥" title="复制完整密钥">' + icon("copy") + '<span>复制</span></button></div>';
-    return '<tr><td class="cell-stack"><strong>' + esc(key.name) + '</strong><small>#' + key.id + ' · ' + esc((key.created_at || "").slice(0, 10)) + '</small>' + modelSummary + '</td><td>' + keyCell + '</td><td class="quota-cell">' + renderKeyQuotaSummary(key) + '</td><td><code>' + key.qps + " / " + key.concurrency + '</code></td><td><span class="badge ' + (key.enabled ? "on" : "off") + '">' + (key.enabled ? "启用" : "停用") + '</span></td><td><label class="home-share-control"><input type="checkbox" ' + (key.show_on_home ? 'checked ' : '') + 'aria-label="在公开首页汇总 ' + esc(key.name) + ' 的余量和用量" onchange="toggleHomeShare(' + key.id + ', this)"><span>首页展示</span></label></td><td><div class="row-actions"><button class="text-btn" onclick="openKeyModels(' + key.id + ')" aria-label="设置 ' + esc(key.name) + ' 的模型与额度">模型与额度</button><button class="text-btn" onclick="toggleKey(' + key.id + ", " + !key.enabled + ', this)" aria-label="' + (key.enabled ? "停用 " : "启用 ") + esc(key.name) + '">' + (key.enabled ? "停用" : "启用") + '</button><button class="icon-btn danger" onclick="deleteKey(' + key.id + ')" aria-label="删除 ' + esc(key.name) + '" title="删除密钥">' + icon("trash") + '</button></div></td></tr>';
+    return '<tr><td class="cell-stack"><strong>' + esc(key.name) + '</strong><small>#' + key.id + ' · ' + esc((key.created_at || "").slice(0, 10)) + '</small>' + modelSummary + '</td><td>' + keyCell + '</td><td class="quota-cell">' + renderKeyQuotaSummary(key) + '</td><td><code>' + key.qps + " / " + key.concurrency + '</code></td><td><span class="badge ' + (key.enabled ? "on" : "off") + '">' + (key.enabled ? "启用" : "停用") + '</span></td><td><div class="row-actions"><button class="text-btn" onclick="openKeyModels(' + key.id + ')" aria-label="设置 ' + esc(key.name) + ' 的模型与额度">模型与额度</button><button class="text-btn" onclick="toggleKey(' + key.id + ", " + !key.enabled + ', this)" aria-label="' + (key.enabled ? "停用 " : "启用 ") + esc(key.name) + '">' + (key.enabled ? "停用" : "启用") + '</button><button class="icon-btn danger" onclick="deleteKey(' + key.id + ')" aria-label="删除 ' + esc(key.name) + '" title="删除密钥">' + icon("trash") + '</button></div></td></tr>';
   }).join("") || emptyRow(7, query ? "没有匹配的密钥" : "创建你的第一个 API 密钥", query ? "试试其他名称。" : "为成员分配独立的访问权限和调用额度。", query ? "" : "toggleKeyComposer(true)", "创建密钥", "key");
   labelTableCells("keysTable");
 }
@@ -370,16 +370,7 @@ async function toggleKey(id, enabled, button) {
   try { await api("api/keys/" + id, { method: "PATCH", body: JSON.stringify({ enabled }) }); await loadKeys(); toast(enabled ? "密钥已启用" : "密钥已停用"); }
   catch (error) { reportError(error); } finally { setBusy(button, false); }
 }
-async function toggleHomeShare(id, checkbox) {
-  const selected = checkbox.checked;
-  checkbox.disabled = true;
-  try {
-    await api("api/keys/" + id, { method: "PATCH", body: JSON.stringify({ show_on_home: selected }) });
-    await loadKeys();
-    toast(selected ? "已纳入首页合计，密钥信息不会公开" : "已从首页合计中移除");
-  } catch (error) { checkbox.checked = !selected; reportError(error, "首页展示设置失败"); }
-  finally { checkbox.disabled = false; }
-}
+
 async function deleteKey(id) {
   const key = keysCache.find((item) => item.id === id);
   if (!await askAction({ title: "删除 API 密钥？", description: (key ? "“" + key.name + "”" : "该密钥") + "删除后，使用它的请求会被拒绝。此操作无法撤销。", confirm: "删除密钥", danger: true })) return;

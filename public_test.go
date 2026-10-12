@@ -1,11 +1,9 @@
 package main
 
 import (
-	"compress/gzip"
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -40,192 +38,86 @@ func publicTestLog(t *testing.T, key *ApiKey, model string, status int, pt, ct i
 		t.Fatal(err)
 	}
 }
-func TestPublicOverviewSelectionPrivacyAndUptime(t *testing.T) {
+func TestPublicOverviewSiteWidePrivacyAndUptime(t *testing.T) {
 	publicTestDB(t)
 	now := time.Now()
 	a := publicTestKey(t, "private-group-A", 100, 20, true)
-	b := publicTestKey(t, "private-group-B", 50, 60, true)
-	hidden := publicTestKey(t, "private-hidden-group", 999, 1, false)
-	u := &Upstream{Name: "private-upstream-name", Type: "openai", BaseURL: "https://private.example.invalid", APIKey: "private-upstream-credential", Weight: 1, Enabled: true, Models: "gpt-alpha,claude-beta,gemini-unused"}
-	if err := dbInsertUpstream(u); err != nil {
+	b := publicTestKey(t, "private-group-B", 50, 60, false)
+	deleted := publicTestKey(t, "private-deleted", 999, 1, false)
+	if err := dbInsertUpstream(&Upstream{Name: "private-upstream", Type: "openai", BaseURL: "https://private.invalid", APIKey: "private-credential", Weight: 1, Enabled: true, Models: "gpt-alpha,claude-beta,gemini-unused"}); err != nil {
 		t.Fatal(err)
 	}
 	publicTestLog(t, a, "gpt-alpha", 200, 100, 20, now.Add(-2*time.Hour))
 	publicTestLog(t, b, "gpt-alpha", 503, 0, 0, now.Add(-time.Hour))
 	publicTestLog(t, a, "claude-beta", 200, 20, 10, now.AddDate(0, 0, -35))
-	publicTestLog(t, hidden, "gpt-alpha", 200, 999999, 999999, now)
-	got, err := buildPublicOverview(now, "hour")
-	if err != nil {
+	publicTestLog(t, deleted, "gpt-alpha", 200, 40, 30, now)
+	if err := dbDeleteKey(deleted.ID); err != nil {
 		t.Fatal(err)
 	}
-	if !got.Summary.Configured || got.Summary.RemainingUSD == nil || *got.Summary.RemainingUSD != 80 {
-		t.Fatalf("per-key clamped remainder: %+v", got.Summary)
-	}
-	if got.Summary.Calls != 3 || got.Summary.Successes != 2 || got.Summary.PromptTokens != 120 || got.Summary.CompletionTokens != 30 {
-		t.Fatalf("selected usage only: %+v", got.Summary)
-	}
-	if got.Summary.Uptime == nil || *got.Summary.Uptime != 50 {
-		t.Fatalf("24-hour request-weighted uptime: %+v", got.Summary)
-	}
-	if len(got.Daily) != 30 {
-		t.Fatalf("history length %d", len(got.Daily))
-	}
-	var calls, success int64
-	for _, d := range got.Daily {
-		calls += d.Calls
-		success += d.Successes
-	}
-	if calls != 2 || success != 1 {
-		t.Fatalf("window includes old/private calls: %d/%d", success, calls)
-	}
-	models := make(map[string]PublicModel)
-	for _, m := range got.Models {
-		models[m.Model] = m
-	}
-	alpha := models["gpt-alpha"]
-	if alpha.Status != "incident" || alpha.Uptime == nil || *alpha.Uptime != 50 || len(alpha.History) != 24 {
-		t.Fatalf("failure feedback: %+v", alpha)
-	}
-	for _, name := range []string{"claude-beta", "gemini-unused"} {
-		m := models[name]
-		if m.Status != "idle" || m.Uptime != nil {
-			t.Fatalf("no recent calls must be gray: %+v", m)
-		}
-	}
-	encoded, _ := json.Marshal(got)
-	for _, private := range []string{"sk-private", "private-group", "private-hidden", "private-upstream", "private-note", `"key"`, `"id"`, `"key_id"`, `"key_name"`, `"key_count"`, `"enabled_keys"`, `"api_key"`, `"base_url"`} {
-		if strings.Contains(string(encoded), private) {
-			t.Fatalf("public disclosure: %s", private)
-		}
-	}
-	b.ShowOnHome = false
+	b.Enabled = false
 	if err := dbUpdateKey(b); err != nil {
-		t.Fatal(err)
-	}
-	got, err = buildPublicOverview(now, "hour")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Summary.Calls != 2 || *got.Summary.Uptime != 100 {
-		t.Fatalf("selection changes must apply immediately: %+v", got.Summary)
-	}
-	if k, err := dbGetKeyByKey(a.Key); err != nil || !k.ShowOnHome {
-		t.Fatalf("auth read preserves selection: %+v %v", k, err)
-	}
-	keys, err := dbListKeys()
-	if err != nil || len(keys) != 3 {
-		t.Fatalf("admin listing: %v", err)
-	}
-}
-func TestPublicOverviewEmptyAndUnlimited(t *testing.T) {
-	publicTestDB(t)
-	k := publicTestKey(t, "not-published", 10, 2, false)
-	got, err := buildPublicOverview(time.Now(), "hour")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Summary.Configured || got.Summary.RemainingUSD != nil || got.Summary.Uptime != nil || got.Summary.Calls != 0 || len(got.Models) != 0 {
-		t.Fatalf("empty publication: %+v", got)
-	}
-	k.ShowOnHome = true
-	k.QuotaUSD = 0
-	if err := dbUpdateKey(k); err != nil {
-		t.Fatal(err)
-	}
-	publicTestKey(t, "finite-alongside-unlimited", 10, 3, true)
-	got, err = buildPublicOverview(time.Now(), "hour")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !got.Summary.Unlimited || got.Summary.RemainingUSD != nil || got.Summary.UsedUSD != 5 {
-		t.Fatalf("unlimited must not pretend to be zero/finite: %+v", got.Summary)
-	}
-}
-func TestPublicModelQuotasFollowPublishedBindings(t *testing.T) {
-	publicTestDB(t)
-	u := &Upstream{Name: "private-quota-upstream", Type: "openai", BaseURL: "https://private.invalid", APIKey: "private-credential", Weight: 1, Enabled: true,
-		Models: "a,b,c,client-alias,backend-model,unpublished", ModelMap: `{"client-alias":"backend-model"}`}
-	if err := dbInsertUpstream(u); err != nil {
-		t.Fatal(err)
-	}
-	insert := func(name, models string, shared float64, home bool, independent map[string]ModelQuota) *ApiKey {
-		t.Helper()
-		key := &ApiKey{Name: name, Key: "sk-private-" + name, Models: models, QuotaUSD: shared, Enabled: true, ShowOnHome: home, ModelQuotas: independent}
-		if err := dbInsertKey(key); err != nil {
-			t.Fatal(err)
-		}
-		return key
-	}
-	a := insert("quota-a", "a,b,client-alias", 100, true, map[string]ModelQuota{"b": {QuotaUSD: 30}, "client-alias": {QuotaUSD: 10}})
-	b := insert("quota-b", "a,c", 50, true, map[string]ModelQuota{"a": {QuotaUSD: 40}, "c": {QuotaUSD: 20}})
-	overdrawn := insert("overdrawn", "a", 10, true, nil)
-	insert("hidden-budget", "a,b,unpublished", 999, false, map[string]ModelQuota{"b": {QuotaUSD: 999}})
-	insert("unbound-budget", "", 999, true, nil)
-	for _, charge := range []struct {
-		key         *ApiKey
-		model       string
-		cost        float64
-		independent bool
-	}{{a, "a", 20, false}, {a, "b", 35, true}, {a, "client-alias", 3, true}, {b, "a", 5, true}, {b, "c", 8, true}, {overdrawn, "a", 15, false}} {
-		if err := dbChargeKey(charge.key.ID, charge.model, charge.cost, charge.independent); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// Historical/stale budgets for unbound models must never become public balances.
-	if _, err := db.Exec(`INSERT INTO api_key_model_quotas(key_id,model,quota_usd,used_usd) VALUES(?,?,?,?)`, a.ID, "c", 1000, 0); err != nil {
 		t.Fatal(err)
 	}
 	read := func() *PublicOverview {
 		t.Helper()
-		got, err := buildPublicOverview(time.Now(), "hour")
+		got, err := buildPublicOverview(now, "hour")
 		if err != nil {
 			t.Fatal(err)
 		}
 		return got
 	}
 	got := read()
-	models := make(map[string]PublicModel)
+	if got.Summary.Calls != 4 || got.Summary.Successes != 3 || got.Summary.PromptTokens != 160 || got.Summary.CompletionTokens != 60 {
+		t.Fatalf("site-wide totals: %+v", got.Summary)
+	}
+	if got.Summary.Uptime == nil || math.Abs(*got.Summary.Uptime-200.0/3) > 1e-9 {
+		t.Fatalf("weighted uptime: %+v", got.Summary)
+	}
+	var calls, successes int64
+	for _, day := range got.Daily {
+		calls += day.Calls
+		successes += day.Successes
+	}
+	if calls != 3 || successes != 2 || len(got.Daily) != 30 {
+		t.Fatalf("rolling daily totals: %d/%d", successes, calls)
+	}
 	for _, model := range got.Models {
-		models[model.Model] = model
-	}
-	alpha := models["a"].Quota
-	if alpha == nil || alpha.Mode != "mixed" || alpha.Shared == nil || alpha.Independent == nil ||
-		alpha.Shared.QuotaUSD != 110 || alpha.Shared.RemainingUSD != 80 || alpha.Independent.QuotaUSD != 40 || alpha.Independent.RemainingUSD != 35 {
-		t.Fatalf("mixed pools must follow each key's mode and clamp individually: %+v", alpha)
-	}
-	for model, remaining := range map[string]float64{"b": 0, "c": 12, "client-alias": 7} {
-		quota := models[model].Quota
-		if quota == nil || quota.Mode != "independent" || quota.Shared != nil || quota.Independent.RemainingUSD != remaining {
-			t.Fatalf("independent quota for %s: %+v", model, quota)
+		if model.Model == "gpt-alpha" && (model.Status != "operational" || model.Uptime == nil || math.Abs(*model.Uptime-200.0/3) > 1e-9 || len(model.History) != 24) {
+			t.Fatalf("model uptime: %+v", model)
 		}
-	}
-	if models["b"].Status != "idle" || models["b"].Uptime != nil || models["unpublished"].Quota != nil || models["backend-model"].Quota != nil {
-		t.Fatal("budget exhaustion changed uptime, or unpublished/internal models gained balances")
-	}
-	if got.Summary.QuotaUSD != 210 || got.Summary.RemainingUSD == nil || *got.Summary.RemainingUSD != 134 {
-		t.Fatalf("model balances changed the deduplicated overview: %+v", got.Summary)
+		if model.Model == "gemini-unused" && (model.Status != "idle" || model.Uptime != nil) {
+			t.Fatalf("unused model: %+v", model)
+		}
 	}
 	encoded, _ := json.Marshal(got)
-	for _, private := range []string{"sk-private", "quota-a", "quota-b", "hidden-budget", "private-credential", `"key_id"`, `"key_name"`, `"key_count"`} {
+	for _, private := range []string{"sk-private", "private-group", "private-upstream", "private-note", `"key"`, `"id"`, `"key_id"`, `"key_name"`, `"key_count"`, `"api_key"`, `"base_url"`, `"quota"`, `"quota_usd"`, `"used_usd"`, `"remaining_usd"`, `"unlimited"`} {
 		if strings.Contains(string(encoded), private) {
-			t.Fatalf("public quota response disclosed %s", private)
-		}
-	}
-	insert("unlimited-budget", "b", 0, true, map[string]ModelQuota{"b": {QuotaUSD: 0}})
-	got = read()
-	for _, model := range got.Models {
-		if model.Model == "b" && (model.Quota == nil || !model.Quota.Independent.Unlimited || model.Quota.Independent.QuotaUSD != 30 || model.Quota.Independent.RemainingUSD != 0) {
-			t.Fatalf("unlimited budgets must retain finite balances: %+v", model.Quota)
+			t.Fatalf("public disclosure: %s", private)
 		}
 	}
 	a.ShowOnHome = false
 	if err := dbUpdateKey(a); err != nil {
 		t.Fatal(err)
 	}
-	for _, model := range read().Models {
-		if model.Model == "client-alias" && model.Quota != nil {
-			t.Fatal("unpublishing a key left its model balance visible")
-		}
+	if next := read(); next.Summary.Calls != 4 || *next.Summary.Uptime != *got.Summary.Uptime {
+		t.Fatal("legacy visibility flag changed site-wide telemetry")
+	}
+}
+
+func TestPublicOverviewEmptyNeverExposesBalances(t *testing.T) {
+	publicTestDB(t)
+	publicTestKey(t, "finite", 10, 2, false)
+	publicTestKey(t, "unlimited", 0, 3, true)
+	got, err := buildPublicOverview(time.Now(), "hour")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Summary.Calls != 0 || got.Summary.Uptime != nil || got.Summary.PromptTokens != 0 || len(got.Models) != 0 {
+		t.Fatalf("empty telemetry: %+v", got)
+	}
+	encoded, _ := json.Marshal(got)
+	if strings.Contains(string(encoded), "usd") || strings.Contains(string(encoded), "quota") {
+		t.Fatalf("anonymous balances: %s", encoded)
 	}
 }
 func TestPublicMigrationKeepsExistingKeysPrivate(t *testing.T) {
@@ -257,7 +149,7 @@ func TestPublicHTTPAndPrivateAdmin(t *testing.T) {
 	r := gin.New()
 	registerPublic(r)
 	registerAdmin(r)
-	for _, url := range []string{"/", "/metro", "/public/static/home.css", "/public/static/home.js", "/public/static/metro.css", "/public/static/metro.js", "/api/public/overview", "/api/public/overview?interval=hour", "/api/public/overview?interval=minute"} {
+	for _, url := range []string{"/", "/public/static/home.css", "/public/static/home.js", "/api/public/overview", "/api/public/overview?interval=hour", "/api/public/overview?interval=minute"} {
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, httptest.NewRequest("GET", url, nil))
 		if w.Code != http.StatusOK {
@@ -292,34 +184,24 @@ func TestPublicHTTPAndPrivateAdmin(t *testing.T) {
 		}
 	}
 }
-func TestPublicVendorAssetsCompressedAndCached(t *testing.T) {
+func TestArchivedStationIsUnavailable(t *testing.T) {
+	publicTestDB(t)
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	registerPublic(r)
-	for _, name := range []string{"three.module.js", "three.core.js", "addons/postprocessing/UnrealBloomPass.js", "addons/objects/Reflector.js"} {
-		request := httptest.NewRequest("GET", "/public/static/vendor/three-0.186.1/"+name, nil)
-		request.Header.Set("Accept-Encoding", "gzip, deflate")
+	for _, path := range []string{"/metro", "/public/static/metro.html", "/public/static/metro.js", "/public/static/metro.css", "/public/static/vendor/three-0.186.1/three.module.js", "/public/static/textures/train-brushed-metal-v1.webp"} {
 		w := httptest.NewRecorder()
-		r.ServeHTTP(w, request)
-		if w.Code != http.StatusOK || w.Header().Get("Content-Encoding") != "gzip" {
-			t.Fatalf("%s: status %d encoding %q", name, w.Code, w.Header().Get("Content-Encoding"))
-		}
-		if !strings.Contains(w.Header().Get("Cache-Control"), "immutable") {
-			t.Fatalf("%s: vendor asset not cacheable", name)
-		}
-		body, err := gzip.NewReader(w.Body)
-		if err != nil {
-			t.Fatal(err)
-		}
-		plain, err := io.ReadAll(body)
-		if err != nil || len(plain) == 0 {
-			t.Fatalf("%s: invalid gzip body: %v", name, err)
+		r.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if w.Code != 404 {
+			t.Fatalf("archived station served: %s, %d", path, w.Code)
 		}
 	}
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest("GET", "/public/static/metro.js", nil))
-	if w.Header().Get("Content-Encoding") != "" || w.Header().Get("Cache-Control") != "no-store" {
-		t.Fatalf("plain request must stay uncompressed and uncached: %v", w.Header())
+	for _, path := range []string{"/", "/public/static/home.js", "/public/static/home.css"} {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if strings.Contains(w.Body.String(), "/metro") || strings.Contains(w.Body.String(), "three.module") {
+			t.Fatalf("active page references station: %s", path)
+		}
 	}
 }
 func TestUnavailableRoutingRecordsFailure(t *testing.T) {
@@ -396,15 +278,15 @@ func TestPublicHistoryRolling24HoursAtBothResolutions(t *testing.T) {
 			if got.HistoryInterval != interval || got.HistoryWindowMinutes != 1440 {
 				t.Fatalf("resolution changed the total window: %+v", got)
 			}
-			wantRate := 4.0 / 7 * 100
-			if got.Summary.Calls != 10 || got.Summary.Uptime == nil || math.Abs(*got.Summary.Uptime-wantRate) > 1e-9 {
+			wantRate := 4.0 / 8 * 100
+			if got.Summary.Calls != 11 || got.Summary.Uptime == nil || math.Abs(*got.Summary.Uptime-wantRate) > 1e-9 {
 				t.Fatalf("24-hour cutoff, offsets, or private calls: %+v", got.Summary)
 			}
 			count, size := 24, time.Hour
-			wantBuckets := map[int][2]int64{0: {3, 2}, 1: {1, 0}, 23: {3, 2}}
+			wantBuckets := map[int][2]int64{0: {3, 2}, 1: {1, 0}, 23: {4, 2}}
 			if interval == "minute" {
 				count, size = 1440, time.Minute
-				wantBuckets = map[int][2]int64{0: {2, 1}, 1: {1, 1}, 60: {1, 0}, 1438: {1, 1}, 1439: {2, 1}}
+				wantBuckets = map[int][2]int64{0: {2, 1}, 1: {1, 1}, 60: {1, 0}, 1438: {1, 1}, 1439: {3, 1}}
 			}
 			for _, m := range got.Models {
 				if len(m.History) != count || m.History[0].Start != start.Format(time.RFC3339) || m.History[count-1].End != now.Format(time.RFC3339) {
@@ -426,7 +308,7 @@ func TestPublicHistoryRolling24HoursAtBothResolutions(t *testing.T) {
 					calls += bucket.Calls
 					successes += bucket.Successes
 				}
-				if m.Model == "gpt-clock" && (calls != 7 || successes != 4 || m.Uptime == nil || math.Abs(*m.Uptime-wantRate) > 1e-9) {
+				if m.Model == "gpt-clock" && (calls != 8 || successes != 4 || m.Uptime == nil || math.Abs(*m.Uptime-wantRate) > 1e-9) {
 					t.Fatalf("request-weighted model uptime changed with resolution: %+v", m)
 				}
 				if m.Model == "gpt-clock" && (m.Status != "operational" || m.LastCall != now.Format(time.RFC3339)) {

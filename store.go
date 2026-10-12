@@ -108,6 +108,12 @@ CREATE TABLE IF NOT EXISTS api_key_model_quotas (
   used_usd REAL NOT NULL DEFAULT 0,
   PRIMARY KEY(key_id,model)
 );
+CREATE TABLE IF NOT EXISTS key_view_sessions (
+  token_hash TEXT PRIMARY KEY,
+  key_id INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_key_view_expiry ON key_view_sessions(expires_at);
 CREATE TABLE IF NOT EXISTS settings (
   k TEXT PRIMARY KEY,
   v TEXT NOT NULL DEFAULT ''
@@ -132,7 +138,7 @@ CREATE TABLE IF NOT EXISTS session_affinity (
 	if err != nil {
 		return err
 	}
-	// Existing databases keep all keys private until the administrator opts in.
+	// Keep legacy visibility columns for database compatibility; telemetry is now site-wide.
 	rows, err := db.Query(`PRAGMA table_info(api_keys)`)
 	if err != nil {
 		return err
@@ -251,7 +257,7 @@ type ApiKey struct {
 	QPS           float64               `json:"qps"`
 	Concurrency   int                   `json:"concurrency"`
 	Enabled       bool                  `json:"enabled"`
-	ShowOnHome    bool                  `json:"show_on_home"`
+	ShowOnHome    bool                  `json:"-"`
 	Models        string                `json:"models"` // comma-separated client model IDs; empty denies access
 	ModelQuotas   map[string]ModelQuota `json:"model_quotas"`
 	Note          string                `json:"note"`
@@ -454,6 +460,11 @@ func dbUpdateKey(ak *ApiKey) error {
 	if err := dbSaveModelQuotas(tx, ak); err != nil {
 		return err
 	}
+	if !ak.Enabled {
+		if _, err := tx.Exec(`DELETE FROM key_view_sessions WHERE key_id=?`, ak.ID); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 
@@ -463,6 +474,9 @@ func dbDeleteKey(id int64) error {
 		return err
 	}
 	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM key_view_sessions WHERE key_id=?`, id); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM api_key_model_quotas WHERE key_id=?`, id); err != nil {
 		return err
 	}

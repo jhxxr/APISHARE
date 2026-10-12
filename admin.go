@@ -153,7 +153,6 @@ func registerAdminRoutes(r *gin.Engine) {
 			QPS         float64               `json:"qps"`
 			Concurrency int                   `json:"concurrency"`
 			Note        string                `json:"note"`
-			ShowOnHome  bool                  `json:"show_on_home"`
 			Models      string                `json:"models"`
 			ModelQuotas map[string]ModelQuota `json:"model_quotas"`
 		}
@@ -181,7 +180,6 @@ func registerAdminRoutes(r *gin.Engine) {
 			Concurrency: req.Concurrency,
 			Enabled:     true,
 			Note:        req.Note,
-			ShowOnHome:  req.ShowOnHome,
 			Models:      normalizeKeyModels(req.Models),
 			ModelQuotas: req.ModelQuotas,
 		}
@@ -215,7 +213,6 @@ func registerAdminRoutes(r *gin.Engine) {
 			Concurrency *int                   `json:"concurrency"`
 			Enabled     *bool                  `json:"enabled"`
 			Note        *string                `json:"note"`
-			ShowOnHome  *bool                  `json:"show_on_home"`
 			Models      *string                `json:"models"`
 			ModelQuotas *map[string]ModelQuota `json:"model_quotas"`
 		}
@@ -239,9 +236,6 @@ func registerAdminRoutes(r *gin.Engine) {
 		}
 		if req.Note != nil {
 			ak.Note = *req.Note
-		}
-		if req.ShowOnHome != nil {
-			ak.ShowOnHome = *req.ShowOnHome
 		}
 		if req.Models != nil {
 			if strings.TrimSpace(*req.Models) != "" && normalizeKeyModels(*req.Models) == "" {

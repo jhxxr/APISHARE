@@ -1,4 +1,4 @@
-/* Public dashboard: only anonymous aggregate and published announcement endpoints are requested. */
+/* Site-wide telemetry and separately authenticated, read-only key balances. */
 const $ = id => document.getElementById(id);
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 const fmt = value => Number(value || 0).toLocaleString("zh-CN");
@@ -97,6 +97,7 @@ function showAnnouncement(id) {
 }
 function closeAnnouncement() { $("announcementDialog").close();document.body.classList.remove("modal-open"); }
 function publicDialogOpen() { return $("historyDialog").open||$("announcementDialog").open; }
+
 function finishIntro() {
  document.documentElement.classList.remove("intro-active");
  document.removeEventListener("keydown",skipIntro);
@@ -119,16 +120,14 @@ function relativeTime(value) {
  return "最近调用："+Math.floor(seconds/86400)+" 天前";
 }
 function renderFirstScreen() {
- const names=overview.models.map(model=>model.model), shown=names.slice(0,4);
+ const names=overview.models.map(model=>model.model),shown=names.slice(0,4);
  $("todayModels").textContent=shown.length?shown.join("、")+(names.length>4?" 等 "+names.length+" 个模型":""):overview.models_loading?"模型列表更新中":"暂无可用模型";
  $("todayModels").title=names.join("、");
- const total=tokens(overview.summary),configured=overview.summary.configured;
- $("heroTitle").setAttribute("aria-label",configured?"累计 "+fmt(total)+" Token":"累计 Token 用量尚未发布");
- $("heroTokens").setAttribute("aria-hidden","true");
- $("heroTokens").title=configured?fmt(total)+" Tokens":"尚未发布用量";
- $("heroTokenNote").textContent=configured?heroTokenDescription(total):"尚未发布 Token 用量";
+ const total=tokens(overview.summary);
+ $("heroTitle").setAttribute("aria-label","全站累计 "+fmt(total)+" Token");
+ $("heroTokens").title=fmt(total)+" Tokens";
+ $("heroTokenNote").textContent=heroTokenDescription(total);
  finishHeroRoll();
- if(!configured){$("heroTokens").textContent="—";delete $("heroTokens").dataset.value;measureHeroType();return;}
  const box=$("firstScreen").getBoundingClientRect();
  const animate=!heroAnimated&&!document.hidden&&!document.documentElement.classList.contains("motion-paused")&&!matchMedia("(prefers-reduced-motion: reduce)").matches&&box.bottom>0&&box.top<innerHeight&&total>0;
  heroAnimated=true;
@@ -138,22 +137,14 @@ function renderOverview() {
  renderHistoryControls();
  renderFirstScreen();
  const s=overview.summary;
- $("totalTokens").textContent=s.configured?compact(tokens(s)):"—";
- $("totalTokens").setAttribute("aria-label",s.configured?"累计 Token 用量："+fmt(tokens(s)):"尚未发布 Token 用量");
+ $("totalTokens").textContent=compact(tokens(s));
+ $("totalTokens").setAttribute("aria-label","全站累计 Token 用量："+fmt(tokens(s)));
  $("totalTokens").title=fmt(tokens(s))+" Tokens";
- $("tokenDetail").textContent=s.configured?"输入 "+compact(s.prompt_tokens)+" / 输出 "+compact(s.completion_tokens):"暂未发布用量";
- $("totalCalls").textContent=s.configured?compact(s.calls):"—";
+ $("tokenDetail").textContent="输入 "+compact(s.prompt_tokens)+" / 输出 "+compact(s.completion_tokens);
+ $("totalCalls").textContent=compact(s.calls);
  $("totalCalls").title=fmt(s.calls)+" 次调用";
- $("callDetail").textContent=s.configured?"成功 "+fmt(s.successes)+" 次":"暂未发布调用统计";
+ $("callDetail").textContent="成功 "+fmt(s.successes)+" 次";
  $("totalUptime").textContent=rate(s.uptime_percent);
- $("remainingAmount").innerHTML=!s.configured?"—":s.unlimited?"不限额度":money(s.remaining_usd)+'<small>USD</small>';
- $("remainingAmount").title=!s.configured?"暂未发布余量":s.unlimited?"已发布额度不限":money(s.remaining_usd)+" USD";
- $("balanceHint").textContent=!s.configured?"暂未发布余量":s.unlimited?"累计消耗 "+money(s.used_usd):"总额度 "+money(s.quota_usd);
- const percent=s.quota_usd>0&&s.remaining_usd!==null?Math.min(100,Math.max(0,s.remaining_usd/s.quota_usd*100)):0;
- $("balancePercent").textContent=s.configured&&!s.unlimited&&s.quota_usd>0?percent.toFixed(1)+"% 可用":"";
- $("balanceTrack").classList.toggle("hidden",!s.configured||s.unlimited||s.quota_usd<=0);
- $("balanceTrack").setAttribute("aria-valuenow",percent.toFixed(1));
- $("balanceTrack").firstElementChild.style.width=percent+"%";
  const state=overview.models.some(m=>m.status==="incident")?"incident":overview.models.some(m=>m.status==="operational")?"operational":"idle";
  $("overallStatus").className="status-badge "+state;
  $("overallStatus").innerHTML='<span class="dot"></span>'+({incident:"有模型最近调用异常",operational:"模型服务运行中",idle:"等待真实调用反馈"}[state]);
@@ -167,11 +158,10 @@ function renderTrend(animate=false) {
  $("trendCalls").setAttribute("aria-pressed",String(metric==="calls"));
  $("trendTokens").setAttribute("aria-pressed",String(metric==="tokens"));
  const data=overview.daily.slice(-7),values=data.map(d=>metric==="calls"?d.calls:tokens(d)),sum=values.reduce((a,b)=>a+b,0);
- $("weeklyAmount").textContent=overview.summary.configured?compact(sum):"—";
+ $("weeklyAmount").textContent=compact(sum);
  $("weeklyUnit").textContent=metric==="calls"?"近 7 天调用":"近 7 天 Tokens";
  $("chartLegend").textContent=metric==="calls"?"调用次数":"Token 用量";
  $("chartDates").textContent=data[0].date.slice(5).replace("-","/")+" – "+data.at(-1).date.slice(5).replace("-","/");
- if(!overview.summary.configured){$("trendChart").innerHTML='<p class="loading-note">暂未发布用量数据</p>';return;}
  const width=640,height=210,left=38,right=14,top=18,bottom=35,plot=height-top-bottom;
  const highest=Math.max(...values,1),rawStep=highest/3,power=10**Math.floor(Math.log10(rawStep)),step=Math.max(1,Math.ceil(rawStep/power)*power),ceiling=step*3;
  const points=values.map((v,i)=>[left+i*(width-left-right)/6,top+plot-v/ceiling*plot]);
@@ -186,10 +176,12 @@ function renderTrend(animate=false) {
  window.pageMotion?.drawChart(animate);
 }
 function renderUsage() {
- const list=overview.usage.filter(u=>tokens(u)>0),total=list.reduce((sum,u)=>sum+tokens(u),0);
- $("usageList").innerHTML=list.length?list.slice(0,5).map(u=>'<div class="usage-row"><div class="usage-row-top"><strong>'+esc(u.model)+'</strong><span title="'+fmt(tokens(u))+' Tokens">'+compact(tokens(u))+'</span></div><div class="usage-track" aria-hidden="true"><span style="width:'+(tokens(u)/total*100).toFixed(2)+'%"></span></div></div>').join(""):'<p class="loading-note">'+(overview.summary.configured?"暂无 Token 用量":"暂未发布模型用量")+'</p>';
- const rest=list.slice(5),restTokens=rest.reduce((sum,u)=>sum+tokens(u),0);
- $("usageRest").textContent=rest.length?"其他 "+rest.length+" 个模型 · "+compact(restTokens)+" Tokens":list.length?"按累计 Token 用量排序":"";
+ const models=new Map(overview.models.map(model=>[model.model,{model:model.model,calls:0,successes:0}]));
+ overview.usage.forEach(model=>models.set(model.model,model));
+ const list=[...models.values()].sort((a,b)=>b.calls-a.calls||a.model.localeCompare(b.model));
+ const highest=Math.max(...list.map(model=>model.calls),1);
+ $("usageList").innerHTML=list.length?list.map(model=>'<div class="usage-row"><div class="usage-row-top"><strong>'+esc(model.model)+'</strong><span>'+fmt(model.calls)+' 次</span></div><div class="usage-track" aria-hidden="true"><span style="width:'+(model.calls/highest*100).toFixed(2)+'%"></span></div><p class="usage-row-detail">成功 '+fmt(model.successes)+' 次 · '+compact(tokens(model))+' Tokens</p></div>').join(""):'<p class="loading-note">暂无模型调用记录</p>';
+ $("usageRest").textContent=list.length?"全站统计 · 按累计调用次数排序":"";
  window.pageMotion?.drawUsage();
 }
 function historyTime(value,withDate=true,withSeconds=false) {
@@ -211,21 +203,85 @@ function drawMinuteHistory(canvas,history) {
  let hovered=-1;
  canvas.addEventListener("pointermove",event=>{const index=Math.floor(event.offsetX/step);if(index===hovered)return;hovered=index;const d=history[index];if(d)canvas.title=intervalTitle(d);});
 }
+let keyOverview=null,keyBusy=false,keyEpoch=0,keyMessage="完整密钥不会保存在浏览器中。",keyMessageError=false;
+function setKeyMessage(message,error=false) { keyMessage=message;keyMessageError=error;renderKeyAccount(); }
+function renderKeyAccount() {
+ $("keyForm").classList.toggle("hidden",!!keyOverview);
+ $("keyAccount").classList.toggle("hidden",!keyOverview);
+ $("keyInput").disabled=keyBusy;$("verifyKey").disabled=keyBusy;
+ $("verifyKey").setAttribute("aria-busy",String(keyBusy));
+ $("verifyKey").innerHTML=keyBusy?"正在验证…":"查看额度 "+svg("arrow");
+ $("switchKey").disabled=keyBusy;$("logoutKey").disabled=keyBusy;
+ $("keyMessage").textContent=keyMessage;$("keyMessage").classList.toggle("is-error",keyMessageError);
+ $("keyInput").setAttribute("aria-invalid",String(keyMessageError&&!keyOverview));
+ $("quotaNote").textContent=keyOverview?"下方额度仅属于当前密钥。共享额度供多个模型共用，独立额度单独扣费；Uptime 与调用量始终为全站统计。":"验证密钥后，这里会显示对应模型的独立额度余量。";
+ if(!keyOverview)return;
+ const s=keyOverview.summary;
+ $("keyIdentity").textContent="密钥 ···· "+keyOverview.key_suffix;
+ $("remainingAmount").innerHTML=!keyOverview.has_pools?'未绑定模型':s.unlimited?'不限额度':money(s.remaining_usd)+'<small>USD</small>';
+ $("balanceHint").textContent=!keyOverview.has_pools?"此密钥尚未配置可用模型":s.unlimited?(s.quota_usd>0?"限额部分剩余 "+money(s.remaining_usd)+" · 另含不限额度":"当前额度不限额"):"总额度 "+money(s.quota_usd)+" · 已使用 "+money(s.used_usd);
+ const percent=s.quota_usd>0?Math.min(100,Math.max(0,s.remaining_usd/s.quota_usd*100)):0;
+ $("balancePercent").textContent=!s.unlimited&&s.quota_usd>0?percent.toFixed(1)+"% 可用":"";
+ $("balanceTrack").classList.toggle("hidden",!keyOverview.has_pools||s.unlimited||s.quota_usd<=0);
+ $("balanceTrack").setAttribute("aria-valuenow",percent.toFixed(1));$("balanceTrack").firstElementChild.style.width=percent+"%";
+ const shared=keyOverview.shared;
+ $("sharedBalance").textContent=shared?"其中共享余量："+(shared.unlimited?"不限额度":money(shared.remaining_usd))+" · 多个模型共用":"独立额度明细见下方模型列表。";
+}
+async function refreshKeyOverview(signal) {
+ if(keyBusy)return;
+ const epoch=keyEpoch,hadKey=!!keyOverview;
+ try {
+  const response=await fetch("/api/key/session",{credentials:"same-origin",cache:"no-store",signal});
+  if(epoch!==keyEpoch||keyBusy)return;
+  if(!response.ok)throw new Error();
+  const state=await response.json();if(epoch!==keyEpoch||keyBusy)return;
+  if(!state.authenticated){
+   keyOverview=null;
+   setKeyMessage(hadKey?"查询会话已失效，请重新输入密钥。":"完整密钥不会保存在浏览器中。",hadKey);
+   renderModels();return;
+  }
+  const next=state.overview;
+  keyOverview=next;
+  setKeyMessage("额度更新于 "+new Date(next.updated_at).toLocaleTimeString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false})+" · 仅当前密钥可见");
+  renderModels();
+ } catch {
+  if(epoch===keyEpoch&&!keyBusy)setKeyMessage(hadKey?"额度更新失败，当前显示上次数据。请点击页尾刷新重试。":"暂时无法读取查询状态，可输入密钥重试。",true);
+ }
+}
+async function verifyKey(event) {
+ event.preventDefault();if(keyBusy)return;
+ const key=$("keyInput").value.trim();if(!key){setKeyMessage("请输入 API 密钥。",true);$("keyInput").focus();return;}
+ keyBusy=true;keyEpoch++;setKeyMessage("正在验证密钥…");
+ const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),10000);
+ try {
+  const response=await fetch("/api/key/session",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key}),credentials:"same-origin",cache:"no-store",signal:controller.signal});
+  const result=await response.json().catch(()=>({}));
+  if(!response.ok)throw new Error(result.error||"暂时无法验证密钥，请稍后重试。");
+  keyOverview=result;$("keyInput").value="";keyMessage="已验证 · 查询会话有效期 7 天";keyMessageError=false;
+  notify("已显示当前密钥额度");
+ } catch(error) { keyMessage=error.name==="AbortError"?"查询超时，请稍后重试。":error.message;keyMessageError=true; }
+ finally {clearTimeout(timeout);keyBusy=false;renderKeyAccount();renderModels();if(keyOverview)$("switchKey").focus({preventScroll:true});else $("keyInput").focus({preventScroll:true});}
+}
+async function clearKey(switching=false) {
+ if(keyBusy)return;keyBusy=true;keyEpoch++;renderKeyAccount();
+ const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),10000);
+ try {
+  const response=await fetch("/api/key/session",{method:"DELETE",credentials:"same-origin",cache:"no-store",signal:controller.signal});
+  if(!response.ok)throw new Error();
+  keyEpoch++;keyOverview=null;$("keyInput").value="";
+  keyMessage=switching?"输入另一个密钥查看对应额度。":"已退出，个人额度已隐藏。";keyMessageError=false;
+ } catch {keyMessage="退出失败，请稍后重试。";keyMessageError=true;}
+ finally {clearTimeout(timeout);keyBusy=false;renderKeyAccount();renderModels();if(!keyOverview)$("keyInput").focus({preventScroll:true});}
+}
 function renderModelQuota(model) {
- const quota=model.quota;
- if(!quota)return '<div class="model-quota quota-unpublished"><span class="quota-mode">未公开额度</span></div>';
- const mode=({shared:"共享额度",independent:"独立额度",mixed:"共享＋独立"})[quota.mode]||"额度";
- const poolHTML=(pool,independent)=>{
-  if(!pool)return "";
-  const depleted=!pool.unlimited&&pool.quota_usd>0&&pool.remaining_usd<=0;
-  const label=independent?"独立余量":"共享余量";
-  const amount=pool.unlimited&&pool.quota_usd===0?"不限额度":money(pool.remaining_usd);
-  const hint=pool.unlimited&&pool.quota_usd>0?"限额部分 · 另含不限额度":pool.quota_usd>0?"/ "+money(pool.quota_usd):"";
-  const percent=pool.quota_usd>0?Math.min(100,Math.max(0,pool.remaining_usd/pool.quota_usd*100)):0;
-  const track=independent&&pool.quota_usd>0?'<span class="quota-progress" role="meter" aria-label="'+esc(model.model)+' 的独立限额剩余比例" aria-valuenow="'+percent.toFixed(2)+'" aria-valuemin="0" aria-valuemax="100"><span style="width:'+percent+'%"></span></span>':"";
-  return '<div class="quota-pool '+(depleted?'is-depleted':'')+'"><span class="quota-label">'+label+'</span><strong>'+amount+'</strong>'+(hint?'<span class="quota-total">'+hint+'</span>':"")+track+(depleted?'<span class="quota-depleted">'+(independent?"独立":"共享")+'额度已用完</span>':"")+'</div>';
- };
- return '<div class="model-quota"><span class="quota-mode '+(quota.mode==='independent'?'is-independent':'')+'">'+mode+'</span><div class="quota-pools">'+poolHTML(quota.shared,false)+poolHTML(quota.independent,true)+'</div></div>';
+ if(!keyOverview)return "";
+ const quota=Object.hasOwn(keyOverview.models,model.model)?keyOverview.models[model.model]:null;
+ if(!quota)return '<div class="model-quota"><span class="quota-mode">当前密钥未开通</span></div>';
+ if(quota.mode==="shared")return '<div class="model-quota"><span class="quota-mode">使用我的共享额度</span><span class="quota-label">与其他共享模型共用上方余额</span></div>';
+ const pool=quota.pool,depleted=!pool.unlimited&&pool.remaining_usd<=0;
+ const percent=pool.quota_usd>0?Math.min(100,Math.max(0,pool.remaining_usd/pool.quota_usd*100)):0;
+ const track=pool.unlimited?"":'<span class="quota-progress" role="meter" aria-label="'+esc(model.model)+' 的独立限额剩余比例" aria-valuenow="'+percent.toFixed(2)+'" aria-valuemin="0" aria-valuemax="100"><span style="width:'+percent+'%"></span></span>';
+ return '<div class="model-quota"><span class="quota-mode is-independent">我的独立额度</span><div class="quota-pool '+(depleted?'is-depleted':'')+'"><span class="quota-label">剩余</span><strong>'+(pool.unlimited?'不限额度':money(pool.remaining_usd))+'</strong>'+(pool.unlimited?'':'<span class="quota-total">/ '+money(pool.quota_usd)+'</span>')+track+(depleted?'<span class="quota-depleted">独立额度已用完</span>':'')+'</div></div>';
 }
 function renderModels() {
  if(!overview)return;
@@ -238,7 +294,7 @@ function renderModels() {
  $("modelsGrid").innerHTML=list.map(m=>{
   const familyTag=({Anthropic:"C",Google:"G",OpenAI:"O",DeepSeek:"D",xAI:"X",Qwen:"Q",GLM:"Z"})[m.family]||"AI";
   const track=minute?'<div class="minute-track" data-model="'+esc(m.model)+'" tabindex="0" role="region" aria-label="'+esc(m.model)+' 的 24 小时分钟轨迹，可横向滚动"><canvas class="minute-canvas" aria-hidden="true"></canvas></div>':'<div class="uptime-bars" style="--history-buckets:'+m.history.length+'" aria-hidden="true">'+m.history.map(d=>'<span class="interval-bar '+(!d.calls?"":d.successes===d.calls?"success":!d.successes?"failure":"partial")+'" title="'+esc(intervalTitle(d))+'"></span>').join("")+'</div>';
-  return '<article class="model-card state-'+m.status+'" data-motion-key="'+esc(m.model)+'"><div class="model-identity"><span class="family-symbol" aria-hidden="true">'+familyTag+'</span><div class="model-name"><span class="family">'+esc(m.family)+'</span><h3>'+esc(m.model)+'</h3><span class="model-state"><i class="dot"></i>'+statusText[m.status]+'</span></div></div><div class="model-timeline">'+track+'<div class="history-labels"><span>'+esc(historyTime(m.history[0].start))+'</span><span>'+esc(historyTime(m.history.at(-1).end))+'</span></div></div><div class="model-uptime '+(m.uptime_percent===null?'no-results':'has-results')+'"><strong>'+rate(m.uptime_percent)+'</strong><span>24 小时请求成功率</span></div><div class="model-consumption"><div><strong title="'+fmt(tokens(m))+' Tokens">'+(overview.summary.configured?compact(tokens(m)):"—")+'</strong><span>Tokens</span></div><div><strong>'+ (overview.summary.configured?fmt(m.calls):"—")+'</strong><span>次调用</span></div><span class="last-call">'+relativeTime(m.last_call)+'</span></div><button class="model-history" type="button" data-model="'+esc(m.model)+'" aria-label="查看 '+esc(m.model)+' 的 24 小时调用历史">'+svg("arrow")+'<span>历史</span></button>'+renderModelQuota(m)+'</article>';
+  return '<article class="model-card state-'+m.status+'" data-motion-key="'+esc(m.model)+'"><div class="model-identity"><span class="family-symbol" aria-hidden="true">'+familyTag+'</span><div class="model-name"><span class="family">'+esc(m.family)+'</span><h3>'+esc(m.model)+'</h3><span class="model-state"><i class="dot"></i>'+statusText[m.status]+'</span></div></div><div class="model-timeline">'+track+'<div class="history-labels"><span>'+esc(historyTime(m.history[0].start))+'</span><span>'+esc(historyTime(m.history.at(-1).end))+'</span></div></div><div class="model-uptime '+(m.uptime_percent===null?'no-results':'has-results')+'"><strong>'+rate(m.uptime_percent)+'</strong><span>24 小时请求成功率</span></div><div class="model-consumption"><div><strong title="'+fmt(tokens(m))+' Tokens">'+compact(tokens(m))+'</strong><span>Tokens</span></div><div><strong>'+ fmt(m.calls)+'</strong><span>次调用</span></div><span class="last-call">'+relativeTime(m.last_call)+'</span></div><button class="model-history" type="button" data-model="'+esc(m.model)+'" aria-label="查看 '+esc(m.model)+' 的 24 小时调用历史">'+svg("clock")+'<span>调用历史</span></button>'+renderModelQuota(m)+'</article>';
  }).join("")||'<div class="empty-state">'+svg("layers")+'<h3>'+(query||status?"没有匹配的模型":overview.models_loading?"模型列表正在更新":"模型服务即将上线")+'</h3><p>'+(query||status?"试试其他模型名称或状态。":"模型准备就绪后，将在这里展示服务状态。")+'</p></div>';
  if(activeModel){[...$("modelsGrid").querySelectorAll(activeTrack?".minute-track":"button")].find(b=>b.dataset.model===activeModel)?.focus({preventScroll:true});}
  if(minute){const models=new Map(list.map(m=>[m.model,m]));$("modelsGrid").querySelectorAll(".minute-track").forEach(track=>{drawMinuteHistory(track.querySelector("canvas"),models.get(track.dataset.model).history);track.scrollLeft=scrollPositions.get(track.dataset.model)??track.scrollWidth;});}
@@ -270,6 +326,7 @@ async function refresh() {
  if(overview&&overview.history_interval!==historyInterval)$("uptimeWindowLabel").textContent="正在读取"+(historyInterval==="minute"?"分钟":"小时")+"记录…";
  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),10000);
  const announcementTask=refreshAnnouncements(controller.signal);
+ const keyTask=refreshKeyOverview(controller.signal);
  try {
   const response=await fetch("/api/public/overview?interval="+historyInterval,{credentials:"omit",cache:"no-store",signal:controller.signal});
   if(!response.ok)throw new Error("服务数据暂时无法更新");
@@ -278,7 +335,7 @@ async function refresh() {
   $("refreshNote").textContent=autoUpdate?"每 30 秒更新":"已暂停自动更新";
  } catch {
   historyInterval=overview?.history_interval||"hour";renderHistoryControls();
-  $("heroDataStatus").textContent=overview?"更新失败 · 暂示上次数据":"暂时无法读取共享数据";$("heroDataStatus").classList.add("is-stale");
+  $("heroDataStatus").textContent=overview?"更新失败 · 暂示上次数据":"暂时无法读取全站数据";$("heroDataStatus").classList.add("is-stale");
   if(!overview) {
    $("todayModels").textContent="暂时无法读取模型";
    $("heroTitle").setAttribute("aria-label","累计 Token 用量暂时无法读取");
@@ -288,8 +345,12 @@ async function refresh() {
   $("errorBanner").classList.remove("hidden");
   $("overallStatus").className="status-badge idle";$("overallStatus").innerHTML='<span class="dot"></span>数据更新异常';
   $("refreshNote").textContent="更新失败";
- } finally { await announcementTask;clearTimeout(timeout);refreshing=false;$("refreshNow").disabled=false;$("refreshNow").setAttribute("aria-busy","false");$("uptimeHour").disabled=false;$("uptimeMinute").disabled=false;$("modelsGrid").setAttribute("aria-busy","false"); }
+ } finally { await Promise.allSettled([announcementTask,keyTask]);clearTimeout(timeout);refreshing=false;$("refreshNow").disabled=false;$("refreshNow").setAttribute("aria-busy","false");$("uptimeHour").disabled=false;$("uptimeMinute").disabled=false;$("modelsGrid").setAttribute("aria-busy","false"); }
 }
+$("keyForm").addEventListener("submit",verifyKey);
+$("switchKey").addEventListener("click",()=>clearKey(true));
+$("logoutKey").addEventListener("click",()=>clearKey(false));
+renderKeyAccount();
 $("announcementList").addEventListener("click",event=>{const button=event.target.closest("button[data-announcement]");if(button)showAnnouncement(Number(button.dataset.announcement));});
 $("closeAnnouncement").addEventListener("click",closeAnnouncement);
 $("announcementDialog").addEventListener("cancel",event=>{event.preventDefault();closeAnnouncement();});

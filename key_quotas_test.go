@@ -10,7 +10,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -45,9 +44,9 @@ func TestKeyQuotasAdminPreservesSpendAndValidatesBudgets(t *testing.T) {
 	if err := dbChargeKey(id, "a", 3, false); err != nil {
 		t.Fatal(err)
 	}
-	deploymentJSON(t, deploymentRequest(r, "PATCH", path, token, `{"enabled":false,"show_on_home":true}`), 200)
+	deploymentJSON(t, deploymentRequest(r, "PATCH", path, token, `{"enabled":false}`), 200)
 	ak := read()
-	if ak.UsedUSD != 5 || ak.SharedUsedUSD != 3 || ak.ModelQuotas["b"].UsedUSD != 2 || ak.Enabled || !ak.ShowOnHome {
+	if ak.UsedUSD != 5 || ak.SharedUsedUSD != 3 || ak.ModelQuotas["b"].UsedUSD != 2 || ak.Enabled {
 		t.Fatalf("partial edit changed balances: %+v", ak)
 	}
 	deploymentJSON(t, deploymentRequest(r, "PATCH", path, token, `{"quota_usd":12,"model_quotas":{"b":{"quota_usd":8,"used_usd":0}}}`), 200)
@@ -261,7 +260,7 @@ func TestKeyQuotasEmbeddingsAndConcurrentBilling(t *testing.T) {
 	}
 }
 
-func TestKeyQuotasPublicOverviewCountsEachActivePoolOnce(t *testing.T) {
+func TestKeyQuotasPersonalOverviewCountsEachActivePoolOnce(t *testing.T) {
 	modelsTestDB(t)
 	ak := &ApiKey{Key: "sk-public-quota", Enabled: true, ShowOnHome: true, Models: "a,b,c", QuotaUSD: 10,
 		ModelQuotas: map[string]ModelQuota{"c": {QuotaUSD: 20}}}
@@ -279,16 +278,18 @@ func TestKeyQuotasPublicOverviewCountsEachActivePoolOnce(t *testing.T) {
 	}
 	assert := func(quota, used, remaining float64, unlimited bool) {
 		t.Helper()
-		got, err := buildPublicOverview(time.Now(), "hour")
-		if err != nil || got.Summary.QuotaUSD != quota || got.Summary.UsedUSD != used || got.Summary.Unlimited != unlimited {
-			t.Fatalf("summary: %+v %v", got, err)
+		current, err := dbGetKeyByID(ak.ID)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if !unlimited && (got.Summary.RemainingUSD == nil || *got.Summary.RemainingUSD != remaining) {
-			t.Fatalf("remaining: %+v", got.Summary)
+		got := buildKeyOverview(current)
+		if got.Summary.QuotaUSD != quota || got.Summary.Unlimited != unlimited || got.Summary.RemainingUSD != remaining {
+			t.Fatalf("active pools: %+v", got)
 		}
-		if unlimited && got.Summary.RemainingUSD != nil {
-			t.Fatal("unlimited summary showed finite remaining")
+		if current.UsedUSD != used {
+			t.Fatalf("historical spending changed: %+v", current)
 		}
+
 	}
 	assert(30, 12, 18, false)
 	ak.Models = "c" // The unused shared pool is no longer counted.

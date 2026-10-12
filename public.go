@@ -14,8 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Public response types deliberately contain no key, key name/id/count,
-// upstream address, credential, error body, or administration URL.
+// Public responses contain site-wide telemetry, never credentials or balances.
 type PublicDay struct {
 	Date             string `json:"date"`
 	Calls            int64  `json:"calls"`
@@ -37,33 +36,15 @@ type PublicInterval struct {
 	Successes int64  `json:"successes"`
 }
 
-// Finite balances are retained even when another published pool is unlimited.
-type PublicQuotaPool struct {
-	QuotaUSD     float64 `json:"quota_usd"`
-	UsedUSD      float64 `json:"used_usd"`
-	RemainingUSD float64 `json:"remaining_usd"`
-	Unlimited    bool    `json:"unlimited"`
-}
-type PublicModelQuota struct {
-	Mode        string           `json:"mode"`
-	Shared      *PublicQuotaPool `json:"shared,omitempty"`
-	Independent *PublicQuotaPool `json:"independent,omitempty"`
-}
 type PublicModel struct {
 	PublicUsage
-	Family   string            `json:"family"`
-	Status   string            `json:"status"`
-	Uptime   *float64          `json:"uptime_percent"`
-	LastCall string            `json:"last_call"`
-	History  []PublicInterval  `json:"history"`
-	Quota    *PublicModelQuota `json:"quota"`
+	Family   string           `json:"family"`
+	Status   string           `json:"status"`
+	Uptime   *float64         `json:"uptime_percent"`
+	LastCall string           `json:"last_call"`
+	History  []PublicInterval `json:"history"`
 }
 type PublicSummary struct {
-	Configured       bool     `json:"configured"`
-	Unlimited        bool     `json:"unlimited"`
-	RemainingUSD     *float64 `json:"remaining_usd"`
-	QuotaUSD         float64  `json:"quota_usd"`
-	UsedUSD          float64  `json:"used_usd"`
 	Calls            int64    `json:"calls"`
 	Successes        int64    `json:"successes"`
 	PromptTokens     int64    `json:"prompt_tokens"`
@@ -84,6 +65,7 @@ type PublicOverview struct {
 
 func registerPublic(r *gin.Engine) {
 	registerSetupRoutes(r)
+	registerKeyView(r)
 	sub, _ := fs.Sub(webFS, "web/public")
 	r.GET("/", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
@@ -93,20 +75,12 @@ func registerPublic(r *gin.Engine) {
 		}
 		serveAdminFile(c, sub, "index.html")
 	})
-	// The 3D station view reads the same anonymous aggregate endpoint as the root page.
-	r.GET("/metro", func(c *gin.Context) {
-		c.Header("Cache-Control", "no-store")
-		if adminSetupRequired() {
-			c.Redirect(http.StatusTemporaryRedirect, "/setup/")
-			return
-		}
-		serveAdminFile(c, sub, "metro.html")
-	})
 	r.GET("/public/static/*filepath", func(c *gin.Context) {
 		name := strings.TrimPrefix(c.Param("filepath"), "/")
-		// Vendored libraries live in version-named directories, so they can be cached for good.
-		if strings.HasPrefix(name, "vendor/") {
-			c.Header("Cache-Control", "public, max-age=31536000, immutable")
+		// The station is archived in Git and no longer served.
+		if strings.HasPrefix(name, "metro.") || strings.HasPrefix(name, "vendor/") || strings.HasPrefix(name, "textures/") || strings.HasPrefix(name, "fonts/orbitron") {
+			c.Status(http.StatusNotFound)
+			return
 		}
 		serveAdminFile(c, sub, name)
 	})
@@ -276,14 +250,10 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 		return nil, err
 	}
 	defer tx.Rollback()
-	modelQuotas := make(map[string]*PublicModelQuota)
-	if err := publicQuotaSummary(tx, &result.Summary, modelQuotas); err != nil {
-		return nil, err
-	}
 	usage := make(map[string]PublicUsage)
 	err = publicRows(tx, `SELECT l.model,COUNT(*),SUM(CASE WHEN l.status BETWEEN 200 AND 299 THEN 1 ELSE 0 END),
  COALESCE(SUM(l.prompt_tokens),0),COALESCE(SUM(l.completion_tokens),0)
- FROM call_logs l JOIN api_keys k ON k.id=l.key_id AND k.show_on_home=1 GROUP BY l.model`,
+ FROM call_logs l GROUP BY l.model`,
 		func(rows *sql.Rows) error {
 			var u PublicUsage
 			if err := rows.Scan(&u.Model, &u.Calls, &u.Successes, &u.PromptTokens, &u.CompletionTokens); err != nil {
@@ -308,7 +278,7 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 	err = publicRows(tx, `SELECT date(l.created_at,'+8 hours'),COUNT(*),
  SUM(CASE WHEN l.status BETWEEN 200 AND 299 THEN 1 ELSE 0 END),
  COALESCE(SUM(l.prompt_tokens),0),COALESCE(SUM(l.completion_tokens),0)
- FROM call_logs l JOIN api_keys k ON k.id=l.key_id AND k.show_on_home=1
+ FROM call_logs l
  WHERE unixepoch(l.created_at)>=? AND unixepoch(l.created_at)<? GROUP BY date(l.created_at,'+8 hours')`,
 		func(rows *sql.Rows) error {
 			var day PublicDay
@@ -334,7 +304,7 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 	bucketSeconds := int64(bucketSize / time.Second)
 	err = publicRows(tx, `SELECT l.model,MIN(CAST((unixepoch(l.created_at)-?)/? AS INTEGER),?) AS slot,
  COUNT(*),SUM(CASE WHEN l.status BETWEEN 200 AND 299 THEN 1 ELSE 0 END)
- FROM call_logs l JOIN api_keys k ON k.id=l.key_id AND k.show_on_home=1
+ FROM call_logs l
  WHERE unixepoch(l.created_at) BETWEEN ? AND ? GROUP BY l.model,slot`,
 		func(rows *sql.Rows) error {
 			var model string
@@ -362,7 +332,7 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 	err = publicRows(tx, `SELECT model,status,created_at FROM (
  SELECT l.model,l.status,l.created_at,
  ROW_NUMBER() OVER (PARTITION BY l.model ORDER BY unixepoch(l.created_at) DESC,l.id DESC) AS position
- FROM call_logs l JOIN api_keys k ON k.id=l.key_id AND k.show_on_home=1
+ FROM call_logs l
  WHERE unixepoch(l.created_at)<=?) WHERE position=1`, func(rows *sql.Rows) error {
 		var model string
 		var last lastCall
@@ -403,7 +373,7 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 			}
 		}
 		result.Models = append(result.Models, PublicModel{PublicUsage: u, Family: family, Status: status,
-			Uptime: requestUptime(success, calls), LastCall: last.at, History: history, Quota: modelQuotas[model]})
+			Uptime: requestUptime(success, calls), LastCall: last.at, History: history})
 	}
 	sort.Slice(result.Models, func(i, j int) bool {
 		if result.Models[i].Family != result.Models[j].Family {

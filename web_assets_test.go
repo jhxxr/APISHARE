@@ -102,7 +102,7 @@ func TestPagesServeMatchingVersionedAssetsAndCachePolicy(t *testing.T) {
 	}
 	checkPage("/setup/", setup)
 	deploymentJSON(t, deploymentRequest(r, "PUT", "/setup/api/deployment", "", `{"new_password":"asset-test-password-123","confirm_password":"asset-test-password-123","admin_path":"asset-console"}`), 200)
-	for _, pagePath := range []string{"/", "/metro", "/asset-console/"} {
+	for _, pagePath := range []string{"/", "/asset-console/"} {
 		checkPage(pagePath, deploymentRequest(r, "GET", pagePath, "", ""))
 	}
 	for _, assetPath := range []string{"/public/static/home.js", "/public/static/home.css", "/public/static/home.js?v=old-release", "/public/static/home.css?v=old-release"} {

@@ -59,9 +59,9 @@ func TestKeyModelsAdminPersistenceAndPartialUpdates(t *testing.T) {
 		t.Fatalf("normalization: %v", result)
 	}
 	keyPath := fmt.Sprintf("%s/%d", path, id)
-	deploymentJSON(t, deploymentRequest(r, "PATCH", keyPath, tok, `{"quota_usd":17,"show_on_home":true,"enabled":false}`), 200)
+	deploymentJSON(t, deploymentRequest(r, "PATCH", keyPath, tok, `{"quota_usd":17,"enabled":false}`), 200)
 	ak, err := dbGetKeyByID(id)
-	if err != nil || ak.Models != "model-a,model-b,alias" || ak.QuotaUSD != 17 || !ak.ShowOnHome || ak.Enabled {
+	if err != nil || ak.Models != "model-a,model-b,alias" || ak.QuotaUSD != 17 || ak.Enabled {
 		t.Fatalf("partial update lost state: %+v %v", ak, err)
 	}
 	byKey, err := dbGetKeyByKey(result["key"].(string))
