@@ -141,10 +141,11 @@ function renderOverview() {
  $("totalTokens").setAttribute("aria-label","全站累计 Token 用量："+fmt(tokens(s)));
  $("totalTokens").title=fmt(tokens(s))+" Tokens";
  $("tokenDetail").textContent="输入 "+compact(s.prompt_tokens)+" / 输出 "+compact(s.completion_tokens);
- $("totalCalls").textContent=compact(s.calls);
- $("totalCalls").title=fmt(s.calls)+" 次调用";
- $("callDetail").textContent="成功 "+fmt(s.successes)+" 次";
+ const total=tokens(s);
+ $("inputTokenShare").style.width=(total>0?s.prompt_tokens/total*100:0)+"%";
+ $("outputTokenShare").style.width=(total>0?s.completion_tokens/total*100:0)+"%";
  $("totalUptime").textContent=rate(s.uptime_percent);
+ $("uptimeShare").style.width=(Number.isFinite(s.uptime_percent)?Math.max(0,Math.min(100,s.uptime_percent)):0)+"%";
  const state=overview.models.some(m=>m.status==="incident")?"incident":overview.models.some(m=>m.status==="operational")?"operational":"idle";
  $("overallStatus").className="status-badge "+state;
  $("overallStatus").innerHTML='<span class="dot"></span>'+({incident:"有模型最近调用异常",operational:"模型服务运行中",idle:"等待真实调用反馈"}[state]);

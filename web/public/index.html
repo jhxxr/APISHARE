@@ -90,9 +90,8 @@
           </div>
           <p id="keyMessage" class="key-message" role="status" aria-live="polite">完整密钥不会保存在浏览器中。</p>
         </article>
-        <article class="metric"><div class="metric-label"><span>全站累计 Token</span><svg class="icon"><use href="#token"/></svg></div><div id="totalTokens" class="metric-value">—</div><p id="tokenDetail" class="metric-foot">输入 + 输出</p></article>
-        <article class="metric"><div class="metric-label"><span>全站累计调用</span><svg class="icon"><use href="#activity"/></svg></div><div id="totalCalls" class="metric-value">—</div><p id="callDetail" class="metric-foot">真实请求记录</p></article>
-        <article class="metric"><div class="metric-label"><span>近 24 小时 Uptime</span><svg class="icon"><use href="#shield"/></svg></div><div id="totalUptime" class="metric-value">—</div><p class="metric-foot">按真实请求成功率计算</p></article>
+        <article class="metric stat-card"><div class="metric-label"><span>全站累计 Token</span><svg class="icon" aria-hidden="true"><use href="#token"/></svg></div><div id="totalTokens" class="metric-value">—</div><p id="tokenDetail" class="metric-foot">输入 + 输出</p><div class="metric-track token-track" aria-hidden="true"><span id="inputTokenShare"></span><span id="outputTokenShare"></span></div></article>
+        <article class="metric stat-card"><div class="metric-label"><span>近 24 小时 Uptime</span><svg class="icon" aria-hidden="true"><use href="#shield"/></svg></div><div id="totalUptime" class="metric-value">—</div><p class="metric-foot">按真实请求成功率计算</p><div class="metric-track uptime-track" aria-hidden="true"><span id="uptimeShare"></span></div></article>
       </div>
     </section>
     <section class="analytics" aria-label="模型使用情况">
