@@ -51,14 +51,16 @@ func upstreamModelCacheKeyForProxy(u *Upstream, p *OutboundProxy) modelCacheKey 
 }
 
 type cachedModels struct {
-	ids []string
-	at  time.Time
+	ids     []string
+	efforts map[string][]string
+	at      time.Time
 }
 
 type modelFetch struct {
-	done chan struct{}
-	ids  []string
-	err  error
+	done    chan struct{}
+	ids     []string
+	efforts map[string][]string
+	err     error
 }
 
 var modelsCache = struct {
@@ -92,6 +94,10 @@ func probeUpstreamModelsWithClient(ctx context.Context, upType, baseURL, apiKey 
 	if len(headerOverrides) > 0 {
 		headers = headerOverrides[0]
 	}
+	return probeUpstreamModelListWithClient(ctx, upType, baseURL, apiKey, client, headers, nil)
+}
+
+func probeUpstreamModelListWithClient(ctx context.Context, upType, baseURL, apiKey string, client *http.Client, headers string, efforts map[string][]string) ([]string, error) {
 	if _, err := parseHeaderOverrides(headers); err != nil {
 		return nil, err
 	}
@@ -165,7 +171,8 @@ func probeUpstreamModelsWithClient(ctx context.Context, upType, baseURL, apiKey 
 		}
 		var result struct {
 			Data []struct {
-				ID string `json:"id"`
+				ID     string          `json:"id"`
+				Effort json.RawMessage `json:"effort"`
 			} `json:"data"`
 			Models []struct {
 				Name string `json:"name"`
@@ -187,6 +194,12 @@ func probeUpstreamModelsWithClient(ctx context.Context, upType, baseURL, apiKey 
 		for _, model := range result.Data {
 			if upType != "gemini" {
 				add(model.ID)
+				var effort struct {
+					SupportedLevels []string `json:"supported_levels"`
+				}
+				if id := strings.TrimSpace(model.ID); efforts != nil && id != "" && json.Unmarshal(model.Effort, &effort) == nil && len(effort.SupportedLevels) > 0 {
+					efforts[id] = effort.SupportedLevels
+				}
 			}
 		}
 		for _, model := range result.Models {
@@ -238,7 +251,7 @@ func cachedUpstreamModels(ctx context.Context, u *Upstream) ([]string, error) {
 	}
 	flight, waiting := modelsCache.pending[key]
 	if !waiting {
-		flight = &modelFetch{done: make(chan struct{})}
+		flight = &modelFetch{done: make(chan struct{}), efforts: make(map[string][]string)}
 		modelsCache.pending[key] = flight
 		connection := *u
 		go func() {
@@ -246,7 +259,7 @@ func cachedUpstreamModels(ctx context.Context, u *Upstream) ([]string, error) {
 			if err != nil {
 				flight.err = err
 			} else {
-				flight.ids, flight.err = probeUpstreamModelsWithClient(context.Background(), connection.Type, connection.BaseURL, connection.APIKey, client, connection.HeaderOverrides)
+				flight.ids, flight.err = probeUpstreamModelListWithClient(context.Background(), connection.Type, connection.BaseURL, connection.APIKey, client, connection.HeaderOverrides, flight.efforts)
 			}
 			modelsCache.Lock()
 			defer modelsCache.Unlock()
@@ -256,7 +269,7 @@ func cachedUpstreamModels(ctx context.Context, u *Upstream) ([]string, error) {
 				}
 			}
 			if flight.err == nil {
-				modelsCache.m[key] = cachedModels{ids: flight.ids, at: time.Now()}
+				modelsCache.m[key] = cachedModels{ids: flight.ids, efforts: flight.efforts, at: time.Now()}
 			}
 			delete(modelsCache.pending, key)
 			close(flight.done)

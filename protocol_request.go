@@ -608,7 +608,7 @@ func renderProtocolRequest(format clientFormat, cr *canonReq, model string) ([]b
 	if cr.ConversionError != nil {
 		return nil, cr.ConversionError
 	}
-	if cr.ReasoningEffort != "" && (format == FormatAnthropic || format == FormatGemini) {
+	if cr.ReasoningEffort != "" && (format == FormatGemini || (format == FormatAnthropic && cr.ReasoningEffort == "none")) {
 		return nil, unsupported("reasoning effort on this upstream protocol")
 	}
 	m := map[string]any{"model": model, "stream": cr.Stream}
@@ -715,6 +715,9 @@ func renderProtocolRequest(format clientFormat, cr *canonReq, model string) ([]b
 	switch format {
 	case FormatAnthropic:
 		m["messages"] = msgs
+		if cr.ReasoningEffort != "" {
+			m["output_config"] = map[string]any{"effort": cr.ReasoningEffort}
+		}
 		m["max_tokens"] = cr.MaxTokens
 		if cr.MaxTokens <= 0 {
 			m["max_tokens"] = 4096

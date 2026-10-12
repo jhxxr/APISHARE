@@ -279,6 +279,10 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	upModel := up.mapModel(task.model)
 	wireFormat := up.wireFormat(task.format)
 	native := wireFormat == task.format || task.nativeOnly
+	var effortLevels []string
+	if !task.nativeOnly {
+		effortLevels = upstreamReasoningEfforts(up, upModel)
+	}
 
 	var url string
 	var reqBody []byte
@@ -292,8 +296,15 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 				reqBody = replaceModelInBody(reqBody, upModel)
 			}
 		}
+		if !task.nativeOnly {
+			reqBody = mapReasoningEffortBody(reqBody, wireFormat, effortLevels)
+		}
 	} else {
-		reqBody, err = renderProtocolRequest(wireFormat, task.canon, upModel)
+		// Each failover starts from the client's original effort, not the value
+		// mapped for the previous upstream.
+		cr := *task.canon
+		cr.ReasoningEffort = mapReasoningEffort(cr.ReasoningEffort, effortLevels)
+		reqBody, err = renderProtocolRequest(wireFormat, &cr, upModel)
 		if err != nil {
 			writeFormatError(c, task.format, http.StatusBadRequest, err.Error())
 			info.Status = http.StatusBadRequest

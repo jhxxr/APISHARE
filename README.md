@@ -56,8 +56,9 @@ Anthropic SDK / Claude Code → /v1/messages
 - 图片支持 OpenAI URL / data URL、Anthropic URL / base64、Gemini inlineData / fileData。转入 Gemini 的远程图片需要 MIME 类型；没有 MIME 时返回明确错误，可改用 base64。Chat Completions 的工具结果只支持文本；图片工具结果不能转入此接口。
 - SSE 逐增量转换文本、思考文本与工具参数，保留工具调用 ID、停止原因和真实 usage，包含上游明确返回的 0 Token。Gemini 的函数调用要求完整 JSON，因此只缓冲工具参数；上游忽略 stream 并返回 JSON 时，将完整结果包装成客户端 SSE。
 - Responses 生成完整的输出项、增量、完成事件；Anthropic 生成带 `event:` 名称的 Messages 事件。上游错误、非法工具参数与缺少结束事件的断流会返回客户端错误并记为失败，不补发成功结束事件。
-- 原生路径透传完整请求与响应。跨供应商转换无法保留 prompt cache 控制、思考签名或加密推理状态；历史 Anthropic thinking 与 Gemini thought 块不会作为普通文本重新发给其他供应商。
-- 内置服务端工具、音频/视频/文档块、结构化输出配置、Responses 的 `previous_response_id` / `conversation` / reasoning 输入项等不支持跨格式转换，返回 400。转换路径请发送完整会话，特殊特性请使用原生接口。Responses 上游不支持 stop 序列；跨入 Anthropic / Gemini 时不支持 OpenAI reasoning effort，Gemini 不支持关闭并行工具调用。
+- 思考强度按模型映射后的实际目标适配：优先使用已缓存的上游模型目录 `effort.supported_levels`，没有声明时按已知模型规则兜底。保留受支持的档位，缺失档位映射到下一档，超过上限则使用最高档；例如 DeepSeek 的 `xhigh → max`、`medium → high`、`minimal → low`。支持 Chat 的 `reasoning_effort`、Responses 的 `reasoning.effort`、Anthropic 的 `output_config.effort`，原生与转换路径、流式与非流式均生效；每次故障转移重新适配，未知模型/自定义档位及 `none` 保留原值。
+- 原生路径透传完整请求与响应，仅在需要模型映射或思考强度适配时改写对应字段。跨供应商转换无法保留 prompt cache 控制、思考签名或加密推理状态；历史 Anthropic thinking 与 Gemini thought 块不会作为普通文本重新发给其他供应商。
+- 内置服务端工具、音频/视频/文档块、结构化输出配置、Responses 的 `previous_response_id` / `conversation` / reasoning 输入项等不支持跨格式转换，返回 400。转换路径请发送完整会话，特殊特性请使用原生接口。Responses 上游不支持 stop 序列；跨入 Gemini 时不支持 reasoning effort，跨入 Anthropic 时不支持 `none`（关闭思考），Gemini 不支持关闭并行工具调用。
 - 路由优先级（`pickUpstream`）：原生格式+显式白名单 ＞ 其他格式+显式白名单 ＞ 原生格式+通配 ＞ 其他格式+通配。Chat 与 Responses 分别判断原生匹配；想精确控制就给每个上游配模型白名单。
 - 会话粘性对转换路径同样生效
 
