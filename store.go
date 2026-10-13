@@ -101,6 +101,8 @@ CREATE TABLE IF NOT EXISTS call_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_logs_created ON call_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_logs_key_created ON call_logs(key_id,created_at);
+CREATE INDEX IF NOT EXISTS idx_logs_epoch ON call_logs(unixepoch(created_at));
+CREATE INDEX IF NOT EXISTS idx_logs_model_epoch ON call_logs(model,unixepoch(created_at) DESC,id DESC,status,prompt_tokens,completion_tokens);
 CREATE TABLE IF NOT EXISTS api_key_model_quotas (
   key_id INTEGER NOT NULL,
   model TEXT NOT NULL,
@@ -265,19 +267,20 @@ type ApiKey struct {
 }
 
 type Upstream struct {
-	ID              int64  `json:"id"`
-	Name            string `json:"name"`
-	Type            string `json:"type"` // provider: openai | anthropic | gemini; OpenAIProtocol selects its wire format
-	BaseURL         string `json:"base_url"`
-	APIKey          string `json:"api_key"`
-	Weight          int    `json:"weight"`
-	Models          string `json:"models"`
-	ModelMap        string `json:"model_map"`
-	Enabled         bool   `json:"enabled"`
-	ProxyID         int64  `json:"proxy_id"`
-	HeaderOverrides string `json:"header_overrides"`
-	OpenAIProtocol  string `json:"openai_protocol"` // auto (legacy), chat, responses
-	CreatedAt       string `json:"created_at"`
+	config          *upstreamConfig // Immutable parsed runtime configuration; never exposed by APIs.
+	ID              int64           `json:"id"`
+	Name            string          `json:"name"`
+	Type            string          `json:"type"` // provider: openai | anthropic | gemini; OpenAIProtocol selects its wire format
+	BaseURL         string          `json:"base_url"`
+	APIKey          string          `json:"api_key"`
+	Weight          int             `json:"weight"`
+	Models          string          `json:"models"`
+	ModelMap        string          `json:"model_map"`
+	Enabled         bool            `json:"enabled"`
+	ProxyID         int64           `json:"proxy_id"`
+	HeaderOverrides string          `json:"header_overrides"`
+	OpenAIProtocol  string          `json:"openai_protocol"` // auto (legacy), chat, responses
+	CreatedAt       string          `json:"created_at"`
 }
 
 type CallLog struct {
@@ -532,6 +535,8 @@ func dbInsertUpstream(u *Upstream) error {
 		u.Name, u.Type, u.BaseURL, u.APIKey, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), nowStr(), u.ProxyID, u.HeaderOverrides, u.OpenAIProtocol)
 	if err == nil {
 		u.ID, _ = res.LastInsertId()
+		invalidateRoutingSnapshot()
+		invalidatePublicOverviews()
 	}
 	return err
 }
@@ -539,11 +544,19 @@ func dbInsertUpstream(u *Upstream) error {
 func dbUpdateUpstream(u *Upstream) error {
 	_, err := db.Exec(`UPDATE upstreams SET name=?,type=?,base_url=?,api_key=?,weight=?,models=?,model_map=?,enabled=?,proxy_id=?,header_overrides=?,openai_protocol=? WHERE id=?`,
 		u.Name, u.Type, u.BaseURL, u.APIKey, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), u.ProxyID, u.HeaderOverrides, u.OpenAIProtocol, u.ID)
+	if err == nil {
+		invalidateRoutingSnapshot()
+		invalidatePublicOverviews()
+	}
 	return err
 }
 
 func dbDeleteUpstream(id int64) error {
 	_, err := db.Exec(`DELETE FROM upstreams WHERE id=?`, id)
+	if err == nil {
+		invalidateRoutingSnapshot()
+		invalidatePublicOverviews()
+	}
 	return err
 }
 

@@ -452,6 +452,10 @@ func parseUpstreamSSEChunk(upType, payload string) (string, upstreamUsage) {
 	if json.Unmarshal([]byte(payload), &j) != nil {
 		return "", upstreamUsage{}
 	}
+	return parseUpstreamSSEObject(upType, j)
+}
+
+func parseUpstreamSSEObject(upType string, j map[string]any) (string, upstreamUsage) {
 	switch upType {
 	case "anthropic":
 		switch t, _ := j["type"].(string); t {
@@ -532,6 +536,10 @@ func parseResponsesSSEEvent(payload string) (string, upstreamUsage) {
 	if json.Unmarshal([]byte(payload), &j) != nil {
 		return "", upstreamUsage{}
 	}
+	return parseResponsesSSEObject(j)
+}
+
+func parseResponsesSSEObject(j map[string]any) (string, upstreamUsage) {
 	t, _ := j["type"].(string)
 	if t == "response.output_text.delta" {
 		if s, ok := j["delta"].(string); ok {

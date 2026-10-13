@@ -4,10 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -17,17 +17,10 @@ import (
 
 const maxBodyBytes = 32 << 20 // 32MB
 
-var upstreamHTTPClient = &http.Client{
-	Transport: &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-		TLSHandshakeTimeout:   15 * time.Second,
-		ResponseHeaderTimeout: 180 * time.Second,
-		IdleConnTimeout:       90 * time.Second,
-		MaxIdleConnsPerHost:   16,
-		ForceAttemptHTTP2:     true,
-	},
-}
+var errDownstreamWrite = errors.New("writing client response failed")
+
+var relayNetwork = loadRelayNetworkConfig()
+var upstreamHTTPClient = newRelayHTTPClient(relayNetwork)
 
 func isRetryableStatus(code int) bool {
 	switch code {
@@ -140,7 +133,6 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 		}
 
 		skey := sessionKeyFromCanon(endpoint, c.Request.Header, cr)
-		inputTokensEst := estimateTokensModel(cr.Model, cr.InputText)
 
 		s := getSettings()
 		nativeType := format.nativeUpstreamType()
@@ -151,13 +143,17 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 		wrote := false
 
 		for i := 0; i < attempts; i++ {
+			if err := c.Request.Context().Err(); err != nil {
+				attemptErr = err
+				break
+			}
 			var up *Upstream
 
 			// 第一跳：粘性优先（粘性上游必须健康并服务该模型，类型不限——
 			// 上次可能就是通过跨格式转换落到该上游的）
 			if i == 0 {
 				if id, ok := affinityGet(skey); ok {
-					if u, err := dbGetUpstream(id); err == nil && u.Enabled && u.Weight > 0 &&
+					if u, err := cachedRoutingUpstream(id); err == nil && u.Enabled && u.Weight > 0 &&
 						u.servesModel(cr.Model) && healthAvailable(u.ID) && (!nativeOnly || u.Type == nativeType) {
 						up = u
 					}
@@ -184,7 +180,7 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			}
 		}
 
-		finalizeCall(c, ak, task, info, wrote, attemptErr, inputTokensEst)
+		finalizeCall(c, ak, task, info, wrote, attemptErr, -1)
 	}
 }
 
@@ -223,6 +219,9 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 	if success {
 		if !info.InKnown {
 			prompt = inputTokensEst
+			if prompt < 0 {
+				prompt = estimatePromptTokens(task)
+			}
 		}
 		if !info.OutKnown {
 			completion = estimateTokensModel(task.model, info.OutputText.String())
@@ -280,7 +279,9 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	wireFormat := up.wireFormat(task.format)
 	native := wireFormat == task.format || task.nativeOnly
 	var effortLevels []string
-	if !task.nativeOnly {
+	// A fully parsed request without an effort field needs neither catalog
+	// lookup nor another JSON pass. Opaque native requests keep the old path.
+	if !task.nativeOnly && (task.canon == nil || task.canon.ConversionError != nil || task.canon.ReasoningEffort != "") {
 		effortLevels = upstreamReasoningEfforts(up, upModel)
 	}
 
@@ -334,7 +335,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	default:
 		req.Header.Set("Authorization", "Bearer "+up.APIKey)
 	}
-	if err := applyHeaderOverrides(req, up.HeaderOverrides, up.APIKey, c.Request.Header); err != nil {
+	if err := up.applyHeaders(req, c.Request.Header); err != nil {
 		return info, false, err
 	}
 
@@ -343,6 +344,18 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	if err != nil {
 		return info, false, err
 	}
+	// Count actual attempts, including interrupted streams, but never penalize
+	// an upstream for client cancellation or request/configuration validation.
+	defer func() {
+		if c.Request.Context().Err() != nil || errors.Is(err, errDownstreamWrite) {
+			return
+		}
+		if err != nil || isRetryableStatus(info.Status) {
+			healthMarkFailure(up.ID)
+		} else if info.Status >= 200 && info.Status < 300 {
+			healthMarkSuccess(up.ID)
+		}
+	}()
 	resp, err := client.Do(req)
 	info.LatencyMS = time.Since(start).Milliseconds()
 	if err != nil {
@@ -351,6 +364,9 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 			return info, false, fmt.Errorf("通过代理连接上游失败，请检查代理地址、认证和网络")
 		}
 		return info, false, err
+	}
+	if relayNetwork.BodyIdleTimeout > 0 {
+		resp.Body = newActivityDeadlineBody(resp.Body, relayNetwork.BodyIdleTimeout)
 	}
 	defer resp.Body.Close()
 	info.Status = resp.StatusCode
@@ -443,7 +459,9 @@ func relaySSENative(c *gin.Context, resp *http.Response, format clientFormat, in
 					recordNativeEvent(format, payload, info)
 				}
 			}
-			c.Writer.WriteString(line)
+			if _, err := c.Writer.WriteString(line); err != nil {
+				return fmt.Errorf("%w: %w", errDownstreamWrite, err)
+			}
 			if line == "\n" && flusher != nil {
 				flusher.Flush()
 			}
@@ -461,32 +479,33 @@ func relaySSENative(c *gin.Context, resp *http.Response, format clientFormat, in
 }
 
 func recordNativeEvent(format clientFormat, payload string, info *relayInfo) {
+	var j map[string]any
+	if json.Unmarshal([]byte(payload), &j) != nil {
+		return
+	}
 	var delta string
 	var u upstreamUsage
 	if format == FormatOpenAIResponse {
-		delta, u = parseResponsesSSEEvent(payload)
+		delta, u = parseResponsesSSEObject(j)
 	} else {
-		delta, u = parseUpstreamSSEChunk(string(format.nativeUpstreamType()), payload)
+		delta, u = parseUpstreamSSEObject(string(format.nativeUpstreamType()), j)
 	}
 	if delta != "" {
 		info.OutputText.WriteString(delta)
 	}
 	info.mergeUsage(u)
 	// Presence, rather than a positive value, distinguishes real zero usage from missing usage.
-	var j map[string]any
-	if json.Unmarshal([]byte(payload), &j) == nil {
-		usage := object(j["usage"])
-		if format == FormatGemini {
-			usage = object(j["usageMetadata"])
-		}
-		if format == FormatAnthropic && str(j["type"]) == "message_start" {
-			usage = object(object(j["message"])["usage"])
-		}
-		if format == FormatOpenAIResponse {
-			usage = object(object(j["response"])["usage"])
-		}
-		info.mergeUsage(readUsage(usage, format))
+	usage := object(j["usage"])
+	if format == FormatGemini {
+		usage = object(j["usageMetadata"])
 	}
+	if format == FormatAnthropic && str(j["type"]) == "message_start" {
+		usage = object(object(j["message"])["usage"])
+	}
+	if format == FormatOpenAIResponse {
+		usage = object(object(j["response"])["usage"])
+	}
+	info.mergeUsage(readUsage(usage, format))
 }
 
 func intFromAny(v any) int {
@@ -510,14 +529,14 @@ func hasIncludeUsage(body []byte) bool {
 
 // injectStreamUsage 以 map 往返的方式注入 stream_options.include_usage。
 func injectStreamUsage(body []byte) []byte {
-	var m map[string]any
+	var m map[string]json.RawMessage
 	if json.Unmarshal(body, &m) != nil {
 		return body
 	}
 	if _, exists := m["stream_options"]; exists {
 		return body
 	}
-	m["stream_options"] = map[string]any{"include_usage": true}
+	m["stream_options"] = json.RawMessage(`{"include_usage":true}`)
 	out, err := json.Marshal(m)
 	if err != nil {
 		return body
@@ -526,11 +545,11 @@ func injectStreamUsage(body []byte) []byte {
 }
 
 func replaceModelInBody(body []byte, model string) []byte {
-	var m map[string]any
+	var m map[string]json.RawMessage
 	if json.Unmarshal(body, &m) != nil {
 		return body
 	}
-	m["model"] = model
+	m["model"], _ = json.Marshal(model)
 	out, err := json.Marshal(m)
 	if err != nil {
 		return body

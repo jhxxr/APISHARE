@@ -17,6 +17,7 @@ import (
 
 func publicTestDB(t *testing.T) {
 	t.Helper()
+	resetUpstreamHealthForTest()
 	if err := openDB(filepath.Join(t.TempDir(), "public.db")); err != nil {
 		t.Fatal(err)
 	}

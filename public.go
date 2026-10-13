@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -92,12 +93,18 @@ func registerPublic(r *gin.Engine) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请选择按小时或分钟查看调用历史。"})
 			return
 		}
-		overview, err := buildPublicOverview(time.Now(), interval)
+		body, err := publicOverviews.get(c.Request.Context(), db, interval, func() ([]byte, error) {
+			overview, err := buildPublicOverview(time.Now(), interval)
+			if err != nil {
+				return nil, err
+			}
+			return json.Marshal(overview)
+		})
 		if err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "暂时无法读取服务数据，请稍后重试。"})
 			return
 		}
-		c.JSON(http.StatusOK, overview)
+		c.Data(http.StatusOK, "application/json; charset=utf-8", body)
 	})
 	r.GET("/api/public/announcements", publicAnnouncementsHandler)
 }
@@ -200,14 +207,14 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 		}
 		return history
 	}
-	ups, err := dbListUpstreams()
+	snapshot, err := getRoutingSnapshot()
 	if err != nil {
 		return nil, err
 	}
 	catalog := make(map[string]string)
 	wildcard := false
 	loading := false
-	for _, u := range ups {
+	for _, u := range snapshot.upstreams {
 		if !u.Enabled || u.Weight <= 0 {
 			continue
 		}
@@ -329,21 +336,20 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 		at     string
 	}
 	latest := make(map[string]lastCall)
-	err = publicRows(tx, `SELECT model,status,created_at FROM (
- SELECT l.model,l.status,l.created_at,
- ROW_NUMBER() OVER (PARTITION BY l.model ORDER BY unixepoch(l.created_at) DESC,l.id DESC) AS position
- FROM call_logs l
- WHERE unixepoch(l.created_at)<=?) WHERE position=1`, func(rows *sql.Rows) error {
-		var model string
+	// The lifetime aggregation already found every model. Seek its newest row
+	// directly instead of ranking all historical rows with a window function.
+	for model := range usage {
 		var last lastCall
-		if err := rows.Scan(&model, &last.status, &last.at); err != nil {
-			return err
+		err := tx.QueryRow(`SELECT status,created_at FROM call_logs
+ WHERE model=? AND unixepoch(created_at)<=?
+ ORDER BY unixepoch(created_at) DESC,id DESC LIMIT 1`, model, windowEnd.Unix()).Scan(&last.status, &last.at)
+		if err == sql.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			return nil, err
 		}
 		latest[model] = last
-		return nil
-	}, windowEnd.Unix())
-	if err != nil {
-		return nil, err
 	}
 	if err = tx.Commit(); err != nil {
 		return nil, err

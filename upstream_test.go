@@ -1,6 +1,16 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
+
+func resetUpstreamHealthForTest() {
+	upHealth.Lock()
+	defer upHealth.Unlock()
+	upHealth.fails = map[int64]int{}
+	upHealth.until = map[int64]time.Time{}
+}
 
 func TestPickUpstreamDistinguishesOpenAIFormats(t *testing.T) {
 	for _, format := range []clientFormat{FormatOpenAIChat, FormatOpenAIResponse} {

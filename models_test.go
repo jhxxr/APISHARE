@@ -197,6 +197,7 @@ func TestModelCacheTracksCurrentCredentialsAndInflightRequests(t *testing.T) {
 
 func modelsTestDB(t *testing.T) {
 	t.Helper()
+	resetUpstreamHealthForTest()
 	gin.SetMode(gin.TestMode)
 	if err := openDB(filepath.Join(t.TempDir(), "models.db")); err != nil {
 		t.Fatal(err)

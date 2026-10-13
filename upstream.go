@@ -12,8 +12,7 @@ import (
 // ---------- 健康状态（内存） ----------
 
 // 连续失败达到阈值后进入冷却期，冷却时间指数退避，上限 10 分钟。
-// 冷却中的上游不参与新会话的调度，但已有粘性会话仍可继续使用
-// （若粘性请求也失败，会走故障转移并重新绑定）。
+// 冷却中的上游不参与调度，粘性会话也会转移并重新绑定。
 
 var upHealth = struct {
 	sync.Mutex
@@ -26,9 +25,9 @@ func healthMarkFailure(id int64) {
 	defer upHealth.Unlock()
 	upHealth.fails[id]++
 	if n := upHealth.fails[id]; n >= 3 {
-		backoff := 30 * time.Second << uint(n-3)
-		if backoff > 10*time.Minute {
-			backoff = 10 * time.Minute
+		backoff := 10 * time.Minute
+		if n < 8 {
+			backoff = 30 * time.Second << uint(n-3)
 		}
 		upHealth.until[id] = time.Now().Add(backoff)
 	}
@@ -65,6 +64,12 @@ func (u *Upstream) servesModel(m string) bool {
 // 白名单为空表示通配所有模型（非显式）。
 func (u *Upstream) servesModelExplicit(m string) (bool, bool) {
 	m = strings.TrimSpace(m)
+	if config := u.config; config != nil && config.modelsRaw == u.Models {
+		if config.models == nil {
+			return true, false
+		}
+		return config.models[m], config.models[m]
+	}
 	list := strings.TrimSpace(u.Models)
 	if list == "" {
 		return true, false
@@ -78,6 +83,9 @@ func (u *Upstream) servesModelExplicit(m string) (bool, bool) {
 }
 
 func (u *Upstream) modelMap() map[string]string {
+	if config := u.config; config != nil && config.mapRaw == u.ModelMap {
+		return config.modelMap
+	}
 	if strings.TrimSpace(u.ModelMap) == "" {
 		return nil
 	}
@@ -110,13 +118,13 @@ func (u *Upstream) mapModel(clientModel string) string {
 //
 // exclude 里的上游（本轮已试过的）不重复选择。weight<=0 的上游不接新流量。
 func pickUpstream(format clientFormat, model string, exclude map[int64]bool, nativeOnly bool) (*Upstream, error) {
-	ups, err := dbListUpstreams()
+	snapshot, err := getRoutingSnapshot()
 	if err != nil {
 		return nil, err
 	}
 	var best []Upstream
 	bestTier := 99
-	for _, u := range ups {
+	for _, u := range snapshot.upstreams {
 		if !u.Enabled || exclude[u.ID] || !healthAvailable(u.ID) || u.Weight <= 0 {
 			continue
 		}

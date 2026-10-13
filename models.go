@@ -75,6 +75,24 @@ var modelsFetchClient = &http.Client{
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }
 
+var modelDiscoverySlots = make(chan struct{}, 4)
+
+func fetchCachedModelCatalog(up *Upstream, proxyConfig *OutboundProxy, efforts map[string][]string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	select {
+	case modelDiscoverySlots <- struct{}{}:
+		defer func() { <-modelDiscoverySlots }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	client, err := clientForProxyConfig(modelsFetchClient, proxyConfig)
+	if err != nil {
+		return nil, err
+	}
+	return probeUpstreamModelListWithClient(ctx, up.Type, up.BaseURL, up.APIKey, client, up.HeaderOverrides, efforts)
+}
+
 // probeUpstreamModels always uses the supplied credentials, including unsaved edits.
 // The deadline covers all pages; a partial catalog is never reported as complete.
 func probeUpstreamModels(ctx context.Context, upType, baseURL, apiKey string) ([]string, error) {
@@ -232,6 +250,9 @@ func probeUpstreamModelListWithClient(ctx context.Context, upType, baseURL, apiK
 // Share discovery across clients and the public page, with cache isolation for
 // every connection/key. An older in-flight request cannot populate a new key's cache.
 func cachedUpstreamModels(ctx context.Context, u *Upstream) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var proxyConfig *OutboundProxy
 	if u.ProxyID != 0 {
 		var err error
@@ -255,12 +276,7 @@ func cachedUpstreamModels(ctx context.Context, u *Upstream) ([]string, error) {
 		modelsCache.pending[key] = flight
 		connection := *u
 		go func() {
-			client, err := clientForProxyConfig(modelsFetchClient, proxyConfig)
-			if err != nil {
-				flight.err = err
-			} else {
-				flight.ids, flight.err = probeUpstreamModelListWithClient(context.Background(), connection.Type, connection.BaseURL, connection.APIKey, client, connection.HeaderOverrides, flight.efforts)
-			}
+			flight.ids, flight.err = fetchCachedModelCatalog(&connection, proxyConfig, flight.efforts)
 			modelsCache.Lock()
 			defer modelsCache.Unlock()
 			for k, cached := range modelsCache.m {
@@ -270,6 +286,7 @@ func cachedUpstreamModels(ctx context.Context, u *Upstream) ([]string, error) {
 			}
 			if flight.err == nil {
 				modelsCache.m[key] = cachedModels{ids: flight.ids, efforts: flight.efforts, at: time.Now()}
+				invalidatePublicOverviews()
 			}
 			delete(modelsCache.pending, key)
 			close(flight.done)
@@ -315,14 +332,43 @@ type catalogModel struct{ ID, Owner string }
 func availableModels(ctx context.Context) ([]catalogModel, error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	ups, err := dbListUpstreams()
+	snapshot, err := getRoutingSnapshot()
 	if err != nil {
 		return nil, err
 	}
+	ups := snapshot.upstreams
+	// Fetch wildcard catalogs concurrently, with a small bound on outgoing work.
+	// Merge afterwards in upstream order to keep duplicate-model ownership stable.
+	ids := make([][]string, len(ups))
+	fetchErrors := make([]error, len(ups))
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	for i := 0; i < min(4, len(ups)); i++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				ids[index], fetchErrors[index] = cachedUpstreamModels(ctx, &ups[index])
+			}
+		}()
+	}
+enqueue:
+	for i, up := range ups {
+		if !up.Enabled || up.Weight <= 0 || strings.TrimSpace(up.Models) != "" {
+			continue
+		}
+		select {
+		case jobs <- i:
+		case <-ctx.Done():
+			break enqueue
+		}
+	}
+	close(jobs)
+	workers.Wait()
 	seen := map[string]bool{}
 	data := make([]catalogModel, 0)
 	failed := false
-	for _, u := range ups {
+	for i, u := range ups {
 		if !u.Enabled || u.Weight <= 0 {
 			continue
 		}
@@ -338,11 +384,10 @@ func availableModels(ctx context.Context) ([]catalogModel, error) {
 				add(id)
 			}
 		} else {
-			ids, err := cachedUpstreamModels(ctx, &u)
-			if err != nil {
+			if fetchErrors[i] != nil {
 				failed = true
 			}
-			for _, id := range ids {
+			for _, id := range ids[i] {
 				add(id)
 			}
 		}

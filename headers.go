@@ -157,6 +157,11 @@ func applyHeaderOverrides(req *http.Request, raw, apiKey string, incoming http.H
 	if err != nil {
 		return err
 	}
+	return applyHeaderRules(req, rules, apiKey, incoming)
+}
+
+func applyHeaderRules(req *http.Request, rules []headerRule, apiKey string, incoming http.Header) error {
+	var broadNames map[string]struct{}
 	connectionHeaders := map[string]bool{}
 	for _, value := range incoming.Values("Connection") {
 		for _, name := range strings.Split(value, ",") {
@@ -183,16 +188,19 @@ func applyHeaderOverrides(req *http.Request, raw, apiKey string, incoming http.H
 	for _, rule := range rules {
 		if rule.name == "*" || rule.pattern != nil {
 			// Include generated headers so false rules can remove defaults too.
-			names := incoming.Clone()
-			if names == nil {
-				names = make(http.Header)
-			}
-			for name := range req.Header {
-				if _, exists := names[name]; !exists {
-					names[name] = nil
+			// Broad rules run before exact rules and never create new names.
+			// Copy just the names once, rather than cloning all header values
+			// again for each regular expression.
+			if broadNames == nil {
+				broadNames = make(map[string]struct{}, len(incoming)+len(req.Header))
+				for name := range incoming {
+					broadNames[name] = struct{}{}
+				}
+				for name := range req.Header {
+					broadNames[name] = struct{}{}
 				}
 			}
-			for name := range names {
+			for name := range broadNames {
 				if transportHeader(name) || credentialHeader(name) || connectionHeaders[strings.ToLower(name)] || (rule.pattern != nil && !rule.pattern.MatchString(name)) {
 					continue
 				}

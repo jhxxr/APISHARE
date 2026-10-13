@@ -19,14 +19,14 @@ type streamDelta struct {
 type protocolDecoder struct {
 	format       clientFormat
 	tools        map[int]canonCall
-	arguments    map[int]string
+	arguments    map[int]bool // Presence only; the writer owns the argument buffer.
 	terminal     bool
 	finish       string
 	stopSequence string
 }
 
 func newProtocolDecoder(f clientFormat) *protocolDecoder {
-	return &protocolDecoder{format: f, tools: map[int]canonCall{}, arguments: map[int]string{}, finish: "stop"}
+	return &protocolDecoder{format: f, tools: map[int]canonCall{}, arguments: map[int]bool{}, finish: "stop"}
 }
 func (d *protocolDecoder) decode(payload string) ([]streamDelta, upstreamUsage, error) {
 	if payload == "[DONE]" {
@@ -59,7 +59,9 @@ func (d *protocolDecoder) decode(payload string) ([]streamDelta, upstreamUsage, 
 			c.Name += name
 		}
 		d.tools[index] = c
-		d.arguments[index] += args
+		if args != "" {
+			d.arguments[index] = true
+		}
 		out = append(out, streamDelta{fmt.Sprintf("tool_%d", index), responseBlock{Kind: "tool", Call: canonCall{c.ID, c.Name, args}}})
 	}
 	switch d.format {
@@ -182,7 +184,7 @@ func (d *protocolDecoder) decode(payload string) ([]streamDelta, upstreamUsage, 
 		case "response.function_call_arguments.delta":
 			tool(i, "", "", str(j["delta"]))
 		case "response.function_call_arguments.done":
-			if d.arguments[i] == "" {
+			if !d.arguments[i] {
 				tool(i, "", "", str(j["arguments"]))
 			}
 		case "response.completed", "response.incomplete":
@@ -248,6 +250,8 @@ type protocolStream struct {
 	sequence           int
 	createdAt          int64
 	blocks             []responseBlock
+	textBuffers        []*strings.Builder
+	argumentBuffers    []*strings.Builder
 	indexes            map[string]int
 	toolIndexes        map[int]int
 	err                error
@@ -282,6 +286,9 @@ func (w *protocolStream) emit(c *gin.Context, v map[string]any) {
 	}
 	frame += "data: " + string(b) + "\n\n"
 	_, w.err = c.Writer.WriteString(frame)
+	if w.err != nil {
+		w.err = fmt.Errorf("%w: %w", errDownstreamWrite, w.err)
+	}
 	if w.err == nil {
 		c.Writer.Flush()
 	}
@@ -347,6 +354,16 @@ func (w *protocolStream) push(c *gin.Context, delta streamDelta, u upstreamUsage
 		}
 		w.indexes[delta.Key] = i
 		w.blocks = append(w.blocks, b)
+		// Builders are pointers so growing these slices never copies a used builder.
+		var textBuffer, argumentBuffer *strings.Builder
+		if w.format == FormatOpenAIResponse {
+			textBuffer = &strings.Builder{}
+		}
+		if b.Kind == "tool" {
+			argumentBuffer = &strings.Builder{}
+		}
+		w.textBuffers = append(w.textBuffers, textBuffer)
+		w.argumentBuffers = append(w.argumentBuffers, argumentBuffer)
 		switch w.format {
 		case FormatAnthropic:
 			block := map[string]any{"type": "text", "text": ""}
@@ -371,8 +388,14 @@ func (w *protocolStream) push(c *gin.Context, delta streamDelta, u upstreamUsage
 		}
 	}
 	b := &w.blocks[i]
-	b.Text += delta.Block.Text
-	b.Call.Arguments += delta.Block.Call.Arguments
+	if buffer := w.textBuffers[i]; buffer != nil {
+		buffer.WriteString(delta.Block.Text)
+		b.Text = buffer.String()
+	}
+	if buffer := w.argumentBuffers[i]; buffer != nil {
+		buffer.WriteString(delta.Block.Call.Arguments)
+		b.Call.Arguments = buffer.String()
+	}
 	text := delta.Block.Text
 	if b.Kind == "tool" {
 		text = delta.Block.Call.Arguments
@@ -500,7 +523,11 @@ func (w *protocolStream) finish(c *gin.Context, u upstreamUsage, reason, stopSeq
 		}
 		if w.err == nil {
 			_, w.err = c.Writer.WriteString("data: [DONE]\n\n")
-			c.Writer.Flush()
+			if w.err != nil {
+				w.err = fmt.Errorf("%w: %w", errDownstreamWrite, w.err)
+			} else {
+				c.Writer.Flush()
+			}
 		}
 	}
 	return w.err
