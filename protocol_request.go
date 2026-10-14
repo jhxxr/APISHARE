@@ -192,7 +192,14 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 				case "reasoning":
 					var texts []string
 					for _, raw := range array(j["summary"]) {
-						texts = append(texts, str(object(raw)["text"]))
+						if text := str(object(raw)["text"]); text != "" {
+							texts = append(texts, text)
+						}
+					}
+					if len(texts) == 0 {
+						if text := contentText(j["content"]); text != "" {
+							texts = append(texts, text)
+						}
 					}
 					pendingReasoning = strings.Join(texts, "\n")
 					pendingReasoningIDs = nil
@@ -376,6 +383,13 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 			if call.ID == "" || call.Name == "" || json.Unmarshal([]byte(call.Arguments), &arguments) != nil || arguments == nil {
 				return fmt.Errorf("invalid function call id, name or arguments")
 			}
+		}
+	}
+	if format == FormatOpenAIResponse {
+		var err error
+		cr.Messages, err = normalizeResponsesHistory(cr.Messages)
+		if err != nil {
+			return err
 		}
 	}
 	if len(cr.Messages) > 0 || cr.System != "" {

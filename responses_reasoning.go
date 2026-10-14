@@ -24,7 +24,7 @@ type responseReasoningEntry struct {
 	Expires time.Time
 }
 
-const responseReasoningTTL = 30 * time.Minute
+const responseReasoningTTL = 7 * 24 * time.Hour
 const responseReasoningMaxBytes = 8 << 20
 const responseReasoningMaxItems = 1024
 
@@ -73,7 +73,11 @@ func lookupResponseReasoning(scope responseReplayScope, id string) string {
 	defer cache.Unlock()
 	pruneResponseReasoning(time.Now())
 	if e := cache.Items[responseReasoningKey{scope, id}]; e != nil {
-		return e.Value.(responseReasoningEntry).Text
+		entry := e.Value.(responseReasoningEntry)
+		entry.Expires = time.Now().Add(responseReasoningTTL)
+		e.Value = entry
+		cache.Order.MoveToBack(e)
+		return entry.Text
 	}
 	return ""
 }
@@ -81,8 +85,12 @@ func lookupResponseReasoning(scope responseReplayScope, id string) string {
 func replayResponseReasoning(messages []canonMsg, scope responseReplayScope) []canonMsg {
 	// A retry must not reuse reasoning fetched for the previous upstream.
 	out := append([]canonMsg(nil), messages...)
+	lastTurnReasoning := ""
 	for i := range out {
 		msg := &out[i]
+		if msg.Role == "user" {
+			lastTurnReasoning = ""
+		}
 		if msg.Role != "assistant" {
 			continue
 		}
@@ -92,6 +100,14 @@ func replayResponseReasoning(messages []canonMsg, scope responseReplayScope) []c
 			} else {
 				msg.Reasoning = lookupResponseReasoning(scope, id)
 			}
+		}
+		if msg.Reasoning == "" {
+			// Cache lookup takes precedence over the previous span. A miss may
+			// reuse reasoning from this user turn, but must not cache it under a
+			// different opaque item's ID as though it were that item's plaintext.
+			msg.Reasoning = lastTurnReasoning
+		} else {
+			lastTurnReasoning = msg.Reasoning
 		}
 	}
 	return out

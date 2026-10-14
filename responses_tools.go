@@ -99,7 +99,7 @@ func lowerResponsesTools(cr *canonReq, m map[string]any) error {
 		f := map[string]any{"type": "function", "name": flat}
 		desc := joinSystem(description, str(j["description"]))
 		if typ == "custom" {
-			desc = joinSystem(desc, `This tool takes freeform text. Put the complete raw text in the "input" argument.`)
+			desc = joinSystem(`Gateway compatibility: this is a callable function wrapper for a client-executed freeform tool. Call it with {"input":"the complete raw tool text"}. Instructions below about not using JSON apply to the text inside input, not to this function's argument envelope. Do not invoke a shell command of the same name instead of this tool.`, desc)
 			if cfg := object(j["format"]); cfg != nil {
 				switch str(cfg["type"]) {
 				case "", "text":
@@ -168,6 +168,11 @@ func lowerResponsesTools(cr *canonReq, m map[string]any) error {
 	registerHistory := func(typ, namespace, name string) (string, error) {
 		flat := responsesFunctionName(namespace, name)
 		meta := responseTool{Type: typ, Name: name, Namespace: namespace}
+		if namespace == "" {
+			if resolved, original, ok := resolveResponseTool(flat, cr.ResponseTools); ok && original.Type == typ {
+				return resolved, nil
+			}
+		}
 		if prior, ok := cr.ResponseTools[flat]; ok && prior != meta {
 			return "", fmt.Errorf("Responses history tool %q conflicts with its declaration", flat)
 		}
@@ -175,6 +180,7 @@ func lowerResponsesTools(cr *canonReq, m map[string]any) error {
 		return flat, nil
 	}
 	input := []any{}
+	invalidCalls := make(map[string]bool)
 	for _, v := range items {
 		j := copyProtocolObject(object(v))
 		typ := str(j["type"])
@@ -183,6 +189,28 @@ func lowerResponsesTools(cr *canonReq, m map[string]any) error {
 			continue
 		case "function_call", "custom_tool_call", "tool_search_call":
 			kind, name := "function", str(j["name"])
+			if typ == "function_call" {
+				id := str(j["call_id"])
+				if id == "" || name == "" {
+					return fmt.Errorf("function_call history is missing its ID or name")
+				}
+				arguments := str(j["arguments"])
+				if arguments == "" {
+					if j["arguments"] != nil && j["arguments"] != "" {
+						return fmt.Errorf("function_call arguments must be a JSON string")
+					}
+					arguments = "{}"
+				}
+				var args map[string]any
+				if json.Unmarshal([]byte(arguments), &args) != nil || args == nil {
+					// Interrupted streams can leave a partial historical call. Do not
+					// replay it or its result into a Chat provider's strict validator.
+					invalidCalls[id] = true
+					continue
+				}
+				delete(invalidCalls, id)
+				j["arguments"] = arguments
+			}
 			if typ == "custom_tool_call" {
 				kind = "custom"
 				raw, ok := j["input"].(string)
@@ -204,7 +232,10 @@ func lowerResponsesTools(cr *canonReq, m map[string]any) error {
 				return err
 			}
 			j["type"], j["name"] = "function_call", flat
-		case "custom_tool_call_output", "tool_search_output":
+		case "function_call_output", "custom_tool_call_output", "tool_search_output":
+			if invalidCalls[str(j["call_id"])] {
+				continue
+			}
 			if typ == "tool_search_output" && j["output"] == nil {
 				j["output"] = jsonText(j["tools"])
 			}
@@ -267,9 +298,46 @@ func lowerResponsesTools(cr *canonReq, m map[string]any) error {
 	return nil
 }
 
+// Exact declarations own their names. Only unambiguous aliases of a custom
+// tool may be recovered; never steal the name of a declared ordinary function.
+func resolveResponseTool(name string, tools map[string]responseTool) (string, responseTool, bool) {
+	if meta, ok := tools[name]; ok {
+		return name, meta, true
+	}
+	namespaces := make(map[string]bool)
+	for _, meta := range tools {
+		if meta.Namespace != "" {
+			namespaces[meta.Namespace] = true
+		}
+	}
+	match := ""
+	var matched responseTool
+	for flat, meta := range tools {
+		if meta.Type != "custom" {
+			continue
+		}
+		alias := meta.Namespace != "" && name == meta.Name
+		if meta.Namespace == "" {
+			for namespace := range namespaces {
+				if responsesFunctionName(namespace, meta.Name) == name {
+					alias = true
+					break
+				}
+			}
+		}
+		if alias {
+			if match != "" && match != flat {
+				return "", responseTool{}, false
+			}
+			match, matched = flat, meta
+		}
+	}
+	return match, matched, match != ""
+}
+
 func restoreResponseTool(b responseBlock, tools map[string]responseTool) responseBlock {
-	if b.Kind == "tool" {
-		if meta, ok := tools[b.Call.Name]; ok {
+	if b.Kind == "tool" && b.ToolType == "" {
+		if _, meta, ok := resolveResponseTool(b.Call.Name, tools); ok {
 			b.ToolType, b.Namespace, b.Call.Name = meta.Type, meta.Namespace, meta.Name
 		}
 	}
