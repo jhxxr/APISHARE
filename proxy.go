@@ -19,6 +19,11 @@ const maxBodyBytes = 32 << 20 // 32MB
 
 var errDownstreamWrite = errors.New("writing client response failed")
 
+type protocolConversionError struct{ cause error }
+
+func (e *protocolConversionError) Error() string { return e.cause.Error() }
+func (e *protocolConversionError) Unwrap() error { return e.cause }
+
 var relayNetwork = loadRelayNetworkConfig()
 var upstreamHTTPClient = newRelayHTTPClient(relayNetwork)
 
@@ -35,6 +40,7 @@ func isRetryableStatus(code int) bool {
 type relayInfo struct {
 	UpstreamID    int64
 	UpstreamName  string
+	UpstreamModel string
 	Status        int
 	PromptTok     int
 	CompletionTok int
@@ -68,6 +74,7 @@ type relayTask struct {
 	model          string    // 客户端请求的模型
 	stream         bool
 	nativeOnly     bool // 只允许原生类型的上游（如 embeddings），禁止跨格式转换
+	apiKeyID       int64
 	wantUsageChunk bool // openai chat 流式：客户端是否要求 include_usage
 }
 
@@ -123,6 +130,7 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			model:      cr.Model,
 			stream:     cr.Stream,
 			nativeOnly: nativeOnly,
+			apiKeyID:   ak.ID,
 		}
 
 		// OpenAI chat 流式注入 include_usage，尽量拿到真实用量计费
@@ -140,6 +148,8 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 		attempts := 1 + s.Retry
 		var info relayInfo
 		var attemptErr error
+		var conversionErr error
+		upstreamAttempted := false
 		wrote := false
 
 		for i := 0; i < attempts; i++ {
@@ -153,7 +163,7 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			// 上次可能就是通过跨格式转换落到该上游的）
 			if i == 0 {
 				if id, ok := affinityGet(skey); ok {
-					if u, err := cachedRoutingUpstream(id); err == nil && u.Enabled && u.Weight > 0 &&
+					if u, err := cachedRoutingUpstream(id); err == nil && !tried[u.ID] && u.Enabled && u.Weight > 0 &&
 						u.servesModel(cr.Model) && healthAvailable(u.ID) && (!nativeOnly || u.Type == nativeType) {
 						up = u
 					}
@@ -164,6 +174,9 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 				up, err = pickUpstream(format, cr.Model, tried, task.nativeOnly)
 				if err != nil {
 					attemptErr = err
+					if conversionErr != nil && !upstreamAttempted {
+						attemptErr = conversionErr
+					}
 					break // Finalize once so unavailable models also contribute a failed request.
 				}
 				affinitySet(skey, up.ID)
@@ -171,6 +184,15 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			tried[up.ID] = true
 
 			info, wrote, attemptErr = doRelay(c, up, task)
+			var conversion *protocolConversionError
+			if errors.As(attemptErr, &conversion) {
+				conversionErr = attemptErr
+				// A local conversion rejection made no upstream request. Try other
+				// eligible protocols without spending a network retry or breaking affinity.
+				i--
+				continue
+			}
+			upstreamAttempted = true
 			if wrote {
 				break
 			}
@@ -204,6 +226,12 @@ func nativeEndpoint(format clientFormat, cr *canonReq) string {
 
 func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wrote bool, lastErr error, inputTokensEst int) {
 	if !wrote {
+		var conversion *protocolConversionError
+		if errors.As(lastErr, &conversion) {
+			writeFormatError(c, task.format, http.StatusBadRequest, conversion.Error())
+			insertFailureLog(ak, info.UpstreamID, info.UpstreamName, task, http.StatusBadRequest, 0, conversion.Error())
+			return
+		}
 		// 所有上游都失败且未给客户端写出任何内容
 		msg := "all upstream attempts failed"
 		if lastErr != nil {
@@ -276,6 +304,8 @@ func insertFailureLog(ak ApiKey, upID int64, upName string, task *relayTask, sta
 func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wrote bool, err error) {
 	info = relayInfo{UpstreamID: up.ID, UpstreamName: up.Name}
 	upModel := up.mapModel(task.model)
+	info.UpstreamModel = upModel
+	replayScope := responseReplayScope{task.apiKeyID, up.ID, task.model, upModel}
 	wireFormat := up.wireFormat(task.format)
 	native := wireFormat == task.format || task.nativeOnly
 	var effortLevels []string
@@ -304,12 +334,14 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		// Each failover starts from the client's original effort, not the value
 		// mapped for the previous upstream.
 		cr := *task.canon
+		if task.format == FormatOpenAIResponse {
+			cr.Messages = replayResponseReasoning(cr.Messages, replayScope)
+		}
 		cr.ReasoningEffort = mapReasoningEffort(cr.ReasoningEffort, effortLevels)
 		reqBody, err = renderProtocolRequest(wireFormat, &cr, upModel)
 		if err != nil {
-			writeFormatError(c, task.format, http.StatusBadRequest, err.Error())
 			info.Status = http.StatusBadRequest
-			return info, true, nil
+			return info, false, &protocolConversionError{err}
 		}
 		url = upstreamURL(up.BaseURL, nativeEndpoint(wireFormat, &canonReq{Model: upModel, Stream: task.stream}))
 	}
@@ -423,6 +455,8 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	if task.stream {
 		// A JSON-only upstream still returns an SSE envelope to a streaming client.
 		writer := newProtocolStream(c, task.format, task.model, task.wantUsageChunk)
+		writer.responseTools = task.canon.ResponseTools
+		writer.reasoningScope = replayScope
 		for i, block := range result.Blocks {
 			if err = writer.push(c, streamDelta{Key: fmt.Sprintf("block_%d", i), Block: block}, result.Usage); err != nil {
 				writer.fail(c)
@@ -435,7 +469,19 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		}
 		return info, true, err
 	}
-	c.JSON(http.StatusOK, renderProtocolResponse(task.format, task.model, "", result))
+	if task.format == FormatOpenAIResponse {
+		for i, block := range result.Blocks {
+			result.Blocks[i] = restoreResponseTool(block, task.canon.ResponseTools)
+			if err := validateResponseToolArguments(result.Blocks[i]); err != nil {
+				return info, false, err
+			}
+		}
+	}
+	response := renderProtocolResponse(task.format, task.model, "", result)
+	if task.format == FormatOpenAIResponse {
+		cacheResponseOutputReasoning(replayScope, response)
+	}
+	c.JSON(http.StatusOK, response)
 	return info, true, nil
 }
 

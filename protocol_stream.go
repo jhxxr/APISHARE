@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -23,10 +24,35 @@ type protocolDecoder struct {
 	terminal     bool
 	finish       string
 	stopSequence string
+	pendingArgs  map[int]*strings.Builder
+	announced    map[int]bool
 }
 
 func newProtocolDecoder(f clientFormat) *protocolDecoder {
-	return &protocolDecoder{format: f, tools: map[int]canonCall{}, arguments: map[int]bool{}, finish: "stop"}
+	return &protocolDecoder{format: f, tools: map[int]canonCall{}, arguments: map[int]bool{}, pendingArgs: map[int]*strings.Builder{}, announced: map[int]bool{}, finish: "stop"}
+}
+
+func (d *protocolDecoder) flushChatTools() ([]streamDelta, error) {
+	var indexes []int
+	for i := range d.tools {
+		if !d.announced[i] {
+			indexes = append(indexes, i)
+		}
+	}
+	sort.Ints(indexes)
+	var out []streamDelta
+	for _, i := range indexes {
+		call := d.tools[i]
+		if call.Name == "" {
+			return nil, fmt.Errorf("upstream tool call is missing name")
+		}
+		if buffer := d.pendingArgs[i]; buffer != nil {
+			call.Arguments = buffer.String()
+		}
+		d.announced[i] = true
+		out = append(out, streamDelta{Key: fmt.Sprintf("tool_%d", i), Block: responseBlock{Kind: "tool", Call: call}})
+	}
+	return out, nil
 }
 func (d *protocolDecoder) decode(payload string) ([]streamDelta, upstreamUsage, error) {
 	if payload == "[DONE]" {
@@ -34,7 +60,8 @@ func (d *protocolDecoder) decode(payload string) ([]streamDelta, upstreamUsage, 
 			return nil, upstreamUsage{}, fmt.Errorf("unexpected upstream DONE event")
 		}
 		d.terminal = true
-		return nil, upstreamUsage{}, nil
+		deltas, err := d.flushChatTools()
+		return deltas, upstreamUsage{}, err
 	}
 	var j map[string]any
 	if json.Unmarshal([]byte(payload), &j) != nil || j == nil {
@@ -61,6 +88,24 @@ func (d *protocolDecoder) decode(payload string) ([]streamDelta, upstreamUsage, 
 		d.tools[index] = c
 		if args != "" {
 			d.arguments[index] = true
+		}
+		if d.format == FormatOpenAIChat && !d.announced[index] {
+			buffer := d.pendingArgs[index]
+			if c.Name == "" || args == "" {
+				if args != "" {
+					if buffer == nil {
+						buffer = &strings.Builder{}
+						d.pendingArgs[index] = buffer
+					}
+					buffer.WriteString(args)
+				}
+				return
+			}
+			if buffer != nil {
+				args = buffer.String() + args
+				delete(d.pendingArgs, index)
+			}
+			d.announced[index] = true
 		}
 		out = append(out, streamDelta{fmt.Sprintf("tool_%d", index), responseBlock{Kind: "tool", Call: canonCall{c.ID, c.Name, args}}})
 	}
@@ -199,6 +244,13 @@ func (d *protocolDecoder) decode(payload string) ([]streamDelta, upstreamUsage, 
 			}
 		}
 	}
+	if d.format == FormatOpenAIChat && d.terminal {
+		pending, err := d.flushChatTools()
+		if err != nil {
+			return nil, u, err
+		}
+		out = append(out, pending...)
+	}
 	return out, u, nil
 }
 
@@ -255,6 +307,8 @@ type protocolStream struct {
 	indexes            map[string]int
 	toolIndexes        map[int]int
 	err                error
+	responseTools      map[string]responseTool
+	reasoningScope     responseReplayScope
 }
 
 func newProtocolStream(c *gin.Context, f clientFormat, model string, wantUsage bool) *protocolStream {
@@ -341,6 +395,9 @@ func (w *protocolStream) push(c *gin.Context, delta streamDelta, u upstreamUsage
 	if !exists {
 		i = len(w.blocks)
 		b := delta.Block
+		if w.format == FormatOpenAIResponse {
+			b = restoreResponseTool(b, w.responseTools)
+		}
 		b.Text = ""
 		b.Call.Arguments = ""
 		if b.Kind == "tool" {
@@ -414,6 +471,11 @@ func (w *protocolStream) push(c *gin.Context, delta streamDelta, u upstreamUsage
 		}
 		w.emit(c, map[string]any{"type": "content_block_delta", "index": i, "delta": map[string]any{"type": typ, field: text}})
 	case FormatOpenAIResponse:
+		// A Chat/Anthropic delta carries JSON fragments, not the custom tool's
+		// raw text. Decode it after the entire argument object has arrived.
+		if b.Kind == "tool" && (b.ToolType == "custom" || b.ToolType == "tool_search") {
+			return w.err
+		}
 		typ := "response.output_text.delta"
 		if b.Kind == "tool" {
 			typ = "response.function_call_arguments.delta"
@@ -473,6 +535,9 @@ func (w *protocolStream) finish(c *gin.Context, u upstreamUsage, reason, stopSeq
 			if json.Unmarshal([]byte(b.Call.Arguments), &args) != nil || args == nil {
 				return fmt.Errorf("upstream streamed tool arguments are not a JSON object")
 			}
+			if err := validateResponseToolArguments(*b); err != nil {
+				return err
+			}
 		}
 	}
 	switch w.format {
@@ -494,7 +559,18 @@ func (w *protocolStream) finish(c *gin.Context, u upstreamUsage, reason, stopSeq
 				w.emit(c, map[string]any{"type": "response.output_text.done", "item_id": id, "output_index": i, "content_index": 0, "text": b.Text})
 				w.emit(c, map[string]any{"type": "response.content_part.done", "item_id": id, "output_index": i, "content_index": 0, "part": map[string]any{"type": "output_text", "text": b.Text, "annotations": []any{}}})
 			case "tool":
-				w.emit(c, map[string]any{"type": "response.function_call_arguments.done", "item_id": id, "output_index": i, "name": b.Call.Name, "arguments": b.Call.Arguments})
+				switch b.ToolType {
+				case "custom":
+					input := str(responsesToolItem(b, id)["input"])
+					if input != "" {
+						w.emit(c, map[string]any{"type": "response.custom_tool_call_input.delta", "item_id": id, "output_index": i, "delta": input})
+					}
+					w.emit(c, map[string]any{"type": "response.custom_tool_call_input.done", "item_id": id, "output_index": i, "input": input})
+				case "tool_search":
+					// Client tool search is materialized from output_item.done.
+				default:
+					w.emit(c, map[string]any{"type": "response.function_call_arguments.done", "item_id": id, "output_index": i, "name": b.Call.Name, "arguments": b.Call.Arguments})
+				}
 			case "thinking":
 				w.emit(c, map[string]any{"type": "response.reasoning_summary_text.done", "item_id": id, "output_index": i, "summary_index": 0, "text": b.Text})
 				w.emit(c, map[string]any{"type": "response.reasoning_summary_part.done", "item_id": id, "output_index": i, "summary_index": 0, "part": map[string]any{"type": "summary_text", "text": b.Text}})
@@ -502,6 +578,7 @@ func (w *protocolStream) finish(c *gin.Context, u upstreamUsage, reason, stopSeq
 			w.emit(c, map[string]any{"type": "response.output_item.done", "output_index": i, "item": w.item(i, false)})
 		}
 		body := renderProtocolResponse(w.format, w.model, w.id, r)
+		cacheResponseOutputReasoning(w.reasoningScope, body)
 		typ := "response.completed"
 		if body["status"] == "incomplete" {
 			typ = "response.incomplete"
@@ -553,6 +630,10 @@ func (w *protocolStream) fail(c *gin.Context) {
 
 func relayProtocolSSE(c *gin.Context, resp *http.Response, format clientFormat, task *relayTask, info *relayInfo) error {
 	w := newProtocolStream(c, task.format, task.model, task.wantUsageChunk)
+	if task.canon != nil {
+		w.responseTools = task.canon.ResponseTools
+	}
+	w.reasoningScope = responseReplayScope{task.apiKeyID, info.UpstreamID, task.model, info.UpstreamModel}
 	d := newProtocolDecoder(format)
 	err := readSSEFrames(resp.Body, func(payload string) (bool, error) {
 		deltas, u, err := d.decode(payload)

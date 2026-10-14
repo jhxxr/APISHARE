@@ -43,12 +43,14 @@ func (f clientFormat) nativeUpstreamType() string {
 // ---------- 规范化请求 ----------
 
 type canonMsg struct {
-	Role     string // user | assistant（system 单独放在 System）
-	Text     string
-	Parts    []canonPart
-	Calls    []canonCall
-	ToolID   string
-	ToolName string
+	Role         string // user | assistant（system 单独放在 System）
+	Text         string
+	Parts        []canonPart
+	Calls        []canonCall
+	ToolID       string
+	ToolName     string
+	Reasoning    string
+	ReasoningIDs []string
 }
 
 type canonReq struct {
@@ -66,6 +68,7 @@ type canonReq struct {
 	TopP            *float64
 	ReasoningEffort string
 	ConversionError error
+	ResponseTools   map[string]responseTool
 	InputText       string // system + 首条 user 消息，用于会话指纹与 token 估算
 }
 

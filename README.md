@@ -53,17 +53,44 @@ Anthropic SDK / Claude Code → /v1/messages
 支持四种客户端格式与四种上游接口（Chat、Responses、Anthropic、Gemini）的互相转换：
 
 - system、多轮文本、max_tokens、temperature、top_p、函数工具定义、工具选择、工具调用与工具结果；支持多个工具和分段工具参数，模型映射仍然生效。
+- Codex 的 Responses 客户端工具支持 `custom` 自由文本工具、`namespace` 命名空间、`input.additional_tools` 与 `execution: "client"` 的 `tool_search`。转入 Chat / Anthropic / Gemini 时把自由文本包装成只有 `input` 字符串参数的函数；回程恢复 `custom_tool_call`、原始命名空间、工具搜索调用与 `call_id`。多工具历史合并为一个 assistant 调用批次，保留对应工具结果；搜索返回的工具加入下一轮定义。支持命名工具选择与 `allowed_tools` 子集。重名或展平后撞名会明确报错。grammar 转为工具描述提示，不能保持原生协议的强制语法约束。
 - 兼容 Claude Code 在 Anthropic `messages[]` 中插入的纯文本 `role: "system"`：跨格式转换时按出现顺序合并到目标接口的系统指令，保留其他对话、图片和工具调用，且不让中途插入的指令改变会话指纹。转换后无法保留这些指令的原始生效位置；原生 Anthropic 路径仍透传完整请求。消息级 `clear_at`（除 `never`）、`output_config` 和工具增删块等特性不支持跨格式转换，会返回明确错误。
 - 图片支持 OpenAI URL / data URL、Anthropic URL / base64、Gemini inlineData / fileData。转入 Gemini 的远程图片需要 MIME 类型；没有 MIME 时返回明确错误，可改用 base64。Chat Completions 的工具结果只支持文本；图片工具结果不能转入此接口。
 - SSE 逐增量转换文本、思考文本与工具参数，保留工具调用 ID、停止原因和真实 usage，包含上游明确返回的 0 Token。Gemini 的函数调用要求完整 JSON，因此只缓冲工具参数；上游忽略 stream 并返回 JSON 时，将完整结果包装成客户端 SSE。
 - Responses 生成完整的输出项、增量、完成事件；Anthropic 生成带 `event:` 名称的 Messages 事件。上游错误、非法工具参数与缺少结束事件的断流会返回客户端错误并记为失败，不补发成功结束事件。
+- 自由文本工具的 JSON 参数会先收齐再解包，下发 `response.custom_tool_call_input.delta/done` 与完整的 `output_item.done`；不会把 JSON 包装或截断输入交给客户端执行。普通函数仍逐增量转发参数，支持上游分片或迟发工具名。
 - 思考强度按模型映射后的实际目标适配：优先使用已缓存的上游模型目录 `effort.supported_levels`，没有声明时按已知模型规则兜底。保留受支持的档位，缺失档位映射到下一档，超过上限则使用最高档；例如 DeepSeek 的 `xhigh → max`、`medium → high`、`minimal → low`。支持 Chat 的 `reasoning_effort`、Responses 的 `reasoning.effort`、Anthropic 的 `output_config.effort`，原生与转换路径、流式与非流式均生效；每次故障转移重新适配，未知模型/自定义档位及 `none` 保留原值。
 - 原生路径透传完整请求与响应，仅在需要模型映射或思考强度适配时改写对应字段。跨供应商转换无法保留 prompt cache 控制、思考签名或加密推理状态；历史 Anthropic thinking 与 Gemini thought 块不会作为普通文本重新发给其他供应商。
-- 内置服务端工具、音频/视频/文档块、结构化输出配置、Responses 的 `previous_response_id` / `conversation` / reasoning 输入项等不支持跨格式转换，返回 400。转换路径请发送完整会话，特殊特性请使用原生接口。Responses 上游不支持 stop 序列；跨入 Gemini 时不支持 reasoning effort，跨入 Anthropic 时不支持 `none`（关闭思考），Gemini 不支持关闭并行工具调用。
+- Responses reasoning 历史中的明文 summary 在 Chat 上游恢复为 assistant 的 `reasoning_content`。网关生成的 reasoning 输出按 API Key、客户端模型、上游 ID 和映射模型隔离缓存，后续只有同一 reasoning item ID 的不透明历史时可恢复明文。缓存有效期 30 分钟，最多 1024 项／8 MiB，重启后清空；不会解密供应商的 `encrypted_content`，缓存未命中时不伪造推理内容。Anthropic / Gemini 上游不回放其他供应商的思考签名。
+- 内置服务端工具（包括 `web_search`、`file_search` 和服务端 `tool_search`）、音频/视频/文档块、结构化输出配置、Responses 的 `previous_response_id` / `conversation` 等不支持跨格式转换，返回 400；普通 `text.format.type: "text"` 可转换。转换路径请发送完整会话，特殊特性请使用原生接口。Responses 上游不支持 stop 序列；跨入 Gemini 时不支持 reasoning effort，跨入 Anthropic 时不支持 `none`（关闭思考），Gemini 不支持关闭并行工具调用。
 - 路由优先级（`pickUpstream`）：原生格式+显式白名单 ＞ 其他格式+显式白名单 ＞ 原生格式+通配 ＞ 其他格式+通配。Chat 与 Responses 分别判断原生匹配；想精确控制就给每个上游配模型白名单。
 - 会话粘性对转换路径同样生效
+- 转换能力不匹配时跳过该候选，继续寻找兼容或原生上游；本地转换失败不消耗网络重试次数，不请求上游、不计费。所有候选都无法转换时才返回 400。
 
 设计参考：[New API 的 OpenAI 适配器](https://github.com/QuantumNous/new-api/blob/main/relay/channel/openai/adaptor.go)通过转换器接收 Claude / Gemini 请求；[Sub2API 的 Messages 分发](https://github.com/Wei-Shaw/sub2api/blob/main/backend/internal/service/openai_gateway_messages.go)按上游协议选择 Anthropic 直通、Chat 转换或 Responses 转换。本项目采用自己的规范化表示与转换实现。
+
+#### Codex 接入 Chat 上游
+
+后台将只支持 Chat Completions 的供应商设为 **OpenAI Chat Completions**（`openai_protocol: "chat"`），Codex 客户端继续使用 Responses。不要为 Chat-only 服务选择旧版「跟随客户端」，否则请求会发到上游的 `/v1/responses`。
+
+以下为 Codex 的 `config.toml` 示例。`web_search = "disabled"` 必须放在顶层：Codex 默认启用搜索，而普通 Chat 上游无法执行服务端 `web_search`。原生 Responses 上游支持搜索时可按其能力启用。
+
+```toml
+model = "deepseek-v4-flash"
+model_provider = "apishare"
+web_search = "disabled"
+
+[model_providers.apishare]
+name = "API Share"
+base_url = "https://your-gateway.example/v1"
+env_key = "APISHARE_API_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+```
+
+在运行 Codex 的环境中设置 `APISHARE_API_KEY` 为网关签发的 Key。模型需同时在该 Key 的授权范围和上游白名单内。HTTP JSON 与 SSE 转换已覆盖；WebSocket Responses、`/responses/compact` 和服务器保存的会话状态不属于此转换实现。长会话仍需遵循客户端与上游的上下文上限。
+
+自动测试覆盖 Codex 工具定义／并行历史／命名空间恢复、工具搜索发现、分片 SSE 与断流、推理回放隔离及路由故障转移。可设置 `APISHARE_CODEX_BINARY` 为已安装 Codex 的原生可执行文件路径，再运行 `go test . -run TestCodexCLIResponsesToolLoop -count=1 -v`：该可选测试使用隔离目录、本地确定性模拟上游及测试 Key，验证真实 CLI 创建代码和测试、运行失败、修复代码、再次测试通过、结果回传和最终回答；不调用真实模型供应商。
 
 ## 核心特性
 

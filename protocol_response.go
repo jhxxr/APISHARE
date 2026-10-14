@@ -9,8 +9,9 @@ import (
 )
 
 type responseBlock struct {
-	Kind, Text string
-	Call       canonCall
+	Kind, Text          string
+	Call                canonCall
+	ToolType, Namespace string
 }
 type canonResponse struct {
 	Blocks               []responseBlock
@@ -314,7 +315,7 @@ func renderProtocolResponse(format clientFormat, model, id string, r *canonRespo
 			case "text":
 				output = append(output, map[string]any{"id": itemID, "type": "message", "status": "completed", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": b.Text, "annotations": []any{}}}})
 			case "tool":
-				output = append(output, map[string]any{"id": itemID, "type": "function_call", "status": "completed", "call_id": b.Call.ID, "name": b.Call.Name, "arguments": b.Call.Arguments})
+				output = append(output, responsesToolItem(b, itemID))
 			case "thinking":
 				output = append(output, map[string]any{"id": itemID, "type": "reasoning", "summary": []any{map[string]any{"type": "summary_text", "text": b.Text}}})
 			}

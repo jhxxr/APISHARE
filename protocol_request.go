@@ -82,7 +82,9 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 		}
 	}
 	if cfg := object(m["text"]); cfg["format"] != nil {
-		return unsupported("Responses structured output format")
+		if str(object(cfg["format"])["type"]) != "text" {
+			return unsupported("Responses structured output format")
+		}
 	}
 	if cfg := object(m["generationConfig"]); cfg["responseSchema"] != nil || cfg["responseJsonSchema"] != nil || cfg["responseMimeType"] != nil {
 		return unsupported("Gemini structured output format")
@@ -106,17 +108,45 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 	if n, _ := m["n"].(float64); n > 1 {
 		return unsupported("multiple choices (n > 1)")
 	}
+	if format == FormatOpenAIResponse {
+		if err := lowerResponsesTools(cr, m); err != nil {
+			return err
+		}
+	}
 	if err := parseCanonTools(cr, format, m); err != nil {
 		return err
 	}
 	toolNames := map[string]string{}
 	usedGeminiToolIDs := map[string]bool{}
+	pendingReasoning := ""
+	var pendingReasoningIDs []string
 	appendMessage := func(msg canonMsg) {
 		for _, c := range msg.Calls {
 			toolNames[c.ID] = c.Name
 		}
 		if msg.ToolID != "" && msg.ToolName == "" {
 			msg.ToolName = toolNames[msg.ToolID]
+		}
+		if format == FormatOpenAIResponse {
+			if msg.Role == "user" {
+				pendingReasoning, pendingReasoningIDs = "", nil
+			}
+			if msg.Role == "assistant" {
+				msg.Reasoning = pendingReasoning
+				msg.ReasoningIDs = append([]string(nil), pendingReasoningIDs...)
+				// One Responses turn may contain several calls. Chat providers require
+				// one assistant tool_calls batch followed by all matching tool results.
+				if n := len(cr.Messages); n > 0 && cr.Messages[n-1].Role == "assistant" {
+					last := &cr.Messages[n-1]
+					last.Calls = append(last.Calls, msg.Calls...)
+					last.Parts = append(last.Parts, msg.Parts...)
+					last.Text = partsText(last.Parts)
+					if msg.Reasoning != "" || len(msg.ReasoningIDs) > 0 {
+						last.Reasoning, last.ReasoningIDs = msg.Reasoning, msg.ReasoningIDs
+					}
+					return
+				}
+			}
 		}
 		cr.Messages = append(cr.Messages, msg)
 	}
@@ -159,6 +189,16 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 			for _, v := range array(m["input"]) {
 				j := object(v)
 				switch str(j["type"]) {
+				case "reasoning":
+					var texts []string
+					for _, raw := range array(j["summary"]) {
+						texts = append(texts, str(object(raw)["text"]))
+					}
+					pendingReasoning = strings.Join(texts, "\n")
+					pendingReasoningIDs = nil
+					if id := str(j["id"]); id != "" {
+						pendingReasoningIDs = []string{id}
+					}
 				case "", "message":
 					role := str(j["role"])
 					if role == "system" || role == "developer" {
@@ -665,6 +705,9 @@ func renderProtocolRequest(format clientFormat, cr *canonReq, model string) ([]b
 				}
 			}
 			j := map[string]any{"role": msg.Role, "content": content}
+			if msg.Role == "assistant" && msg.Reasoning != "" {
+				j["reasoning_content"] = msg.Reasoning
+			}
 			if msg.Role == "tool" {
 				for _, p := range messageParts(msg) {
 					if p.Kind != "text" {
