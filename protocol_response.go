@@ -54,6 +54,7 @@ func readUsage(j map[string]any, format clientFormat) upstreamUsage {
 	if j == nil {
 		return u
 	}
+	u.Source = format
 	in, out := "prompt_tokens", "completion_tokens"
 	if format == FormatAnthropic || format == FormatOpenAIResponse {
 		in, out = "input_tokens", "output_tokens"
@@ -69,11 +70,36 @@ func readUsage(j map[string]any, format clientFormat) upstreamUsage {
 		u.Completion = intFromAny(v)
 		u.OutKnown = true
 	}
+	readDetail := func(source map[string]any, field string, value *int, known *bool) {
+		if raw, exists := source[field]; exists && raw != nil {
+			*value, *known = intFromAny(raw), true
+		}
+	}
+	switch format {
+	case FormatAnthropic:
+		readDetail(j, "cache_read_input_tokens", &u.CacheRead, &u.CacheReadKnown)
+		readDetail(j, "cache_creation_input_tokens", &u.CacheWrite, &u.CacheWriteKnown)
+	case FormatGemini:
+		readDetail(j, "cachedContentTokenCount", &u.CacheRead, &u.CacheReadKnown)
+		readDetail(j, "thoughtsTokenCount", &u.Reasoning, &u.ReasoningKnown)
+		readDetail(j, "toolUsePromptTokenCount", &u.ToolPrompt, &u.ToolPromptKnown)
+	default:
+		inputDetail, outputDetail := "prompt_tokens_details", "completion_tokens_details"
+		if format == FormatOpenAIResponse {
+			inputDetail, outputDetail = "input_tokens_details", "output_tokens_details"
+		}
+		readDetail(object(j[inputDetail]), "cached_tokens", &u.CacheRead, &u.CacheReadKnown)
+		readDetail(object(j[inputDetail]), "cache_creation_tokens", &u.CacheWrite, &u.CacheWriteKnown)
+		if !u.CacheWriteKnown {
+			readDetail(object(j[inputDetail]), "cache_write_tokens", &u.CacheWrite, &u.CacheWriteKnown)
+		}
+		readDetail(object(j[outputDetail]), "reasoning_tokens", &u.Reasoning, &u.ReasoningKnown)
+	}
 	return u
 }
 func normalizeFinish(reason string) string {
 	switch reason {
-	case "max_tokens", "MAX_TOKENS", "length":
+	case "max_tokens", "MAX_TOKENS", "length", "model_context_window_exceeded", "CONTEXT_LENGTH_EXCEEDED":
 		return "length"
 	case "tool_use", "tool_calls", "function_call":
 		return "tool_calls"
@@ -150,6 +176,9 @@ func parseProtocolResponse(format clientFormat, body []byte) (*canonResponse, er
 	case FormatAnthropic:
 		if _, ok := j["content"].([]any); !ok {
 			return nil, fmt.Errorf("upstream response is missing content")
+		}
+		if str(j["stop_reason"]) == "pause_turn" {
+			return nil, unsupported("upstream Anthropic paused turn")
 		}
 		for _, v := range array(j["content"]) {
 			b := object(v)
@@ -305,7 +334,7 @@ func renderProtocolResponse(format clientFormat, model, id string, r *canonRespo
 	if id == "" {
 		id = protocolID(protocolIDPrefix(format))
 	}
-	p, q := r.Usage.Prompt, r.Usage.Completion
+	usage := renderProtocolUsage(format, r.Usage)
 	switch format {
 	case FormatAnthropic:
 		blocks := []any{}
@@ -324,7 +353,7 @@ func renderProtocolResponse(format clientFormat, model, id string, r *canonRespo
 		if r.StopSequence != "" {
 			stop = r.StopSequence
 		}
-		return map[string]any{"id": id, "type": "message", "role": "assistant", "model": model, "content": blocks, "stop_reason": anthropicStop(r), "stop_sequence": stop, "usage": map[string]any{"input_tokens": p, "output_tokens": q}}
+		return map[string]any{"id": id, "type": "message", "role": "assistant", "model": model, "content": blocks, "stop_reason": anthropicStop(r), "stop_sequence": stop, "usage": usage}
 	case FormatGemini:
 		parts := []any{}
 		for _, b := range r.Blocks {
@@ -339,7 +368,7 @@ func renderProtocolResponse(format clientFormat, model, id string, r *canonRespo
 				parts = append(parts, j)
 			}
 		}
-		return map[string]any{"candidates": []any{map[string]any{"content": map[string]any{"role": "model", "parts": parts}, "index": 0, "finishReason": geminiStop(r)}}, "usageMetadata": map[string]any{"promptTokenCount": p, "candidatesTokenCount": q, "totalTokenCount": p + q}, "modelVersion": model}
+		return map[string]any{"candidates": []any{map[string]any{"content": map[string]any{"role": "model", "parts": parts}, "index": 0, "finishReason": geminiStop(r)}}, "usageMetadata": usage, "modelVersion": model}
 	case FormatOpenAIResponse:
 		output := []any{}
 		for i, b := range r.Blocks {
@@ -363,7 +392,7 @@ func renderProtocolResponse(format clientFormat, model, id string, r *canonRespo
 			}
 			incomplete = map[string]any{"reason": reason}
 		}
-		return map[string]any{"id": id, "object": "response", "created_at": time.Now().Unix(), "status": status, "error": nil, "incomplete_details": incomplete, "model": model, "output": output, "usage": map[string]any{"input_tokens": p, "output_tokens": q, "total_tokens": p + q}}
+		return map[string]any{"id": id, "object": "response", "created_at": time.Now().Unix(), "status": status, "error": nil, "incomplete_details": incomplete, "model": model, "output": output, "usage": usage}
 	default:
 		text, thinking := "", ""
 		calls := []any{}
@@ -388,6 +417,6 @@ func renderProtocolResponse(format clientFormat, model, id string, r *canonRespo
 		if thinking != "" {
 			msg["reasoning_content"] = thinking
 		}
-		return map[string]any{"id": id, "object": "chat.completion", "created": time.Now().Unix(), "model": model, "choices": []any{map[string]any{"index": 0, "message": msg, "finish_reason": chatStop(r)}}, "usage": map[string]any{"prompt_tokens": p, "completion_tokens": q, "total_tokens": p + q}}
+		return map[string]any{"id": id, "object": "chat.completion", "created": time.Now().Unix(), "model": model, "choices": []any{map[string]any{"index": 0, "message": msg, "finish_reason": chatStop(r)}}, "usage": usage}
 	}
 }

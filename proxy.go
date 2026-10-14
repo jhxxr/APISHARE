@@ -46,6 +46,7 @@ type relayInfo struct {
 	CompletionTok int
 	InKnown       bool
 	OutKnown      bool
+	Usage         upstreamUsage
 	OutputText    strings.Builder
 	LatencyMS     int64
 }
@@ -55,6 +56,7 @@ func (i *relayInfo) mergeUsage(u upstreamUsage) {
 }
 
 func (i *relayInfo) mergeUsagePtr(u *upstreamUsage) {
+	i.Usage.merge(*u)
 	if u.InKnown {
 		i.PromptTok = u.Prompt
 		i.InKnown = true
@@ -63,6 +65,12 @@ func (i *relayInfo) mergeUsagePtr(u *upstreamUsage) {
 		i.CompletionTok = u.Completion
 		i.OutKnown = true
 	}
+}
+
+func (i *relayInfo) protocolUsage() upstreamUsage {
+	u := i.Usage
+	u.Prompt, u.Completion, u.InKnown, u.OutKnown = i.PromptTok, i.CompletionTok, i.InKnown, i.OutKnown
+	return u
 }
 
 // relayTask 一次转发所需的全部上下文。
@@ -434,7 +442,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 			}
 			var finalInfo relayInfo
 			parseNativeNonStream(task.format, body, &finalInfo)
-			info.mergeUsage(upstreamUsage{Prompt: finalInfo.PromptTok, Completion: finalInfo.CompletionTok, InKnown: finalInfo.InKnown, OutKnown: finalInfo.OutKnown})
+			info.mergeUsage(finalInfo.protocolUsage())
 			if finalInfo.OutputText.Len() > 0 {
 				info.OutputText.Reset()
 				info.OutputText.WriteString(finalInfo.OutputText.String())
@@ -456,6 +464,10 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 			}
 		}
 		parseNativeNonStream(task.format, b, &info)
+		if task.stream && !task.nativeOnly {
+			err = relayNativeJSONStream(c, task.format, b, task.wantUsageChunk)
+			return info, c.Writer.Written(), err
+		}
 		c.Data(info.Status, ct, b)
 		return info, true, nil
 	}

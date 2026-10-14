@@ -287,6 +287,9 @@ func (d *protocolDecoder) decode(payload string) ([]streamDelta, upstreamUsage, 
 			delete(d.toolSeeds, i)
 		case "message_delta":
 			b := object(j["delta"])
+			if str(b["stop_reason"]) == "pause_turn" {
+				return nil, readUsage(object(j["usage"]), d.format), unsupported("upstream Anthropic paused turn")
+			}
 			if s := str(b["stop_reason"]); s != "" {
 				d.finish = normalizeFinish(s)
 			}
@@ -519,12 +522,7 @@ func collectProtocolSSE(reader io.Reader, format clientFormat) (*canonResponse, 
 		if err != nil {
 			return false, err
 		}
-		if usage.InKnown {
-			r.Usage.Prompt, r.Usage.InKnown = usage.Prompt, true
-		}
-		if usage.OutKnown {
-			r.Usage.Completion, r.Usage.OutKnown = usage.Completion, true
-		}
+		r.Usage.merge(usage)
 		for _, delta := range deltas {
 			size += len(delta.Block.Text) + len(delta.Block.Call.Arguments) + len(delta.Block.Call.Name)
 			if size > limit || len(r.Blocks) > 65536 {
@@ -659,7 +657,7 @@ func (w *protocolStream) start(c *gin.Context, u upstreamUsage) {
 	c.Writer.WriteHeader(http.StatusOK)
 	switch w.format {
 	case FormatAnthropic:
-		w.emit(c, map[string]any{"type": "message_start", "message": map[string]any{"id": w.id, "type": "message", "role": "assistant", "model": w.model, "content": []any{}, "stop_reason": nil, "stop_sequence": nil, "usage": map[string]any{"input_tokens": u.Prompt, "output_tokens": u.Completion}}})
+		w.emit(c, map[string]any{"type": "message_start", "message": map[string]any{"id": w.id, "type": "message", "role": "assistant", "model": w.model, "content": []any{}, "stop_reason": nil, "stop_sequence": nil, "usage": renderProtocolUsage(w.format, u)}})
 	case FormatOpenAIResponse:
 		r := renderProtocolResponse(w.format, w.model, w.id, &canonResponse{Finish: "stop"})
 		r["status"] = "in_progress"
@@ -864,7 +862,7 @@ func (w *protocolStream) finish(c *gin.Context, u upstreamUsage, reason, stopSeq
 		if stopSequence != "" {
 			stop = stopSequence
 		}
-		w.emit(c, map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": anthropicStop(r), "stop_sequence": stop}, "usage": map[string]any{"input_tokens": u.Prompt, "output_tokens": u.Completion}})
+		w.emit(c, map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": anthropicStop(r), "stop_sequence": stop}, "usage": renderProtocolUsage(w.format, u)})
 		w.emit(c, map[string]any{"type": "message_stop"})
 	case FormatOpenAIResponse:
 		for i, b := range w.blocks {
@@ -911,7 +909,7 @@ func (w *protocolStream) finish(c *gin.Context, u upstreamUsage, reason, stopSeq
 	default:
 		w.chunk(c, map[string]any{}, chatStop(r))
 		if w.wantUsage {
-			w.emit(c, map[string]any{"id": w.id, "object": "chat.completion.chunk", "created": w.createdAt, "model": w.model, "choices": []any{}, "usage": map[string]any{"prompt_tokens": u.Prompt, "completion_tokens": u.Completion, "total_tokens": u.Prompt + u.Completion}})
+			w.emit(c, map[string]any{"id": w.id, "object": "chat.completion.chunk", "created": w.createdAt, "model": w.model, "choices": []any{}, "usage": renderProtocolUsage(w.format, u)})
 		}
 		if w.err == nil {
 			_, w.err = c.Writer.WriteString("data: [DONE]\n\n")
@@ -963,7 +961,7 @@ func relayProtocolSSE(c *gin.Context, resp *http.Response, format clientFormat, 
 		for _, delta := range deltas {
 			info.OutputText.WriteString(delta.Block.Text)
 			info.OutputText.WriteString(delta.Block.Call.Arguments)
-			if err := w.push(c, delta, upstreamUsage{Prompt: info.PromptTok, Completion: info.CompletionTok}); err != nil {
+			if err := w.push(c, delta, info.protocolUsage()); err != nil {
 				return false, err
 			}
 		}
@@ -973,7 +971,7 @@ func relayProtocolSSE(c *gin.Context, resp *http.Response, format clientFormat, 
 		err = io.ErrUnexpectedEOF
 	}
 	if err == nil {
-		err = w.finish(c, upstreamUsage{Prompt: info.PromptTok, Completion: info.CompletionTok, InKnown: info.InKnown, OutKnown: info.OutKnown}, d.finish, d.stopSequence)
+		err = w.finish(c, info.protocolUsage(), d.finish, d.stopSequence)
 	}
 	if err != nil {
 		w.fail(c)

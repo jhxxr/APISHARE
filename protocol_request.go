@@ -76,6 +76,9 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 			cr.ReasoningEffort = effort
 		}
 	}
+	if err := parseProtocolThinking(cr, format, m); err != nil {
+		return err
+	}
 	if cfg := object(m["response_format"]); m["response_format"] != nil && str(cfg["type"]) != "text" {
 		return unsupported("Chat structured output format")
 	}
@@ -356,7 +359,7 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 				return unsupported("Gemini " + field)
 			}
 		}
-		for _, field := range []string{"thinkingConfig", "topK", "responseModalities", "mediaResolution"} {
+		for _, field := range []string{"topK", "responseModalities", "mediaResolution"} {
 			if gc[field] != nil {
 				return unsupported("Gemini " + field)
 			}
@@ -761,9 +764,6 @@ func renderProtocolRequest(format clientFormat, cr *canonReq, model string) ([]b
 	if cr.ConversionError != nil {
 		return nil, cr.ConversionError
 	}
-	if cr.ReasoningEffort != "" && (format == FormatGemini || (format == FormatAnthropic && cr.ReasoningEffort == "none")) {
-		return nil, unsupported("reasoning effort on this upstream protocol")
-	}
 	m := map[string]any{"model": model, "stream": cr.Stream}
 	msgs := []any{}
 	if cr.System != "" && format == FormatOpenAIChat {
@@ -945,6 +945,9 @@ func renderProtocolRequest(format clientFormat, cr *canonReq, model string) ([]b
 		if cr.ReasoningEffort != "" {
 			m["reasoning_effort"] = cr.ReasoningEffort
 		}
+	}
+	if err := applyProtocolThinking(format, cr, model, m, gc); err != nil {
+		return nil, err
 	}
 	if format == FormatGemini {
 		if cr.Temperature != nil {

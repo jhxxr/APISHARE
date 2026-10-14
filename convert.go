@@ -72,6 +72,8 @@ type canonReq struct {
 	Stop            []string
 	TopP            *float64
 	ReasoningEffort string
+	ThinkingMode    string
+	ThinkingBudget  *int
 	ConversionError error
 	ResponseTools   map[string]responseTool
 	InputText       string // system + 首条 user 消息，用于会话指纹与 token 估算
@@ -366,13 +368,19 @@ func parseGeminiBody(body []byte, pathModel string) (*canonReq, error) {
 // ---------- 上游响应解析 ----------
 
 type upstreamUsage struct {
-	Prompt     int
-	Completion int
-	InKnown    bool
-	OutKnown   bool
+	Prompt                                                           int
+	Completion                                                       int
+	InKnown                                                          bool
+	OutKnown                                                         bool
+	Source                                                           clientFormat
+	CacheRead, CacheWrite, Reasoning, ToolPrompt                     int
+	CacheReadKnown, CacheWriteKnown, ReasoningKnown, ToolPromptKnown bool
 }
 
 func (u *upstreamUsage) merge(n upstreamUsage) {
+	if n.Source != "" {
+		u.Source = n.Source
+	}
 	if n.InKnown {
 		u.Prompt = n.Prompt
 		u.InKnown = true
@@ -380,6 +388,18 @@ func (u *upstreamUsage) merge(n upstreamUsage) {
 	if n.OutKnown {
 		u.Completion = n.Completion
 		u.OutKnown = true
+	}
+	if n.CacheReadKnown {
+		u.CacheRead, u.CacheReadKnown = n.CacheRead, true
+	}
+	if n.CacheWriteKnown {
+		u.CacheWrite, u.CacheWriteKnown = n.CacheWrite, true
+	}
+	if n.ReasoningKnown {
+		u.Reasoning, u.ReasoningKnown = n.Reasoning, true
+	}
+	if n.ToolPromptKnown {
+		u.ToolPrompt, u.ToolPromptKnown = n.ToolPrompt, true
 	}
 }
 

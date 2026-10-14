@@ -107,7 +107,7 @@ APISHARE 的常规 Codex 工具调用可以通过 Responses 转入 Chat、Anthro
 | 61 | 强制 thoughtSignature 的 Gemini 工具多轮 | 待扩展签名回放缓存。原生 Gemini 保留签名；Responses 转 Gemini 不能承诺此类模型闭环，需要按 Key/上游/模型/调用绑定保存和恢复原始签名。[官方要求](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures) |
 | 62 | web_search、file_search、image_generation 和服务端 tool_search | 原生按供应商能力支持；转换路径明确拒绝。需要独立服务端工具执行桥与真实结果事件，不能只注入函数名。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/5155) |
 | 63 | JSON Schema 结构化回答、文件检索、音视频结果 | 当前不做通用跨供应商等价转换，保留原生能力。结构化回答应专门适配和验证，不能静默删 response_format/text.format。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/5518) |
-| 64 | prompt cache 控制、细分 token 与分档计费 | 待扩展。转换后的 usage 当前以基础输入/输出为主；缓存读写、推理细分及服务端工具成本没有完整承载。应先区分供应商口径再独立计价，不能简单把缓存 token 加到普通输入后重复收费。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/3990)、[口径说明](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) |
+| 64 | prompt cache 控制、细分 token 与分档计费 | 协议 usage 已补主要缓存读写、推理及 Gemini 工具提示分项，按供应商口径换算总数；TTL、工具成本和细分计价仍待扩展，内部扣费仍沿用基本计数。不能把标准化总数直接按普通输入价格收费。[后续更新](/F:/cpa/APISHARE/docs/SUB2API_ALL_FORMATS_AUDIT.md)、[口径说明](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) |
 | 65 | 空 completion 被当成静默拒绝 | 待定义检测策略。只输出推理、输出额度耗尽、真实 0 用量均可能有合法结束语义；不能把所有空回答统一切换上游。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/2556) |
 | 66 | OAuth、WebSocket、订阅额度、指纹和自动续接 | 不适用当前 API Key/HTTP 架构。若以后增加这些入口，需要单独实现续接锚点、预热、断线恢复和状态隔离，不能直接移植订阅账号逻辑。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/2098) |
 | 67 | Azure 旧版 deployment/api-version 和专有接口 | 需要专有 URL/鉴权适配；当前标准 OpenAI URL 与自定义请求头不能代表所有 Azure 接口版本都已支持。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/1292) |
@@ -121,4 +121,4 @@ DeepSeek 等 Chat-only 上游应使用显式 Chat 配置，Codex 保持 Response
 
 原生压缩只负责路由和完整传递。压缩结果中的保留消息、工具、reasoning 和 compaction 应作为完整窗口继续发送，不能只截取一个 compaction item。带加密状态的会话需要保持提供商兼容性；普通 Chat 转换没有解密或迁移这类状态的能力。
 
-恢复运行验证时，应优先执行新的 33 个回归函数及原有协议矩阵，再核对 Codex 的长任务：多文件读写、并行工具、补丁、失败后修正、取消后重发、图片工具结果和压缩后继续对话。真实模型是否正确调用 apply_patch、多轮推理质量和上游额度限制需要单独观察；静态检查不能替代这些结果。
+恢复运行验证时，应优先执行本报告的 33 个回归函数、后续全格式回归及原有协议矩阵，再核对 Codex 的长任务：多文件读写、并行工具、补丁、失败后修正、取消后重发、图片工具结果和压缩后继续对话。真实模型是否正确调用 apply_patch、多轮推理质量和上游额度限制需要单独观察；静态检查不能替代这些结果。

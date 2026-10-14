@@ -133,7 +133,7 @@ func TestFormatsAuditGeminiSamplingAndNativeOnlySettings(t *testing.T) {
 	if err != nil || request["top_p"] != json.Number("0.7") || str(array(request["stop"])[0]) != "END" {
 		t.Fatalf("sampling conversion: %s / %v", wire, err)
 	}
-	for _, cfg := range []string{`"thinkingConfig":{"thinkingBudget":1024}`, `"candidateCount":2`, `"topK":40`, `"responseMimeType":"application/json"`} {
+	for _, cfg := range []string{`"thinkingConfig":{"includeThoughts":true}`, `"candidateCount":2`, `"topK":40`, `"responseMimeType":"application/json"`} {
 		cr, err := parseClientRequest(FormatGemini, []byte(`{"contents":[{"parts":[{"text":"hello"}]}],"generationConfig":{`+cfg+`}}`), "alias")
 		if err != nil || cr.ConversionError == nil {
 			t.Fatalf("unsupported setting silently dropped: %s", cfg)
