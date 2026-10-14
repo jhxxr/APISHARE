@@ -1,49 +1,39 @@
 package main
 
-// Keep provider counters for the existing billing path. Normalize totals only
-// when representing usage in another protocol; cache prices require a separate
-// pricing policy rather than charging all normalized input at the full rate.
+// Responses and billing share the same disjoint token categories. Raw provider
+// counters remain available, but totals must follow each provider's semantics.
 func renderProtocolUsage(target clientFormat, usage upstreamUsage) map[string]any {
-	input, output := usage.Prompt, usage.Completion
-	if usage.Source == FormatAnthropic {
-		input += usage.CacheRead + usage.CacheWrite
-	}
-	if usage.Source == FormatGemini {
-		input += usage.ToolPrompt
-		output += usage.Reasoning
-	}
+	counts := normalizeBillingUsage(usage)
+	input, output := counts.inputTotal(), counts.outputTotal()
 	switch target {
 	case FormatAnthropic:
-		uncached := input - usage.CacheRead - usage.CacheWrite
-		if uncached < 0 {
-			uncached = 0
-		}
+		uncached := counts.Input + counts.ToolPrompt
 		out := map[string]any{"input_tokens": uncached, "output_tokens": output}
 		if usage.CacheReadKnown {
-			out["cache_read_input_tokens"] = usage.CacheRead
+			out["cache_read_input_tokens"] = counts.CacheRead
 		}
-		if usage.CacheWriteKnown {
-			out["cache_creation_input_tokens"] = usage.CacheWrite
+		if usage.CacheWriteKnown || usage.CacheWrite5mKnown || usage.CacheWrite1hKnown {
+			out["cache_creation_input_tokens"] = counts.CacheWrite
+		}
+		if usage.CacheWrite5mKnown || usage.CacheWrite1hKnown {
+			out["cache_creation"] = map[string]any{"ephemeral_5m_input_tokens": counts.CacheWrite5m, "ephemeral_1h_input_tokens": counts.CacheWrite1h}
 		}
 		return out
 	case FormatGemini:
 		prompt := input
 		if usage.Source == FormatGemini {
-			prompt -= usage.ToolPrompt
+			prompt -= counts.ToolPrompt
 		}
-		candidates := output - usage.Reasoning
-		if candidates < 0 {
-			candidates = 0
-		}
+		candidates := counts.Output
 		out := map[string]any{"promptTokenCount": prompt, "candidatesTokenCount": candidates, "totalTokenCount": input + output}
 		if usage.ToolPromptKnown {
-			out["toolUsePromptTokenCount"] = usage.ToolPrompt
+			out["toolUsePromptTokenCount"] = counts.ToolPrompt
 		}
 		if usage.CacheReadKnown {
-			out["cachedContentTokenCount"] = usage.CacheRead
+			out["cachedContentTokenCount"] = counts.CacheRead
 		}
 		if usage.ReasoningKnown {
-			out["thoughtsTokenCount"] = usage.Reasoning
+			out["thoughtsTokenCount"] = counts.Reasoning
 		}
 		return out
 	default:
@@ -56,18 +46,18 @@ func renderProtocolUsage(target clientFormat, usage upstreamUsage) map[string]an
 		out := map[string]any{in: input, completion: output, total: input + output}
 		detail := map[string]any{}
 		if usage.CacheReadKnown {
-			detail["cached_tokens"] = usage.CacheRead
+			detail["cached_tokens"] = counts.CacheRead
 		}
-		if usage.CacheWriteKnown {
+		if usage.CacheWriteKnown || usage.CacheWrite5mKnown || usage.CacheWrite1hKnown {
 			// Compatible gateways use this extension; it is not an official
 			// OpenAI cache-write billing category.
-			detail["cache_creation_tokens"] = usage.CacheWrite
+			detail["cache_creation_tokens"] = counts.CacheWrite
 		}
 		if len(detail) > 0 {
 			out[inputDetail] = detail
 		}
 		if usage.ReasoningKnown {
-			out[outputDetail] = map[string]any{"reasoning_tokens": usage.Reasoning}
+			out[outputDetail] = map[string]any{"reasoning_tokens": counts.Reasoning}
 		}
 		return out
 	}

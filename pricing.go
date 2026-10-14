@@ -22,9 +22,11 @@ import (
 const defaultAutoPricingURL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 
 const pricingRefreshInterval = 24 * time.Hour
+const pricingCacheSchemaVersion = "2"
 
 // 内置兜底价格表（USD/1M tokens）：仅在官方价格库不可用且无手动覆盖时使用。
 var builtInPricing = map[string]Price{
+	"deepseek-flash":            deepseekFlashFallbackPrice(),
 	"gpt-4o":                    {In: 2.5, Out: 10},
 	"gpt-4o-mini":               {In: 0.15, Out: 0.6},
 	"gpt-4.1":                   {In: 2, Out: 8},
@@ -35,6 +37,25 @@ var builtInPricing = map[string]Price{
 	"claude-opus-4-20250514":    {In: 15, Out: 75},
 	"claude-3-5-haiku-20241022": {In: 0.8, Out: 4},
 	"glm-4.6":                   {In: 0.6, Out: 2.2},
+}
+
+// Snapshot of DeepSeek's peak rates, USD/1M tokens, checked 2026-10-14:
+// https://api-docs.deepseek.com/quick_start/pricing/
+// Configured and synchronized prices take precedence; off-peak scheduling is
+// not inferred by the gateway's fixed-rate billing policy.
+func deepseekFlashFallbackPrice() Price {
+	cacheRead := 0.006
+	return Price{In: 0.3, Out: 1.2, CacheRead: &cacheRead}
+}
+
+// All DeepSeek Flash names share one billing rate by administrator policy.
+// This changes price selection only, never routing or quota-pool identity.
+func canonicalPricingModel(model string) string {
+	name := strings.ToLower(model)
+	if strings.Contains(name, "deepseek") && strings.Contains(name, "flash") {
+		return "deepseek-flash"
+	}
+	return model
 }
 
 // 官方价格缓存（内存），并持久化到 settings 表（重启离线也可用）。
@@ -52,6 +73,11 @@ func loadAutoPricingCache() {
 		var data map[string]Price
 		if json.Unmarshal([]byte(blob), &data) == nil && len(data) > 0 {
 			at, _ := settingsGet("auto_pricing_fetched_at")
+			if version, _ := settingsGet("auto_pricing_schema_version"); version != pricingCacheSchemaVersion {
+				// Pre-upgrade snapshots discarded cache prices. Keep base prices
+				// available offline, but schedule a refresh immediately on startup.
+				at = ""
+			}
 			autoPricing.Lock()
 			autoPricing.data = data
 			autoPricing.fetchedAt = at
@@ -81,8 +107,12 @@ func refreshAutoPricing() (int, error) {
 
 	// LiteLLM 原始结构：{ "模型名": { "input_cost_per_token": 2.5e-6, "output_cost_per_token": 1e-5, ... } }
 	var src map[string]struct {
-		InputCostPerToken  *float64 `json:"input_cost_per_token"`
-		OutputCostPerToken *float64 `json:"output_cost_per_token"`
+		InputCostPerToken        *float64 `json:"input_cost_per_token"`
+		OutputCostPerToken       *float64 `json:"output_cost_per_token"`
+		CacheReadCostPerToken    *float64 `json:"cache_read_input_token_cost"`
+		CacheWriteCostPerToken   *float64 `json:"cache_creation_input_token_cost"`
+		CacheWrite1hCostPerToken *float64 `json:"cache_creation_input_token_cost_above_1hr"`
+		ReasoningCostPerToken    *float64 `json:"output_cost_per_reasoning_token"`
 	}
 	if err := json.Unmarshal(raw, &src); err != nil {
 		return 0, err
@@ -102,6 +132,13 @@ func refreshAutoPricing() (int, error) {
 		p := Price{In: *e.InputCostPerToken * 1e6}
 		if e.OutputCostPerToken != nil {
 			p.Out = *e.OutputCostPerToken * 1e6
+		}
+		p.CacheRead = ratePerMillion(e.CacheReadCostPerToken)
+		p.CacheWrite = ratePerMillion(e.CacheWriteCostPerToken)
+		p.CacheWrite1h = ratePerMillion(e.CacheWrite1hCostPerToken)
+		p.Reasoning = ratePerMillion(e.ReasoningCostPerToken)
+		if !validPrice(p) {
+			continue
 		}
 		byFull[key] = p
 		if name, tier := normalizePricingKey(key); name != "" {
@@ -129,9 +166,18 @@ func refreshAutoPricing() (int, error) {
 	blob, _ := json.Marshal(byFull)
 	_ = settingsSet("auto_pricing_json", string(blob))
 	_ = settingsSet("auto_pricing_fetched_at", fetchedAt)
+	_ = settingsSet("auto_pricing_schema_version", pricingCacheSchemaVersion)
 
 	log.Printf("[pricing] official prices synced: %d models from %s", len(byFull), url)
 	return len(byFull), nil
+}
+
+func ratePerMillion(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	rate := *value * 1e6
+	return &rate
 }
 
 // ---------- 键名归一化 ----------
@@ -238,35 +284,50 @@ func lookupAutoPrice(data map[string]Price, model string) (Price, bool) {
 
 // lookupPrice 返回某模型的有效单价与来源。
 func lookupPrice(model string) (Price, string) {
+	p, source, _ := lookupRelayPrice(model, "")
+	return p, source
+}
+
+// Prefer a matched client-model price, then the actual upstream model, before
+// applying the global default. Explicit free model rates remain authoritative.
+func lookupRelayPrice(model, upstreamModel string) (Price, string, string) {
 	s := getSettings()
+	autoPricing.RLock()
+	defer autoPricing.RUnlock()
+	model = canonicalPricingModel(model)
+	upstreamModel = canonicalPricingModel(upstreamModel)
+	for i, candidate := range []string{model, upstreamModel} {
+		if candidate == "" || (i == 1 && candidate == model) {
+			continue
+		}
+		if p, source, ok := lookupModelPrice(s, autoPricing.data, candidate); ok {
+			return p, source, candidate
+		}
+	}
+	if p, ok := s.Pricing["default"]; ok {
+		return p, "default", "default"
+	}
+	return Price{}, "none", ""
+}
+
+func lookupModelPrice(s AppSettings, data map[string]Price, model string) (Price, string, bool) {
 	if p, ok := s.Pricing[model]; ok {
-		return p, "override"
+		return p, "override", true
 	}
 	if s.AutoPricingEnabled {
-		autoPricing.RLock()
-		data, fetchedAt := autoPricing.data, autoPricing.fetchedAt
-		autoPricing.RUnlock()
 		if p, ok := lookupAutoPrice(data, model); ok {
-			_ = fetchedAt
-			return p, "official"
+			return p, "official", true
 		}
 	}
 	if p, ok := builtInPricing[model]; ok {
-		return p, "builtin"
+		return p, "builtin", true
 	}
-	if p, ok := s.Pricing["default"]; ok {
-		return p, "default"
-	}
-	return Price{}, "none"
+	return Price{}, "", false
 }
 
 func priceFor(model string, prompt, completion int) float64 {
 	p, _ := lookupPrice(model)
-	cost := (float64(prompt)*p.In + float64(completion)*p.Out) / 1e6
-	if cost != cost || cost > 1e12 { // NaN / Inf 防御
-		return 0
-	}
-	return cost
+	return costForUsage(billingUsage{Input: nonnegativeTokens(prompt), Output: nonnegativeTokens(completion)}, p).Total
 }
 
 // pricingRefresherLoop 启动时按需刷新（超过 24h 或为空），此后每小时检查一次。

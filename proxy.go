@@ -261,12 +261,16 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 		if !info.OutKnown {
 			completion = estimateTokensModel(task.model, info.OutputText.String())
 		}
-		cost := priceFor(task.model, prompt, completion)
-		if cost > 0 {
-			_, independent := ak.ModelQuotas[task.model]
-			if err := dbChargeKey(ak.ID, task.model, cost, independent); err != nil {
-				log.Printf("[billing] key_id=%d model=%s: %v", ak.ID, task.model, err)
-			}
+		reported := info.protocolUsage()
+		usage := reported
+		usage.Prompt, usage.Completion = prompt, completion
+		counts := normalizeBillingUsage(usage)
+		price, priceSource, pricingModel := lookupRelayPrice(task.model, info.UpstreamModel)
+		cost := costForUsage(counts, price)
+		_, independent := ak.ModelQuotas[task.model]
+		quotaPool := "shared"
+		if independent {
+			quotaPool = "independent"
 		}
 		logStatus := info.Status
 		logError := ""
@@ -275,13 +279,17 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 			logStatus = http.StatusBadGateway
 			logError = "stream interrupted: " + lastErr.Error()
 		}
-		dbInsertLog(&CallLog{
+		entry := &CallLog{
 			KeyID: ak.ID, KeyName: ak.Name,
 			UpstreamID: info.UpstreamID, UpstreamName: info.UpstreamName,
 			Model: task.model, Endpoint: string(task.format),
-			PromptTokens: prompt, CompletionTokens: completion,
-			CostUSD: cost, Status: logStatus, LatencyMS: info.LatencyMS, Error: logError,
-		})
+			PromptTokens: counts.inputTotal(), CompletionTokens: counts.outputTotal(),
+			CostUSD: cost.Total, Status: logStatus, LatencyMS: info.LatencyMS, Error: logError,
+			Billing: &billingDetails{Source: usage.Source, Reported: reported, Usage: counts, Cost: cost, Price: price, PriceSource: priceSource, PricingModel: pricingModel, UpstreamModel: info.UpstreamModel, QuotaPool: quotaPool},
+		}
+		if err := dbRecordBilledCall(entry, independent); err != nil {
+			log.Printf("[billing] key_id=%d model=%s: receipt and debit rolled back: %v", ak.ID, task.model, err)
+		}
 		if lastErr != nil {
 			log.Printf("[relay] key=%s model=%s upstream=%s finished with error: %v",
 				ak.Name, task.model, info.UpstreamName, lastErr)
@@ -314,6 +322,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	info.UpstreamModel = upModel
 	replayScope := responseReplayScope{task.apiKeyID, up.ID, task.model, upModel}
 	wireFormat := up.wireFormat(task.format)
+	info.Usage.Source = wireFormat
 	native := wireFormat == task.format || task.nativeOnly
 	var effortLevels []string
 	// A fully parsed request without an effort field needs neither catalog
@@ -607,16 +616,14 @@ func recordNativeEvent(format clientFormat, payload string, info *relayInfo) {
 		return
 	}
 	var delta string
-	var u upstreamUsage
 	if format == FormatOpenAIResponse {
-		delta, u = parseResponsesSSEObject(j)
+		delta, _ = parseResponsesSSEObject(j)
 	} else {
-		delta, u = parseUpstreamSSEObject(string(format.nativeUpstreamType()), j)
+		delta, _ = parseUpstreamSSEObject(string(format.nativeUpstreamType()), j)
 	}
 	if delta != "" {
 		info.OutputText.WriteString(delta)
 	}
-	info.mergeUsage(u)
 	// Presence, rather than a positive value, distinguishes real zero usage from missing usage.
 	usage := object(j["usage"])
 	if format == FormatGemini {

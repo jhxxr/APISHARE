@@ -62,31 +62,59 @@ func readUsage(j map[string]any, format clientFormat) upstreamUsage {
 	if format == FormatGemini {
 		in, out = "promptTokenCount", "candidatesTokenCount"
 	}
-	if v, ok := j[in]; ok {
-		u.Prompt = intFromAny(v)
+	if format == FormatOpenAIResponse {
+		if j[in] == nil {
+			in = "prompt_tokens"
+		}
+		if j[out] == nil {
+			out = "completion_tokens"
+		}
+	}
+	if count, ok := protocolTokenCount(j[in]); ok {
+		u.Prompt = count
 		u.InKnown = true
 	}
-	if v, ok := j[out]; ok {
-		u.Completion = intFromAny(v)
+	if count, ok := protocolTokenCount(j[out]); ok {
+		u.Completion = count
 		u.OutKnown = true
 	}
 	readDetail := func(source map[string]any, field string, value *int, known *bool) {
-		if raw, exists := source[field]; exists && raw != nil {
-			*value, *known = intFromAny(raw), true
+		if count, valid := protocolTokenCount(source[field]); valid {
+			*value, *known = count, true
 		}
 	}
 	switch format {
 	case FormatAnthropic:
+		readDetail(j, "prompt_tokens", &u.PromptTotalAlias, &u.PromptTotalAliasKnown)
+		readDetail(j, "prompt_cache_miss_tokens", &u.PromptMissAlias, &u.PromptMissAliasKnown)
 		readDetail(j, "cache_read_input_tokens", &u.CacheRead, &u.CacheReadKnown)
 		readDetail(j, "cache_creation_input_tokens", &u.CacheWrite, &u.CacheWriteKnown)
+		readDetail(object(j["cache_creation"]), "ephemeral_5m_input_tokens", &u.CacheWrite5m, &u.CacheWrite5mKnown)
+		readDetail(object(j["cache_creation"]), "ephemeral_1h_input_tokens", &u.CacheWrite1h, &u.CacheWrite1hKnown)
+		for _, candidate := range []any{j["cached_tokens"], object(j["prompt_tokens_details"])["cached_tokens"], j["prompt_cache_hit_tokens"]} {
+			if !u.CacheReadKnown {
+				if count, valid := protocolTokenCount(candidate); valid {
+					u.CacheRead, u.CacheReadKnown = count, true
+				}
+			}
+		}
+		u.InKnown = u.InKnown || u.PromptTotalAliasKnown || u.PromptMissAliasKnown
 	case FormatGemini:
+		readDetail(j, "totalTokenCount", &u.Total, &u.TotalKnown)
 		readDetail(j, "cachedContentTokenCount", &u.CacheRead, &u.CacheReadKnown)
 		readDetail(j, "thoughtsTokenCount", &u.Reasoning, &u.ReasoningKnown)
 		readDetail(j, "toolUsePromptTokenCount", &u.ToolPrompt, &u.ToolPromptKnown)
 	default:
+		readDetail(j, "total_tokens", &u.Total, &u.TotalKnown)
 		inputDetail, outputDetail := "prompt_tokens_details", "completion_tokens_details"
 		if format == FormatOpenAIResponse {
 			inputDetail, outputDetail = "input_tokens_details", "output_tokens_details"
+			if object(j[inputDetail]) == nil {
+				inputDetail = "prompt_tokens_details"
+			}
+			if object(j[outputDetail]) == nil {
+				outputDetail = "completion_tokens_details"
+			}
 		}
 		readDetail(object(j[inputDetail]), "cached_tokens", &u.CacheRead, &u.CacheReadKnown)
 		readDetail(object(j[inputDetail]), "cache_creation_tokens", &u.CacheWrite, &u.CacheWriteKnown)
@@ -94,6 +122,21 @@ func readUsage(j map[string]any, format clientFormat) upstreamUsage {
 			readDetail(object(j[inputDetail]), "cache_write_tokens", &u.CacheWrite, &u.CacheWriteKnown)
 		}
 		readDetail(object(j[outputDetail]), "reasoning_tokens", &u.Reasoning, &u.ReasoningKnown)
+		for _, candidate := range []any{j["cached_tokens"], j["prompt_cache_hit_tokens"]} {
+			if !u.CacheReadKnown {
+				if count, valid := protocolTokenCount(candidate); valid {
+					u.CacheRead, u.CacheReadKnown = count, true
+				}
+			}
+		}
+		if !u.CacheWriteKnown {
+			readDetail(j, "cache_creation_input_tokens", &u.CacheWrite, &u.CacheWriteKnown)
+		}
+		if !u.InKnown && u.CacheReadKnown {
+			if miss, valid := protocolTokenCount(j["prompt_cache_miss_tokens"]); valid {
+				u.Prompt, u.InKnown = miss+u.CacheRead, true
+			}
+		}
 	}
 	return u
 }

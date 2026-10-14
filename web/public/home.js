@@ -3,7 +3,13 @@ const $ = id => document.getElementById(id);
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 const fmt = value => Number(value || 0).toLocaleString("zh-CN");
 const compact = value => { value=Number(value||0);return value>=1e8?(value/1e8).toFixed(1)+"亿":value>=1e6?(value/1e6).toFixed(1)+"M":value>=1e4?(value/1e4).toFixed(1)+"万":fmt(value); };
-const money = value => "$"+Number(value||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:Number(value)>0&&Number(value)<1?4:2});
+const money = value => {
+  const amount=Number(value||0), absolute=Math.abs(amount);
+  if(!Number.isFinite(amount))return "—";
+  if(absolute>0&&absolute<1e-10)return "$"+amount.toExponential(2);
+  const digits=absolute>0&&absolute<0.0001?Math.min(10,Math.max(4,Math.ceil(-Math.log10(absolute))+2)):absolute>0&&absolute<1?4:2;
+  return "$"+amount.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:digits});
+};
 const rate = value => value===null||value===undefined?"—":Number(value).toFixed(2)+"%";
 const svg = name => '<svg class="icon" aria-hidden="true"><use href="#'+name+'"/></svg>';
 const tokens = value => Number(value.prompt_tokens||0)+Number(value.completion_tokens||0);

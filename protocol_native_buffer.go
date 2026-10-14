@@ -79,9 +79,19 @@ func mergeNativeFields(dst, src map[string]any) {
 	}
 }
 
-func mergeNativeUsage(dst map[string]any, field string, value any) {
+func mergeNativeUsage(dst map[string]any, field string, value any, format clientFormat) {
 	if update := object(value); update != nil {
 		usage := copyProtocolObject(object(dst[field]))
+		_, hasInput := protocolTokenCount(update["input_tokens"])
+		if format == FormatAnthropic && hasInput && update["prompt_tokens"] == nil && update["prompt_cache_miss_tokens"] == nil {
+			delete(usage, "prompt_tokens")
+			delete(usage, "prompt_cache_miss_tokens")
+		}
+		_, hasPrompt := protocolTokenCount(update["prompt_tokens"])
+		_, hasOutput := protocolTokenCount(update["completion_tokens"])
+		if format == FormatOpenAIChat && (hasPrompt || hasOutput) && update["total_tokens"] == nil {
+			delete(usage, "total_tokens")
+		}
 		mergeNativeFields(usage, update)
 		dst[field] = usage
 	}
@@ -114,7 +124,7 @@ func (b *nativeProtocolBuffer) chat(event map[string]any) error {
 			b.root[field] = value
 		}
 	}
-	mergeNativeUsage(b.root, "usage", event["usage"])
+	mergeNativeUsage(b.root, "usage", event["usage"], b.format)
 	for _, raw := range array(event["choices"]) {
 		choice := object(raw)
 		index, err := nativeStreamIndex(choice["index"])
@@ -236,7 +246,7 @@ func (b *nativeProtocolBuffer) anthropic(event map[string]any) error {
 		b.closed[index] = true
 	case "message_delta":
 		mergeNativeFields(b.root, object(event["delta"]))
-		mergeNativeUsage(b.root, "usage", event["usage"])
+		mergeNativeUsage(b.root, "usage", event["usage"], b.format)
 	}
 	return nil
 }
@@ -247,7 +257,7 @@ func (b *nativeProtocolBuffer) gemini(event map[string]any) error {
 			b.root[field] = value
 		}
 	}
-	mergeNativeUsage(b.root, "usageMetadata", event["usageMetadata"])
+	mergeNativeUsage(b.root, "usageMetadata", event["usageMetadata"], b.format)
 	for _, raw := range array(event["candidates"]) {
 		candidate := object(raw)
 		index, err := nativeStreamIndex(candidate["index"])

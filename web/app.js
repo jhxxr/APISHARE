@@ -3,7 +3,13 @@ const TOKEN_KEY = "apishare_token";
 const $ = (id) => document.getElementById(id);
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
 const icon = (name) => '<svg class="icon" aria-hidden="true"><use href="#i-' + name + '"/></svg>';
-const fmtUSD = (value) => "$" + Number(value || 0).toFixed(4);
+const fmtUSD = (value) => {
+  const amount = Number(value || 0), absolute = Math.abs(amount);
+  if (!Number.isFinite(amount)) return "—";
+  if (absolute > 0 && absolute < 1e-10) return "$" + amount.toExponential(2);
+  const digits = absolute > 0 && absolute < 0.0001 ? Math.min(10, Math.max(4, Math.ceil(-Math.log10(absolute)) + 2)) : 4;
+  return "$" + amount.toFixed(digits);
+};
 const fmtTime = (value) => {
   const date = new Date(value);
   if (!value || Number.isNaN(date.getTime())) return (value || "").replace("T", " ").slice(0, 19);
@@ -729,7 +735,30 @@ async function loadLogs(page = 1) {
 function renderLogs() {
   const query = $("logSearch").value.trim().toLowerCase();
   const logs = logsCache.filter((log) => [log.model, log.key_name, log.upstream_name, log.error].join(" ").toLowerCase().includes(query));
-  $("logsTable").querySelector("tbody").innerHTML = logs.map((log) => '<tr><td class="timestamp">' + esc(fmtTime(log.created_at)) + '</td><td class="cell-stack"><strong>' + esc(log.key_name) + '</strong><small>' + esc(log.upstream_name || "未分配") + '</small></td><td><code>' + esc(log.model) + '</code></td><td>' + statusBadge(log.status) + '</td><td><code>' + number(log.prompt_tokens) + " / " + number(log.completion_tokens) + '</code></td><td><code>' + fmtUSD(log.cost_usd) + '</code></td><td><code>' + number(log.latency_ms) + ' ms</code></td><td class="log-error">' + (log.error ? '<details><summary>查看错误</summary><p>' + esc(log.error) + '</p></details>' : '<span class="muted">—</span>') + '</td></tr>').join("") || emptyRow(8, query ? "本页没有匹配的日志" : "还没有调用记录", query ? "搜索仅作用于当前页，可以翻页继续查找。" : "网关接收到请求后，会在这里记录状态与用量。", "", "", "activity");
+  $("logsTable").querySelector("tbody").innerHTML = logs.map((log) => '<tr><td class="timestamp">' + esc(fmtTime(log.created_at)) + '</td><td class="cell-stack"><strong>' + esc(log.key_name) + '</strong><small>' + esc(log.upstream_name || "未分配") + '</small></td><td><code>' + esc(log.model) + '</code></td><td>' + statusBadge(log.status) + '</td><td><code>' + number(log.prompt_tokens) + " / " + number(log.completion_tokens) + '</code>' + logUsageDetails(log) + '</td><td><code>' + fmtUSD(log.cost_usd) + '</code>' + logCostDetails(log) + '</td><td><code>' + number(log.latency_ms) + ' ms</code></td><td class="log-error">' + (log.error ? '<details><summary>查看错误</summary><p>' + esc(log.error) + '</p></details>' : '<span class="muted">—</span>') + '</td></tr>').join("") || emptyRow(8, query ? "本页没有匹配的日志" : "还没有调用记录", query ? "搜索仅作用于当前页，可以翻页继续查找。" : "网关接收到请求后，会在这里记录状态与用量。", "", "", "activity");
+}
+
+function logUsageDetails(log) {
+  const usage = log.billing?.usage;
+  if (!usage) return "";
+  const rows = [["普通输入", usage.input], ["缓存读取", usage.cache_read], ["缓存创建", usage.cache_write], ["其中 1 小时缓存", usage.cache_write_1h], ["工具提示", usage.tool_prompt], ["正文输出", usage.output], ["推理", usage.reasoning]];
+  const estimate = usage.estimated_input || usage.estimated_output ? '<small>部分用量为估算</small>' : "";
+  return '<details><summary>用量明细</summary><span class="cell-stack">' + rows.map(([name, count]) => '<small>' + name + '：' + number(count || 0) + '</small>').join("") + estimate + '</span></details>';
+}
+
+function logCostDetails(log) {
+  const cost = log.billing?.cost;
+  if (!cost) return "";
+  const rows = [["普通输入", cost.input], ["缓存读取", cost.cache_read], ["缓存创建", cost.cache_write], ["工具提示", cost.tool_prompt], ["正文输出", cost.output], ["推理", cost.reasoning]];
+  const billing = log.billing;
+  const sources = { override: "手动覆盖", official: "官方定价", builtin: "内置兜底", default: "默认兜底", none: "未匹配价格" };
+  const source = '<small>价格来源：' + esc(sources[billing.price_source] || billing.price_source || "未知") + '</small>';
+  const model = billing.pricing_model ? '<small>计价模型：' + esc(billing.pricing_model) + '</small>' : "";
+  const upstream = billing.upstream_model ? '<small>上游模型：' + esc(billing.upstream_model) + '</small>' : "";
+  const pool = billing.quota_pool ? '<small>扣费额度：' + (billing.quota_pool === "independent" ? '独立额度（' + esc(log.model) + '）' : "共享额度") + '</small>' : "";
+  const unpriced = billing.price_source === "none" || (billing.price_source === "default" && Object.values(billing.price || {}).every(value => value == null || value === 0));
+  const notice = unpriced ? '<small>未匹配模型单价，当前按零价记录，请在设置中配置价格。</small>' : "";
+  return '<details><summary>费用明细</summary><span class="cell-stack">' + rows.map(([name, value]) => '<small>' + name + '：' + fmtUSD(value || 0) + '</small>').join("") + source + model + upstream + pool + notice + '<small>按请求当时的价格计算</small></span></details>';
 }
 
 /* Settings */
@@ -765,7 +794,11 @@ async function lookupPrice() {
   try {
     const result = await api("api/settings/pricing/lookup?model=" + encodeURIComponent(model));
     const sources = { override: "手动覆盖", official: "官方定价", builtin: "内置兜底", default: "default 兜底", none: "未找到" };
-    $("lookupResult").textContent = result.model + " · 输入 $" + result.price.in + " / 1M · 输出 $" + result.price.out + " / 1M · 来源：" + (sources[result.source] || result.source);
+    const price = result.price;
+    const cacheRead = price.cache_read ?? price.in;
+    const cacheWrite = price.cache_write ?? price.in;
+    const model = result.pricing_model && result.pricing_model !== result.model ? result.model + "（按 " + result.pricing_model + " 计价）" : result.model;
+    $("lookupResult").textContent = model + " · 输入 $" + price.in + " · 输出 $" + price.out + " · 缓存读取 $" + cacheRead + " · 缓存创建 $" + cacheWrite + " · 1 小时缓存创建 $" + (price.cache_write_1h ?? cacheWrite) + " · 推理 $" + (price.reasoning ?? price.out) + " / 1M tokens · 来源：" + (sources[result.source] || result.source);
   } catch (error) { $("lookupResult").textContent = "查询失败：" + error.message; }
 }
 async function saveSettings(event) {
@@ -774,8 +807,17 @@ async function saveSettings(event) {
   let pricing;
   try {
     pricing = JSON.parse($("setPricing").value);
-    if (!pricing || Array.isArray(pricing) || typeof pricing !== "object" || !Object.keys(pricing).length || Object.values(pricing).some((item) => !item || typeof item.in !== "number" || typeof item.out !== "number" || item.in < 0 || item.out < 0)) throw new Error();
-  } catch { setPricingError("请填写价格 JSON 对象，每个模型需包含非负的 in 与 out 单价。"); $("setPricing").focus(); return false; }
+    const validRate = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0;
+    if (!pricing || Array.isArray(pricing) || typeof pricing !== "object" || !Object.keys(pricing).length) throw new Error("请填写模型价格 JSON 对象。");
+    for (const [model, item] of Object.entries(pricing)) {
+      if (!item || Array.isArray(item) || typeof item !== "object" || !validRate(item.in) || !validRate(item.out)) throw new Error(model + "：in 和 out 必须是有限的非负单价。");
+      const allowedFields = ["in", "out", "cache_read", "cache_write", "cache_write_1h", "reasoning"];
+      if (Object.keys(item).some((field) => !allowedFields.includes(field))) throw new Error(model + "：包含不支持的价格字段，请检查拼写。");
+      for (const field of ["cache_read", "cache_write", "cache_write_1h", "reasoning"]) {
+        if (item[field] != null && !validRate(item[field])) throw new Error(model + "：" + field + " 必须是有限的非负单价，或留空使用默认单价。");
+      }
+    }
+  } catch (error) { setPricingError(error.message || "价格 JSON 无效。"); $("setPricing").focus(); return false; }
   setPricingError("");
   const button = event.currentTarget.querySelector('[type="submit"]');
   setBusy(button, true, "正在保存…");

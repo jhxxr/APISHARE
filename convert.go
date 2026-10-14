@@ -375,9 +375,22 @@ type upstreamUsage struct {
 	Source                                                           clientFormat
 	CacheRead, CacheWrite, Reasoning, ToolPrompt                     int
 	CacheReadKnown, CacheWriteKnown, ReasoningKnown, ToolPromptKnown bool
+	Total                                                            int
+	TotalKnown                                                       bool
+	CacheWrite5m, CacheWrite1h                                       int
+	CacheWrite5mKnown, CacheWrite1hKnown                             bool
+	PromptTotalAlias, PromptMissAlias                                int
+	PromptTotalAliasKnown, PromptMissAliasKnown                      bool
 }
 
 func (u *upstreamUsage) merge(n upstreamUsage) {
+	if n.Source == FormatAnthropic && n.InKnown && !n.PromptTotalAliasKnown && !n.PromptMissAliasKnown {
+		// A later independent input bucket supersedes earlier provider totals.
+		u.PromptTotalAliasKnown, u.PromptMissAliasKnown = false, false
+	}
+	if (n.Source == FormatOpenAIChat || n.Source == FormatOpenAIResponse) && (n.InKnown || n.OutKnown) && !n.TotalKnown {
+		u.TotalKnown = false
+	}
 	if n.Source != "" {
 		u.Source = n.Source
 	}
@@ -400,6 +413,21 @@ func (u *upstreamUsage) merge(n upstreamUsage) {
 	}
 	if n.ToolPromptKnown {
 		u.ToolPrompt, u.ToolPromptKnown = n.ToolPrompt, true
+	}
+	if n.TotalKnown {
+		u.Total, u.TotalKnown = n.Total, true
+	}
+	if n.CacheWrite5mKnown {
+		u.CacheWrite5m, u.CacheWrite5mKnown = n.CacheWrite5m, true
+	}
+	if n.CacheWrite1hKnown {
+		u.CacheWrite1h, u.CacheWrite1hKnown = n.CacheWrite1h, true
+	}
+	if n.PromptTotalAliasKnown {
+		u.PromptTotalAlias, u.PromptTotalAliasKnown = n.PromptTotalAlias, true
+	}
+	if n.PromptMissAliasKnown {
+		u.PromptMissAlias, u.PromptMissAliasKnown = n.PromptMissAlias, true
 	}
 }
 

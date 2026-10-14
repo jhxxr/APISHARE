@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -244,6 +245,9 @@ CREATE TABLE IF NOT EXISTS session_affinity (
 			return err
 		}
 	}
+	if err := migrateBillingLogSchema(); err != nil {
+		return err
+	}
 	return migrateTimestampsToBeijing()
 }
 
@@ -284,20 +288,21 @@ type Upstream struct {
 }
 
 type CallLog struct {
-	ID               int64   `json:"id"`
-	KeyID            int64   `json:"key_id"`
-	KeyName          string  `json:"key_name"`
-	UpstreamID       int64   `json:"upstream_id"`
-	UpstreamName     string  `json:"upstream_name"`
-	Model            string  `json:"model"`
-	Endpoint         string  `json:"endpoint"`
-	PromptTokens     int     `json:"prompt_tokens"`
-	CompletionTokens int     `json:"completion_tokens"`
-	CostUSD          float64 `json:"cost_usd"`
-	Status           int     `json:"status"`
-	LatencyMS        int64   `json:"latency_ms"`
-	Error            string  `json:"error"`
-	CreatedAt        string  `json:"created_at"`
+	ID               int64           `json:"id"`
+	KeyID            int64           `json:"key_id"`
+	KeyName          string          `json:"key_name"`
+	UpstreamID       int64           `json:"upstream_id"`
+	UpstreamName     string          `json:"upstream_name"`
+	Model            string          `json:"model"`
+	Endpoint         string          `json:"endpoint"`
+	PromptTokens     int             `json:"prompt_tokens"`
+	CompletionTokens int             `json:"completion_tokens"`
+	CostUSD          float64         `json:"cost_usd"`
+	Billing          *billingDetails `json:"billing,omitempty"`
+	Status           int             `json:"status"`
+	LatencyMS        int64           `json:"latency_ms"`
+	Error            string          `json:"error"`
+	CreatedAt        string          `json:"created_at"`
 }
 
 func nowStr() string { return beijingNow().Format(time.RFC3339) }
@@ -563,17 +568,33 @@ func dbDeleteUpstream(id int64) error {
 // ---------- logs ----------
 
 func dbInsertLog(l *CallLog) error {
-	_, err := db.Exec(`INSERT INTO call_logs(key_id,key_name,upstream_id,upstream_name,model,endpoint,
-		prompt_tokens,completion_tokens,cost_usd,status,latency_ms,error,created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	return insertCallLog(db, l)
+}
+
+type logExecutor interface {
+	Exec(string, ...any) (sql.Result, error)
+}
+
+func insertCallLog(executor logExecutor, l *CallLog) error {
+	billingJSON := ""
+	if l.Billing != nil {
+		encoded, err := json.Marshal(l.Billing)
+		if err != nil {
+			return err
+		}
+		billingJSON = string(encoded)
+	}
+	_, err := executor.Exec(`INSERT INTO call_logs(key_id,key_name,upstream_id,upstream_name,model,endpoint,
+		prompt_tokens,completion_tokens,cost_usd,status,latency_ms,error,created_at,billing_json)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		l.KeyID, l.KeyName, l.UpstreamID, l.UpstreamName, l.Model, l.Endpoint,
-		l.PromptTokens, l.CompletionTokens, l.CostUSD, l.Status, l.LatencyMS, l.Error, nowStr())
+		l.PromptTokens, l.CompletionTokens, l.CostUSD, l.Status, l.LatencyMS, l.Error, nowStr(), billingJSON)
 	return err
 }
 
 func dbListLogs(limit, offset int) ([]CallLog, error) {
 	rows, err := db.Query(`SELECT id,key_id,key_name,upstream_id,upstream_name,model,endpoint,
-		prompt_tokens,completion_tokens,cost_usd,status,latency_ms,error,created_at
+		prompt_tokens,completion_tokens,cost_usd,status,latency_ms,error,created_at,billing_json
 		FROM call_logs ORDER BY id DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, err
@@ -582,9 +603,13 @@ func dbListLogs(limit, offset int) ([]CallLog, error) {
 	var out []CallLog
 	for rows.Next() {
 		var l CallLog
+		var billingJSON string
 		if err := rows.Scan(&l.ID, &l.KeyID, &l.KeyName, &l.UpstreamID, &l.UpstreamName, &l.Model, &l.Endpoint,
-			&l.PromptTokens, &l.CompletionTokens, &l.CostUSD, &l.Status, &l.LatencyMS, &l.Error, &l.CreatedAt); err != nil {
+			&l.PromptTokens, &l.CompletionTokens, &l.CostUSD, &l.Status, &l.LatencyMS, &l.Error, &l.CreatedAt, &billingJSON); err != nil {
 			return nil, err
+		}
+		if billingJSON != "" {
+			_ = json.Unmarshal([]byte(billingJSON), &l.Billing)
 		}
 		out = append(out, l)
 	}
@@ -617,8 +642,35 @@ func settingsSet(k, v string) error {
 // ---------- runtime settings cache ----------
 
 type Price struct {
-	In  float64 `json:"in"`  // USD / 1M prompt tokens
-	Out float64 `json:"out"` // USD / 1M completion tokens
+	In           float64  `json:"in"`  // USD / 1M prompt tokens
+	Out          float64  `json:"out"` // USD / 1M completion tokens
+	CacheRead    *float64 `json:"cache_read,omitempty"`
+	CacheWrite   *float64 `json:"cache_write,omitempty"`
+	CacheWrite1h *float64 `json:"cache_write_1h,omitempty"`
+	Reasoning    *float64 `json:"reasoning,omitempty"`
+}
+
+func (price *Price) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 || data[0] != '{' {
+		return fmt.Errorf("model price must be an object")
+	}
+	type plainPrice Price
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode((*plainPrice)(price)); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for _, field := range []string{"in", "out"} {
+		if len(fields[field]) == 0 || bytes.Equal(bytes.TrimSpace(fields[field]), []byte("null")) {
+			return fmt.Errorf("model price requires numeric %s", field)
+		}
+	}
+	return nil
 }
 
 type AppSettings struct {

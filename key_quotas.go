@@ -84,6 +84,16 @@ func dbChargeKey(keyID int64, model string, cost float64, independent bool) erro
 		return err
 	}
 	defer tx.Rollback()
+	if err := dbChargeKeyTx(tx, keyID, model, cost, independent); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func dbChargeKeyTx(tx *sql.Tx, keyID int64, model string, cost float64, independent bool) error {
+	if math.IsNaN(cost) || math.IsInf(cost, 0) || cost < 0 {
+		return fmt.Errorf("invalid billing cost")
+	}
 	sharedCost := cost
 	if independent {
 		sharedCost = 0
@@ -102,5 +112,5 @@ func dbChargeKey(keyID int64, model string, cost float64, independent bool) erro
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }

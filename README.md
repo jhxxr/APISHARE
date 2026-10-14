@@ -319,6 +319,7 @@ Anthropic 规范 SSE 增量推送 (message_start -> content_block_delta -> messa
 ### 2. 💰 智能计费与多级配额策略
 - **计费优先级**：`后台手动覆盖价格 > LiteLLM 官方牌价库 > 网关内置兜底表 > default (0)`。
 - **准确 Usage 采集**：原生捕获 OpenAI `include_usage`、Anthropic `message_delta`、Gemini `usageMetadata` 与 Responses `response.completed`；若遇到个别不返回用量的上游，网关自动调用内置 `tiktoken-go` 进行本地分词计算。
+- **分项价格与费用明细**：普通输入、缓存读取/创建、明确的 1 小时缓存创建、正文和推理分别计算。手动价格可选 `cache_read`、`cache_write`、`cache_write_1h`、`reasoning`，缺省继承输入/输出单价，明确填 0 表示免费；自动同步保留价格库中的分项。新日志保存当次价格和费用快照，扣费与日志在同一事务提交。长上下文分档、托管工具、存储及分模态价格仍需专项适配，详见[计费边界](docs/SUB2API_BILLING_AUDIT.md)。
 - **共享池 vs 独立配额**：
   在后台可针对密钥设置基础共享额度（如 100 USD），同时对特定昂贵模型（如 `o3-mini`、`claude-3-7-sonnet`）设置专属独立额度（如 20 USD）。独立额度仅消耗自身配额，互不挤占，用尽后返回 `402 Payment Required`。
 

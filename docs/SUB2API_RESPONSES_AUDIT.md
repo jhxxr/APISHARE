@@ -107,7 +107,7 @@ APISHARE 的常规 Codex 工具调用可以通过 Responses 转入 Chat、Anthro
 | 61 | 强制 thoughtSignature 的 Gemini 工具多轮 | 待扩展签名回放缓存。原生 Gemini 保留签名；Responses 转 Gemini 不能承诺此类模型闭环，需要按 Key/上游/模型/调用绑定保存和恢复原始签名。[官方要求](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures) |
 | 62 | web_search、file_search、image_generation 和服务端 tool_search | 原生按供应商能力支持；转换路径明确拒绝。需要独立服务端工具执行桥与真实结果事件，不能只注入函数名。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/5155) |
 | 63 | JSON Schema 结构化回答、文件检索、音视频结果 | 当前不做通用跨供应商等价转换，保留原生能力。结构化回答应专门适配和验证，不能静默删 response_format/text.format。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/5518) |
-| 64 | prompt cache 控制、细分 token 与分档计费 | 协议 usage 已补主要缓存读写、推理及 Gemini 工具提示分项，按供应商口径换算总数；TTL、工具成本和细分计价仍待扩展，内部扣费仍沿用基本计数。不能把标准化总数直接按普通输入价格收费。[后续更新](/F:/cpa/APISHARE/docs/SUB2API_ALL_FORMATS_AUDIT.md)、[口径说明](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) |
+| 64 | prompt cache 控制、细分 token 与分档计费 | 主要缓存读写、推理和工具提示分桶已接入协议、计价、日志和额度，支持明确的 1 小时缓存创建；保留价格快照并原子扣费。缓存控制语义、长上下文分档及服务端工具等费用仍待扩展。[计费更新](/F:/cpa/APISHARE/docs/SUB2API_BILLING_AUDIT.md)、[口径说明](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) |
 | 65 | 空 completion 被当成静默拒绝 | 待定义检测策略。只输出推理、输出额度耗尽、真实 0 用量均可能有合法结束语义；不能把所有空回答统一切换上游。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/2556) |
 | 66 | OAuth、WebSocket、订阅额度、指纹和自动续接 | 不适用当前 API Key/HTTP 架构。若以后增加这些入口，需要单独实现续接锚点、预热、断线恢复和状态隔离，不能直接移植订阅账号逻辑。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/2098) |
 | 67 | Azure 旧版 deployment/api-version 和专有接口 | 需要专有 URL/鉴权适配；当前标准 OpenAI URL 与自定义请求头不能代表所有 Azure 接口版本都已支持。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/1292) |

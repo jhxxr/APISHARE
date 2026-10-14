@@ -38,6 +38,31 @@ func protocolFloat(value any) (float64, bool) {
 	return 0, false
 }
 
+const maxUsageTokens = 1 << 50
+
+// Invalid/null counters are unknown, while a genuine numeric zero is known.
+// Accept Go integers as well as decoded JSON so internal snapshots share the
+// same behavior; never turn fractional or negative usage into a billable count.
+func protocolTokenCount(value any) (int, bool) {
+	var number float64
+	switch value := value.(type) {
+	case int:
+		number = float64(value)
+	case int64:
+		number = float64(value)
+	default:
+		var ok bool
+		number, ok = protocolFloat(value)
+		if !ok {
+			return 0, false
+		}
+	}
+	if !(number >= 0 && number <= maxUsageTokens && number <= float64(int(^uint(0)>>1))) || number != float64(int(number)) {
+		return 0, false
+	}
+	return int(number), true
+}
+
 // Providers expose the same plaintext reasoning under several field names.
 // Prefer one representation, rather than concatenating duplicate aliases or
 // mistaking opaque encrypted details for readable text.

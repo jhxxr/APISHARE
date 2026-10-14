@@ -640,6 +640,12 @@ func registerAdminRoutes(r *gin.Engine) {
 			s.InjectStreamUsage = *req.InjectStreamUsage
 		}
 		if req.Pricing != nil && len(*req.Pricing) > 0 {
+			for model, price := range *req.Pricing {
+				if !validPrice(price) {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "模型 " + model + " 的单价必须为有限的非负数"})
+					return
+				}
+			}
 			s.Pricing = *req.Pricing
 		}
 		if req.AutoPricingEnabled != nil {
@@ -682,8 +688,8 @@ func registerAdminRoutes(r *gin.Engine) {
 			c.JSON(400, gin.H{"error": "missing model"})
 			return
 		}
-		p, src := lookupPrice(model)
-		c.JSON(200, gin.H{"model": model, "price": p, "source": src})
+		p, src, pricingModel := lookupRelayPrice(model, "")
+		c.JSON(200, gin.H{"model": model, "price": p, "source": src, "pricing_model": pricingModel})
 	})
 
 	// ---------- 静态资源（嵌入二进制） ----------
