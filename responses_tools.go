@@ -15,10 +15,10 @@ type responseTool struct {
 }
 
 func responsesFunctionName(namespace, name string) string {
-	if namespace == "" {
-		return name
+	full := name
+	if namespace != "" {
+		full = namespace + "__" + name
 	}
-	full := namespace + "__" + name
 	var safe strings.Builder
 	for _, r := range full {
 		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-' {
@@ -195,9 +195,12 @@ func lowerResponsesTools(cr *canonReq, m map[string]any) error {
 					return fmt.Errorf("function_call history is missing its ID or name")
 				}
 				arguments := str(j["arguments"])
+				if value, ok := j["arguments"].(map[string]any); ok {
+					arguments = jsonText(value)
+				}
 				if arguments == "" {
 					if j["arguments"] != nil && j["arguments"] != "" {
-						return fmt.Errorf("function_call arguments must be a JSON string")
+						return fmt.Errorf("function_call arguments must be a JSON string or object")
 					}
 					arguments = "{}"
 				}
@@ -356,8 +359,7 @@ func responsesToolItem(b responseBlock, id string) map[string]any {
 		j["type"], j["input"] = "custom_tool_call", str(args["input"])
 		delete(j, "arguments")
 	case "tool_search":
-		args := map[string]any{}
-		_ = json.Unmarshal([]byte(b.Call.Arguments), &args)
+		args, _ := decodeProtocolObject([]byte(b.Call.Arguments))
 		j["type"], j["execution"], j["arguments"] = "tool_search_call", "client", args
 		delete(j, "name")
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"container/list"
+	"strings"
 	"sync"
 	"time"
 )
@@ -94,12 +95,32 @@ func replayResponseReasoning(messages []canonMsg, scope responseReplayScope) []c
 		if msg.Role != "assistant" {
 			continue
 		}
-		for _, id := range msg.ReasoningIDs {
-			if msg.Reasoning != "" {
-				cacheResponseReasoning(scope, id, msg.Reasoning)
-			} else {
-				msg.Reasoning = lookupResponseReasoning(scope, id)
+		if len(msg.ReasoningItems) > 0 {
+			var texts []string
+			for _, item := range msg.ReasoningItems {
+				text := item.Text
+				if text != "" {
+					cacheResponseReasoning(scope, item.ID, text)
+				} else {
+					text = lookupResponseReasoning(scope, item.ID)
+				}
+				if text != "" {
+					texts = append(texts, text)
+				}
 			}
+			msg.Reasoning = strings.Join(texts, "\n")
+		} else if msg.Reasoning == "" {
+			var texts []string
+			for _, id := range msg.ReasoningIDs {
+				if text := lookupResponseReasoning(scope, id); text != "" {
+					texts = append(texts, text)
+				}
+			}
+			msg.Reasoning = strings.Join(texts, "\n")
+		} else if len(msg.ReasoningIDs) == 1 {
+			// A legacy combined span with multiple IDs cannot be attributed
+			// safely. Never cache one item's text under a different item's ID.
+			cacheResponseReasoning(scope, msg.ReasoningIDs[0], msg.Reasoning)
 		}
 		if msg.Reasoning == "" {
 			// Cache lookup takes precedence over the previous span. A miss may

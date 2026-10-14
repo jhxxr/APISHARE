@@ -1,0 +1,4483 @@
+{
+  "audit_date": "2026-10-14",
+  "repository": "https://github.com/Wei-Shaw/sub2api",
+  "source_commit": "9c2cca9e627291bc719bada3d57de23b625a4180",
+  "query": "repo:Wei-Shaw/sub2api is:issue responses",
+  "indexed_issue_count": 639,
+  "note": "Public issue title index; indexing does not establish APISHARE impact. APISHARE regression definitions were added and statically checked; neither those regressions nor the sub2api test suite were executed in this audit.",
+  "issues": [
+    {
+      "number": 72,
+      "title": "Can this sub2api let us call the api directly??",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/72",
+      "updated_at": "2026-01-08T17:39:13Z"
+    },
+    {
+      "number": 181,
+      "title": "v0.1.39登录后就session过期",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/181",
+      "updated_at": "2026-07-18T04:43:54Z"
+    },
+    {
+      "number": 400,
+      "title": "请求这个端点：/v1/chat/completions，返回404",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/400",
+      "updated_at": "2026-04-17T08:46:52Z"
+    },
+    {
+      "number": 422,
+      "title": "sub2api配置glm问题",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/422",
+      "updated_at": "2026-01-31T09:30:45Z"
+    },
+    {
+      "number": 465,
+      "title": "openclaw 空返回",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/465",
+      "updated_at": "2026-10-05T03:54:07Z"
+    },
+    {
+      "number": 498,
+      "title": "gpt5.3xhigh模式会报错",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/498",
+      "updated_at": "2026-02-24T17:16:11Z"
+    },
+    {
+      "number": 535,
+      "title": "openclaw配置codex失败返回502",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/535",
+      "updated_at": "2026-10-11T10:46:17Z"
+    },
+    {
+      "number": 575,
+      "title": "请问openai通道接入sub2api后如何接入newapi呀",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/575",
+      "updated_at": "2026-07-28T10:23:48Z"
+    },
+    {
+      "number": 593,
+      "title": "API Error: 503 {\"error\":{\"message\":\"No available accounts: no available          accounts\",\"type\":\"api_error\"},\"type\":\"error\"}",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/593",
+      "updated_at": "2026-06-01T09:21:21Z"
+    },
+    {
+      "number": 594,
+      "title": "Support OpenAI Chat Completions API as a complement to the existing Responses API",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/594",
+      "updated_at": "2026-03-20T03:15:25Z"
+    },
+    {
+      "number": 609,
+      "title": "【功能请求】支持Websocket-mode",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/609",
+      "updated_at": "2026-03-14T13:02:54Z"
+    },
+    {
+      "number": 646,
+      "title": "这个项目有没有 codex2claude 的方案?",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/646",
+      "updated_at": "2026-05-12T07:22:02Z"
+    },
+    {
+      "number": 658,
+      "title": "【Bug】OpenAI 多账号切换时报 400 invalid_encrypted_content（粘性会话切换账号后加密内容无法验证）",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/658",
+      "updated_at": "2026-03-14T11:29:08Z"
+    },
+    {
+      "number": 661,
+      "title": "是否考虑增加 responses/compact支持",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/661",
+      "updated_at": "2026-04-01T15:58:27Z"
+    },
+    {
+      "number": 683,
+      "title": "不支持标准的openai接口么不支持chat/completions 只能/responses",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/683",
+      "updated_at": "2026-03-14T13:02:07Z"
+    },
+    {
+      "number": 704,
+      "title": "Feature: Account-level weekly cost limit (weekly_cost_limit) for Anthropic accounts",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/704",
+      "updated_at": "2026-03-01T17:06:33Z"
+    },
+    {
+      "number": 752,
+      "title": "希望codex能支持新增OpenAI 1月份新出的远程压缩API/responses/compact",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/752",
+      "updated_at": "2026-03-05T12:28:20Z"
+    },
+    {
+      "number": 757,
+      "title": "和官方openai-responses 协议是否还不对齐？",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/757",
+      "updated_at": "2026-03-04T13:03:45Z"
+    },
+    {
+      "number": 763,
+      "title": "【功能请求】支持将 provider name 改为 \"OpenAI\" 以兼容 Codex 远程压缩",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/763",
+      "updated_at": "2026-03-05T12:28:14Z"
+    },
+    {
+      "number": 773,
+      "title": "unexpected status 413 Payload Too Large",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/773",
+      "updated_at": "2026-10-02T13:54:19Z"
+    },
+    {
+      "number": 805,
+      "title": "Codex Compact Error",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/805",
+      "updated_at": "2026-03-06T05:03:59Z"
+    },
+    {
+      "number": 819,
+      "title": "Responses API: metadata 字段透传导致上游 502",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/819",
+      "updated_at": "2026-07-21T18:10:23Z"
+    },
+    {
+      "number": 828,
+      "title": "回归故障：GMN 子代理 coder 路由 gpt-5.3-codex / gpt-5.4 返回 403（main 可用）",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/828",
+      "updated_at": "2026-04-16T11:45:22Z"
+    },
+    {
+      "number": 831,
+      "title": "/v1/responses 不兼容 max_output_tokens，导致 OpenClaw + gpt-5.4 请求返回 400",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/831",
+      "updated_at": "2026-03-07T13:44:41Z"
+    },
+    {
+      "number": 832,
+      "title": "提问：如何在cli开启fastmode模式",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/832",
+      "updated_at": "2026-05-15T03:26:01Z"
+    },
+    {
+      "number": 843,
+      "title": "希望能让 codex 账号加入 Anthropic 组",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/843",
+      "updated_at": "2026-05-04T16:00:16Z"
+    },
+    {
+      "number": 849,
+      "title": "Error running remote compact task",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/849",
+      "updated_at": "2026-04-24T05:45:11Z"
+    },
+    {
+      "number": 867,
+      "title": "[Bug] /v1/messages ignores stream=false — always returns SSE, breaking non-streaming Anthropic SDK clients",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/867",
+      "updated_at": "2026-03-09T07:59:11Z"
+    },
+    {
+      "number": 869,
+      "title": "unexpected status 503 Service Unavailable: Service temporarily unavailable, url: http://sub2api.*****/responses,",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/869",
+      "updated_at": "2026-03-09T07:22:52Z"
+    },
+    {
+      "number": 885,
+      "title": "/v1/chat/completions 不支持",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/885",
+      "updated_at": "2026-03-14T12:58:10Z"
+    },
+    {
+      "number": 890,
+      "title": "Insufficient account balance",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/890",
+      "updated_at": "2026-03-10T01:19:49Z"
+    },
+    {
+      "number": 919,
+      "title": "bug: Responses API string input causes 400 \"Input must be a list\" on Codex OAuth accounts",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/919",
+      "updated_at": "2026-03-11T00:54:40Z"
+    },
+    {
+      "number": 943,
+      "title": "使用 OPENCLAW 时，发起请求后前端会先显示 503 错误，但过一会刷新网页，又能看到这次请求对应的返回内容已经出来了。",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/943",
+      "updated_at": "2026-03-12T04:35:50Z"
+    },
+    {
+      "number": 954,
+      "title": "opencode with openai oauth error",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/954",
+      "updated_at": "2026-03-14T09:21:50Z"
+    },
+    {
+      "number": 963,
+      "title": "OpenAI OAuth 的 /v1/responses 转发对 Content-Type 过于严格：application/json; charset=utf-8 会触发 Unsupported content type",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/963",
+      "updated_at": "2026-03-14T15:43:31Z"
+    },
+    {
+      "number": 1015,
+      "title": "unexpected status 402 Payment Required: Insufficient balance. Required: 5 credits,",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1015",
+      "updated_at": "2026-03-15T00:29:06Z"
+    },
+    {
+      "number": 1018,
+      "title": "Admin Panel: OpenAI API Key Connection Test uses incorrect endpoint (/responses instead of /v1/chat/completions)",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1018",
+      "updated_at": "2026-03-15T08:53:45Z"
+    },
+    {
+      "number": 1055,
+      "title": "codex cli无法读取缓存导致费用飙升",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1055",
+      "updated_at": "2026-03-27T02:46:56Z"
+    },
+    {
+      "number": 1066,
+      "title": "Responses API: system messages in input array not converted to instructions field",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1066",
+      "updated_at": "2026-03-16T11:41:31Z"
+    },
+    {
+      "number": 1189,
+      "title": "大佬，我的有些客户端使用chat/completions接口发图片会报错，用claude 分析了一下",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1189",
+      "updated_at": "2026-03-21T13:58:34Z"
+    },
+    {
+      "number": 1221,
+      "title": "gemini账号，openwebui报错。",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1221",
+      "updated_at": "2026-03-23T08:15:40Z"
+    },
+    {
+      "number": 1247,
+      "title": "[Bug] Streaming chat completions fails with array-format content (Cursor compatibility)",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1247",
+      "updated_at": "2026-04-10T03:14:08Z"
+    },
+    {
+      "number": 1251,
+      "title": "阿里百炼使用openai兼容接口失败",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1251",
+      "updated_at": "2026-05-13T05:59:04Z"
+    },
+    {
+      "number": 1264,
+      "title": "# [Bug] `/v1/responses` endpoint forwards unsupported `user` parameter to upstream, causing 400 error",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1264",
+      "updated_at": "2026-03-24T13:52:59Z"
+    },
+    {
+      "number": 1292,
+      "title": "[Bug] OpenAI API Key 上游无法对接 Azure OpenAI Responses API（路径/鉴权/api-version 不兼容）",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1292",
+      "updated_at": "2026-05-07T12:00:51Z"
+    },
+    {
+      "number": 1298,
+      "title": "Error running remote compact task: unexpected status 502 Bad Gateway: Upstream request failed, url: http://127.0.0.1:8000/responses/compact, request id: 24256265-62a 3-4bc3-86dc-53bbec0eca72",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1298",
+      "updated_at": "2026-05-26T06:46:17Z"
+    },
+    {
+      "number": 1304,
+      "title": "提示api错误",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1304",
+      "updated_at": "2026-03-26T02:30:15Z"
+    },
+    {
+      "number": 1311,
+      "title": "[Bug] /v1/chat/completions non-stream returns JSON body with Content-Type: text/event-stream",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1311",
+      "updated_at": "2026-06-06T13:33:05Z"
+    },
+    {
+      "number": 1312,
+      "title": "codex 中出线这样■ unexpected status 503 Service Unavailable: Service temporarily unavailable, url: http://xx.xx.xx.xx:8080/v1/responses, request id: aa39a7d1-6807-46a4-911d-4c53e32a10a4",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1312",
+      "updated_at": "2026-06-10T09:56:47Z"
+    },
+    {
+      "number": 1318,
+      "title": "[bug] openai_passthrough 命中临时不可调度规则后未触发 failover",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1318",
+      "updated_at": "2026-03-26T06:47:06Z"
+    },
+    {
+      "number": 1322,
+      "title": "Responses terminal event detection is inconsistent: gateway_service.go does not treat response.incomplete / response.cancelled as terminal",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1322",
+      "updated_at": "2026-03-26T08:41:35Z"
+    },
+    {
+      "number": 1331,
+      "title": "feat: 网关层协议自动转换，使分组与平台解耦",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1331",
+      "updated_at": "2026-07-01T03:23:53Z"
+    },
+    {
+      "number": 1471,
+      "title": "OpenAI /v1/responses streaming can emit malformed SSE after stream_read_error",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1471",
+      "updated_at": "2026-07-30T03:42:06Z"
+    },
+    {
+      "number": 1477,
+      "title": "OpenAI 使用compact压缩问题",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1477",
+      "updated_at": "2026-07-01T03:26:01Z"
+    },
+    {
+      "number": 1493,
+      "title": "`/v1/responses` 流式正常，但非流式可能返回 `output=[]`",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1493",
+      "updated_at": "2026-04-07T15:16:26Z"
+    },
+    {
+      "number": 1494,
+      "title": "从v0.1.106升级到v0.1.108之后，GPT模型的非流式返回异常。",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1494",
+      "updated_at": "2026-04-07T11:09:46Z"
+    },
+    {
+      "number": 1506,
+      "title": "codex 重复回答问题",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1506",
+      "updated_at": "2026-07-04T01:28:56Z"
+    },
+    {
+      "number": 1517,
+      "title": "OpenAI APIKey upstream 无法兼容“自定义 URI provider”形态",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1517",
+      "updated_at": "2026-08-17T09:13:42Z"
+    },
+    {
+      "number": 1528,
+      "title": "[v0.1.110] Anthropic /v1/messages: content_block_start for text type missing initial \"text\":\"\" field breaks Anthropic/Claude Agent SDK",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1528",
+      "updated_at": "2026-04-09T04:03:25Z"
+    },
+    {
+      "number": 1532,
+      "title": "升级到110的版本后 openai 一直502,但是在面板里面测试是正常的",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1532",
+      "updated_at": "2026-04-15T02:34:44Z"
+    },
+    {
+      "number": 1548,
+      "title": "OpenAI api类型的接口仅支持responses，不支持chat/completions",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1548",
+      "updated_at": "2026-04-10T06:45:19Z"
+    },
+    {
+      "number": 1558,
+      "title": "OpenAI legacy transform 链路删除 previous_response_id，导致 Codex 长会话 prompt cache 频繁失效、费用暴增",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1558",
+      "updated_at": "2026-04-10T20:24:48Z"
+    },
+    {
+      "number": 1561,
+      "title": "小米mimo的OpenAI接口协议无法使用",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1561",
+      "updated_at": "2026-04-16T10:53:29Z"
+    },
+    {
+      "number": 1566,
+      "title": "Authentication failed (401) 问题",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1566",
+      "updated_at": "2026-04-11T00:31:18Z"
+    },
+    {
+      "number": 1569,
+      "title": "fix(ws): 放行 Codex 官方 prewarm -> business continuation 链路",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1569",
+      "updated_at": "2026-04-11T06:21:25Z"
+    },
+    {
+      "number": 1585,
+      "title": "codexModelMap 硬编码将 gpt-5.3-codex-spark 归一化为 gpt-5.3-codex，导致 Spark 独立配额桶无法使用",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1585",
+      "updated_at": "2026-04-15T08:52:21Z"
+    },
+    {
+      "number": 1598,
+      "title": "Codex升级了最新版本，连接不上，报错401",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1598",
+      "updated_at": "2026-10-08T06:26:40Z"
+    },
+    {
+      "number": 1609,
+      "title": "Error running remote compact task: unexpected status 502 Bad Gateway: Upstream request failed, url: http://***/v1/responses/compact",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1609",
+      "updated_at": "2026-05-12T01:49:59Z"
+    },
+    {
+      "number": 1651,
+      "title": "[Bug] v0.1.112 下 `/v1/chat/completions` 会把请求模型静默改写为 `gpt-5.4`（如 `gpt-5.4-mini -> gpt-5.4`）",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1651",
+      "updated_at": "2026-04-24T14:22:37Z"
+    },
+    {
+      "number": 1662,
+      "title": "[Bug] scheduler cache strips OpenAI WS flags and causes websocket_account_select_failed",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1662",
+      "updated_at": "2026-04-16T03:02:02Z"
+    },
+    {
+      "number": 1680,
+      "title": "Nvidia接口无法测试模型",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1680",
+      "updated_at": "2026-04-16T03:53:13Z"
+    },
+    {
+      "number": 1696,
+      "title": "sub2api不支持/v1/chat/completions",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1696",
+      "updated_at": "2026-10-05T03:54:15Z"
+    },
+    {
+      "number": 1754,
+      "title": "对于客户端Claude Code请求路由到sub2api的OpenAI的账号时，响应字段中的输入token数不正确",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1754",
+      "updated_at": "2026-04-26T05:08:19Z"
+    },
+    {
+      "number": 1769,
+      "title": "[Bug] Codex Responses WebSocket (ctx_pool) is unstable: frequent disconnects, 1013 busy, continuation unavailable",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1769",
+      "updated_at": "2026-05-29T00:37:45Z"
+    },
+    {
+      "number": 1771,
+      "title": "[Bug] OpenAI admin account test does not persist 429 rate-limit state, leaving stale 403 error data",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1771",
+      "updated_at": "2026-04-25T02:02:23Z"
+    },
+    {
+      "number": 1803,
+      "title": "sub2api 对话卡住并且无法调度",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1803",
+      "updated_at": "2026-08-01T03:51:31Z"
+    },
+    {
+      "number": 1805,
+      "title": "不能直接通过codex 调用image2 模型",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1805",
+      "updated_at": "2026-05-06T02:11:51Z"
+    },
+    {
+      "number": 1865,
+      "title": "GPT5.5在触发上下文压缩的时候报错404了，这个是OpenAI上游的问题还是sub2的问题呢？",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1865",
+      "updated_at": "2026-04-25T04:49:32Z"
+    },
+    {
+      "number": 1874,
+      "title": "Unknown parameter: 'input[19].call_id'.",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1874",
+      "updated_at": "2026-04-24T13:45:59Z"
+    },
+    {
+      "number": 1885,
+      "title": "v0.1.117 版本使用 GPT 5.5 出现 No tool output found for tool search call fcjAsf03FedtKVWvFij7eSFSo7 导致 502 错误",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1885",
+      "updated_at": "2026-04-24T12:15:23Z"
+    },
+    {
+      "number": 1887,
+      "title": "OpenAI Codex (v0.124.0) 使用gpt-5.5 后报错Error running remote compact task: unexpected status 502 Bad Gateway: error code: 502",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1887",
+      "updated_at": "2026-05-02T15:27:24Z"
+    },
+    {
+      "number": 1888,
+      "title": "117版本对于gpt5.5的透传存在一些bug",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1888",
+      "updated_at": "2026-04-25T02:06:02Z"
+    },
+    {
+      "number": 1891,
+      "title": "Fix OpenAI OAuth gpt-5.5 support and unknown model error handling",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1891",
+      "updated_at": "2026-06-24T00:03:54Z"
+    },
+    {
+      "number": 1899,
+      "title": "OpenAI OAuth Codex /responses image_generation continuation fails with Unknown parameter input[n].call_id",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1899",
+      "updated_at": "2026-04-24T13:45:23Z"
+    },
+    {
+      "number": 1900,
+      "title": "5.5 /compact报错",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1900",
+      "updated_at": "2026-04-24T14:22:02Z"
+    },
+    {
+      "number": 1908,
+      "title": "更新117版本请求报错",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1908",
+      "updated_at": "2026-04-24T10:47:07Z"
+    },
+    {
+      "number": 1915,
+      "title": "图片生成/修改成功后，会话进入异常状态，后续任意消息都会返回 502，后台日志提示 No tool output found for tool search call",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1915",
+      "updated_at": "2026-04-25T12:30:26Z"
+    },
+    {
+      "number": 1919,
+      "title": "[Bug] Responses→Anthropic 工具转换中 web_search_20250305 / google_search 被当未知工具透传",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1919",
+      "updated_at": "2026-04-25T01:00:38Z"
+    },
+    {
+      "number": 1925,
+      "title": " OpenAI 账号测试对 /responses 流式校验过宽，提前 EOF 也会判定成功，导致异常账号被误加入调度池",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1925",
+      "updated_at": "2026-04-25T07:54:59Z"
+    },
+    {
+      "number": 1927,
+      "title": "GPT-5.5 compact失败，请优化",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1927",
+      "updated_at": "2026-04-25T10:59:40Z"
+    },
+    {
+      "number": 1933,
+      "title": "使用 gpt-5.5 时, compact 会报 502 错误",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1933",
+      "updated_at": "2026-04-25T06:57:52Z"
+    },
+    {
+      "number": 1955,
+      "title": "无法生图",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1955",
+      "updated_at": "2026-08-24T04:10:12Z"
+    },
+    {
+      "number": 1957,
+      "title": "gpt-5.5 fails via /v1/responses",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1957",
+      "updated_at": "2026-04-30T06:30:44Z"
+    },
+    {
+      "number": 1962,
+      "title": "gpt5.5 压缩compact 有问题。",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1962",
+      "updated_at": "2026-04-26T02:54:41Z"
+    },
+    {
+      "number": 1995,
+      "title": "Bug: Claude Code Read tool fails when gpt-5.5 emits empty `pages`",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1995",
+      "updated_at": "2026-05-19T17:44:42Z"
+    },
+    {
+      "number": 1999,
+      "title": "/v1/responses 中 image_generation tool 的 gpt-image-2 用量会被记成 gpt-5.5 token 计费",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/1999",
+      "updated_at": "2026-04-29T15:12:33Z"
+    },
+    {
+      "number": 2016,
+      "title": "Error running remote compact task: unexpected status 502 Bad Gateway: Upstream request failed,",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2016",
+      "updated_at": "2026-04-27T12:02:15Z"
+    },
+    {
+      "number": 2028,
+      "title": "feat: 批量编辑账号缺少 OpenAI compact 相关配置项同步",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2028",
+      "updated_at": "2026-04-29T12:56:44Z"
+    },
+    {
+      "number": 2036,
+      "title": "在codex中使用DeepSeek报错",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2036",
+      "updated_at": "2026-05-15T06:40:13Z"
+    },
+    {
+      "number": 2040,
+      "title": "渠道+账号测试全部通过，但是实际使用Codex CLI报错503没有可用的账号",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2040",
+      "updated_at": "2026-04-30T02:29:24Z"
+    },
+    {
+      "number": 2054,
+      "title": "Responses API with background parameter returns upstream 400 but sub2api wraps it as 502 Upstream request failed",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2054",
+      "updated_at": "2026-04-28T07:14:51Z"
+    },
+    {
+      "number": 2067,
+      "title": "OAuth /v1/responses: replayed reasoning items (rs_*) cause 502 on every multi-turn request with tools",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2067",
+      "updated_at": "2026-06-30T18:41:33Z"
+    },
+    {
+      "number": 2085,
+      "title": "希望可以 优化/调整  调用Images-2时的主控模型",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2085",
+      "updated_at": "2026-09-09T06:43:58Z"
+    },
+    {
+      "number": 2098,
+      "title": "bug: Codex CLI edit/resend can break WS tool continuation with 'No tool output found for function call'",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2098",
+      "updated_at": "2026-04-29T13:14:57Z"
+    },
+    {
+      "number": 2099,
+      "title": "平台太少，可以支持deepseek、质谱、通义千问、豆包、华为盘古大模型等主流国产模型吗？",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2099",
+      "updated_at": "2026-05-01T05:40:04Z"
+    },
+    {
+      "number": 2111,
+      "title": "/v1/images/generations路由Tool choice 'image_generation' not found in 'tools' parameter.",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2111",
+      "updated_at": "2026-10-05T03:54:13Z"
+    },
+    {
+      "number": 2133,
+      "title": "Follow-up to #1957: HTTP /v1/responses still rejects previous_response_id on 0.1.120",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2133",
+      "updated_at": "2026-07-26T08:08:12Z"
+    },
+    {
+      "number": 2135,
+      "title": "image-2转发有问题",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2135",
+      "updated_at": "2026-06-15T14:17:26Z"
+    },
+    {
+      "number": 2147,
+      "title": "OpenAI OAuth 路径未正确处理 Responses `input_text` 形式的 system message",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2147",
+      "updated_at": "2026-05-01T02:34:49Z"
+    },
+    {
+      "number": 2152,
+      "title": "gpt-5.5压缩失败",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2152",
+      "updated_at": "2026-05-03T01:20:31Z"
+    },
+    {
+      "number": 2177,
+      "title": "gpt号池用cc调缓存命中率极低",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2177",
+      "updated_at": "2026-05-07T05:57:05Z"
+    },
+    {
+      "number": 2195,
+      "title": "OpenAI WS 模式下 tool_result 与 tool_use 不匹配导致 400 invalid_request_err 高频出现",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2195",
+      "updated_at": "2026-05-11T15:12:11Z"
+    },
+    {
+      "number": 2208,
+      "title": "OpenAI Codex CLI 在 v0.1.122 /v1/responses 下 reasoning/output token 暴涨",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2208",
+      "updated_at": "2026-05-06T02:28:44Z"
+    },
+    {
+      "number": 2220,
+      "title": "转发 OpenAI 响应接口时需处理 `service_tier` 参数？否则导致 400 错误？",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2220",
+      "updated_at": "2026-05-06T07:25:47Z"
+    },
+    {
+      "number": 2232,
+      "title": "Bug：/v1/images/edits 使用 gpt-image-2 通过 OAuth 账号转发失败",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2232",
+      "updated_at": "2026-06-15T14:21:51Z"
+    },
+    {
+      "number": 2245,
+      "title": "OpenAI Responses SSE 流未完成时被转发为 HTTP 200 导致 stream closed before response.completed 问题",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2245",
+      "updated_at": "2026-06-14T11:51:05Z"
+    },
+    {
+      "number": 2246,
+      "title": "openai/Anthropic协议转换兼容openai v1/chat/completions格式的需求",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2246",
+      "updated_at": "2026-06-27T02:23:44Z"
+    },
+    {
+      "number": 2259,
+      "title": "bug：新版本v0.1.125 在claude code中请求报错",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2259",
+      "updated_at": "2026-05-11T03:35:50Z"
+    },
+    {
+      "number": 2277,
+      "title": "透明底生图失败",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2277",
+      "updated_at": "2026-09-14T06:17:08Z"
+    },
+    {
+      "number": 2295,
+      "title": "是否可以支持gpt-image-2 同时输出多个图片",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2295",
+      "updated_at": "2026-09-10T09:24:18Z"
+    },
+    {
+      "number": 2298,
+      "title": "Bug: Upstream empty SSE data: frames cause OpenAI SDK JSONDecodeError when using Responses API (/v1/responses)",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2298",
+      "updated_at": "2026-05-08T15:42:59Z"
+    },
+    {
+      "number": 2310,
+      "title": "[Bug] OAuth 图片生成（非流式）因绑定客户端 context 导致超时 context canceled",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2310",
+      "updated_at": "2026-05-19T06:14:52Z"
+    },
+    {
+      "number": 2321,
+      "title": "版本：v0.1.112 ， gpt5.4分组，增加2个账号，客户端报502",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2321",
+      "updated_at": "2026-05-11T06:30:37Z"
+    },
+    {
+      "number": 2330,
+      "title": "这个支持deepseek或火山大模型的api吗？怎么配置的，我需要一份部署好之后网页中使用方法的教程",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2330",
+      "updated_at": "2026-05-10T03:04:45Z"
+    },
+    {
+      "number": 2343,
+      "title": "OpenAI OAuth account plan_type remains Plus after usage_limit_reached reports free",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2343",
+      "updated_at": "2026-05-11T14:28:14Z"
+    },
+    {
+      "number": 2367,
+      "title": "请教fast模式怎么开啊",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2367",
+      "updated_at": "2026-05-27T05:07:58Z"
+    },
+    {
+      "number": 2410,
+      "title": "[Ops] 运维监控缺少统一请求归因信息，异常日志/SLA明细/系统日志无法稳定定位用户、API Key、邮箱和真实 IP",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2410",
+      "updated_at": "2026-05-12T09:59:15Z"
+    },
+    {
+      "number": 2427,
+      "title": "反代模式下 Codex 长会话被 5 小时额度 / 429 / 503 提前中断（直连正常）",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2427",
+      "updated_at": "2026-05-13T14:26:34Z"
+    },
+    {
+      "number": 2431,
+      "title": "[Feature] OpenAI APIKey 账号应支持在管理后台设置 Responses API 支持状态",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2431",
+      "updated_at": "2026-05-19T06:47:11Z"
+    },
+    {
+      "number": 2437,
+      "title": "同一个会话中持续修改图片，会迅速把带宽吃满",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2437",
+      "updated_at": "2026-05-13T13:01:43Z"
+    },
+    {
+      "number": 2452,
+      "title": "v0.1.126 报错：Failed to read request body",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2452",
+      "updated_at": "2026-06-07T08:39:30Z"
+    },
+    {
+      "number": 2458,
+      "title": "架构为什么限制一个 API Key 只能绑定一个分组（一个平台）？",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2458",
+      "updated_at": "2026-07-01T03:24:31Z"
+    },
+    {
+      "number": 2465,
+      "title": "[Bug] compat-proxy follows upstream redirects, breaking all OAuth login flows (blank page)",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2465",
+      "updated_at": "2026-05-14T13:21:13Z"
+    },
+    {
+      "number": 2500,
+      "title": "OAuth/codex transform produces malformed tool-call ids (`fc<nanoid>` missing underscore) → 502",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2500",
+      "updated_at": "2026-05-15T15:31:05Z"
+    },
+    {
+      "number": 2515,
+      "title": "gpt-5.5，completions转换responses时候，对于content为null值的场景没处理，导致请求报错",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2515",
+      "updated_at": "2026-05-19T06:43:57Z"
+    },
+    {
+      "number": 2525,
+      "title": "Codex VS Code 配置 service_tier=fast，但到达 Sub2API 后 usage_logs.service_tier 为空 / Codex VS Code service_tier=fast not reaching Sub2API",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2525",
+      "updated_at": "2026-06-02T05:32:05Z"
+    },
+    {
+      "number": 2533,
+      "title": "image2调用何时能引入保活机制？cf超时问题需解决",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2533",
+      "updated_at": "2026-05-18T09:41:35Z"
+    },
+    {
+      "number": 2539,
+      "title": "Image billing falls back to default price when usage_logs.image_size is empty, ignoring group image price overrides",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2539",
+      "updated_at": "2026-05-17T16:20:43Z"
+    },
+    {
+      "number": 2577,
+      "title": "codex里，一对话就会自动携带图片生成工具报错 Image generation is not enabled for this group",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2577",
+      "updated_at": "2026-07-03T10:34:03Z"
+    },
+    {
+      "number": 2590,
+      "title": "deepseek的openai协议怎么接入？",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2590",
+      "updated_at": "2026-05-28T03:33:55Z"
+    },
+    {
+      "number": 2591,
+      "title": "已经配置了强制 Chat Completions,上游调用还是走的/v1/responses",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2591",
+      "updated_at": "2026-08-26T00:50:47Z"
+    },
+    {
+      "number": 2600,
+      "title": "force_chat_completions 设置对 /v1/responses 入口不生效",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2600",
+      "updated_at": "2026-05-20T07:13:46Z"
+    },
+    {
+      "number": 2620,
+      "title": "Responses 转 Chat Completions 时 developer role 未映射为 system，导致第三方上游报错",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2620",
+      "updated_at": "2026-05-22T09:32:49Z"
+    },
+    {
+      "number": 2640,
+      "title": "feat: 测试连接支持 OpenAI-compatible Chat Completions 接口",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2640",
+      "updated_at": "2026-05-22T09:31:16Z"
+    },
+    {
+      "number": 2664,
+      "title": "希望能够支持国产模型如DS的chat completions协议接入",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2664",
+      "updated_at": "2026-06-04T00:24:15Z"
+    },
+    {
+      "number": 2678,
+      "title": "风控中心消息重复",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2678",
+      "updated_at": "2026-05-22T09:29:24Z"
+    },
+    {
+      "number": 2722,
+      "title": "更新后出现大量502",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2722",
+      "updated_at": "2026-05-23T14:42:14Z"
+    },
+    {
+      "number": 2723,
+      "title": "只有at的正常账号会被视为错误",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2723",
+      "updated_at": "2026-05-24T08:06:35Z"
+    },
+    {
+      "number": 2727,
+      "title": "请求反复打到同一个已经限流的账户上去",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2727",
+      "updated_at": "2026-05-26T10:36:34Z"
+    },
+    {
+      "number": 2738,
+      "title": "最近两天很容易502 timeout awaiting response headers，导致首token几百秒或者直接卡死",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2738",
+      "updated_at": "2026-05-28T12:55:12Z"
+    },
+    {
+      "number": 2753,
+      "title": "OpenAI Responses rejects placeholder tools with type None",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2753",
+      "updated_at": "2026-05-25T06:22:48Z"
+    },
+    {
+      "number": 2767,
+      "title": "你们有没有遇到502？",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2767",
+      "updated_at": "2026-05-27T04:52:48Z"
+    },
+    {
+      "number": 2772,
+      "title": "添加codex账号后测试报错怎么弄",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2772",
+      "updated_at": "2026-07-06T10:29:43Z"
+    },
+    {
+      "number": 2773,
+      "title": "为 /responses/compact 单独配置响应头超时",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2773",
+      "updated_at": "2026-05-29T11:30:08Z"
+    },
+    {
+      "number": 2780,
+      "title": "131版本的更新没有notes，可以补全吗",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2780",
+      "updated_at": "2026-05-27T03:38:32Z"
+    },
+    {
+      "number": 2814,
+      "title": "stream disconnected before completion: Upstream request failed",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2814",
+      "updated_at": "2026-05-27T06:32:34Z"
+    },
+    {
+      "number": 2819,
+      "title": "[Bug] OpenAI Responses streaming terminal event may emit response.output:null, causing OpenAI Python SDK TypeError",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2819",
+      "updated_at": "2026-06-05T05:54:07Z"
+    },
+    {
+      "number": 2826,
+      "title": "API key non-streaming Responses can miss SSE fallback when upstream omits event-stream content type",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2826",
+      "updated_at": "2026-05-27T13:56:03Z"
+    },
+    {
+      "number": 2857,
+      "title": "502很多是怎么回事",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2857",
+      "updated_at": "2026-06-04T09:50:01Z"
+    },
+    {
+      "number": 2875,
+      "title": "Missing 'response.content_part.added' SSE event in Responses API streaming - breaks Codex CLI compatibility",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2875",
+      "updated_at": "2026-06-14T11:18:39Z"
+    },
+    {
+      "number": 2879,
+      "title": "Web 页面生成的 Codex CLI config.toml 直接复制后不可用",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2879",
+      "updated_at": "2026-08-29T09:29:28Z"
+    },
+    {
+      "number": 2897,
+      "title": "OpenAI /responses failover can bypass account model_mapping due to cached body reuse",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2897",
+      "updated_at": "2026-06-01T02:47:49Z"
+    },
+    {
+      "number": 2907,
+      "title": "安全问题：未配置客户端 API Key 时 /v1 接口默认直接放行",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2907",
+      "updated_at": "2026-05-30T09:15:36Z"
+    },
+    {
+      "number": 2913,
+      "title": "[Bug] codex Responses 请求转发失败:ResponsesInputItem.Arguments/.Output 字段类型过窄导致 502 与静默丢数据",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2913",
+      "updated_at": "2026-06-01T01:47:40Z"
+    },
+    {
+      "number": 2923,
+      "title": "[Bug] OpenAI Responses WebSocket 多轮请求计费幂等键冲突，导致后续 turn 漏计费",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2923",
+      "updated_at": "2026-06-03T12:47:29Z"
+    },
+    {
+      "number": 2967,
+      "title": "压缩上下文时出错",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2967",
+      "updated_at": "2026-07-10T03:16:40Z"
+    },
+    {
+      "number": 2987,
+      "title": "图片生成接口问题",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2987",
+      "updated_at": "2026-06-03T01:32:20Z"
+    },
+    {
+      "number": 2990,
+      "title": "调度器内存缓存在账户限流恢复后未同步，导致 no available accounts 需要重启才能恢复",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2990",
+      "updated_at": "2026-06-04T03:05:43Z"
+    },
+    {
+      "number": 2991,
+      "title": "OpenAI Responses encrypted context can fail when routed across upstream accounts",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/2991",
+      "updated_at": "2026-06-06T06:52:56Z"
+    },
+    {
+      "number": 3004,
+      "title": "testOpenAIImageOAuth账号检测报错：Tool choice 'image_generation' not found in 'tools' parameter",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3004",
+      "updated_at": "2026-06-03T08:18:37Z"
+    },
+    {
+      "number": 3014,
+      "title": "bug(openai): codex_cli_only 未拦截 /v1/chat/completions 兼容入口",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3014",
+      "updated_at": "2026-06-03T11:47:42Z"
+    },
+    {
+      "number": 3043,
+      "title": "当前系统对“流式响应已输出但缺少终止事件”的错误处理不完整",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3043",
+      "updated_at": "2026-06-05T06:58:36Z"
+    },
+    {
+      "number": 3044,
+      "title": "bug: OpenAI OAuth Codex 生图请求未携带账号组织归属，可能导致 gpt-image-2 落到默认 org 限额",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3044",
+      "updated_at": "2026-06-05T13:25:42Z"
+    },
+    {
+      "number": 3053,
+      "title": "功能请求：为 OpenAI 分组增加 Codex 官方客户端限制",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3053",
+      "updated_at": "2026-06-05T10:22:38Z"
+    },
+    {
+      "number": 3071,
+      "title": "服务一直返回invalid_request_error不知道是什么原因",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3071",
+      "updated_at": "2026-07-08T03:59:55Z"
+    },
+    {
+      "number": 3074,
+      "title": "Codex App 请求普通文本时触发上游 image generation 权限错误并持续重连",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3074",
+      "updated_at": "2026-07-10T07:45:07Z"
+    },
+    {
+      "number": 3084,
+      "title": "OpenAI Responses 流缺少 terminal event 时应计入账号故障并临时摘除",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3084",
+      "updated_at": "2026-06-07T00:26:33Z"
+    },
+    {
+      "number": 3092,
+      "title": "0.1.134版本gpt-5.5请求返回的instructions不太对",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3092",
+      "updated_at": "2026-06-07T04:22:26Z"
+    },
+    {
+      "number": 3106,
+      "title": "代理异常时持续重试，未触发自动换号",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3106",
+      "updated_at": "2026-06-07T14:12:11Z"
+    },
+    {
+      "number": 3127,
+      "title": "Responses API session hash fallback 不含会话标识，导致 sticky session 绑死账号",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3127",
+      "updated_at": "2026-06-16T09:01:18Z"
+    },
+    {
+      "number": 3130,
+      "title": "[Bug] OpenAI 图像接口 (/v1/images/generations) 上游 server_error 不会触发账号 failover，导致 5xx 直接透传给客户端",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3130",
+      "updated_at": "2026-06-16T09:00:41Z"
+    },
+    {
+      "number": 3138,
+      "title": "OpenAI Responses invalid_encrypted_content retry skips stale reasoning items",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3138",
+      "updated_at": "2026-06-08T14:13:44Z"
+    },
+    {
+      "number": 3158,
+      "title": "bug: WS v2 passthrough mode skips Codex image bridge",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3158",
+      "updated_at": "2026-06-09T08:07:46Z"
+    },
+    {
+      "number": 3161,
+      "title": "feat: Responses API thinking/reasoning 字段撞针回退策略",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3161",
+      "updated_at": "2026-06-09T08:14:31Z"
+    },
+    {
+      "number": 3171,
+      "title": "[Bug] OpenAI WS v2 passthrough lacks downstream WebSocket keepalive for long Codex tasks",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3171",
+      "updated_at": "2026-06-17T10:30:13Z"
+    },
+    {
+      "number": 3196,
+      "title": "OpenAI 分组图片生成计费异常：未实际生图时触发了按次图片计费",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3196",
+      "updated_at": "2026-06-29T01:19:35Z"
+    },
+    {
+      "number": 3221,
+      "title": "chat-completions → Responses conversion drops `strict` for tools, causing models to fill all optional parameters with zero values",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3221",
+      "updated_at": "2026-06-16T02:26:41Z"
+    },
+    {
+      "number": 3236,
+      "title": "OpenAI context-window overflow errors should not trigger account failover",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3236",
+      "updated_at": "2026-06-30T02:57:27Z"
+    },
+    {
+      "number": 3244,
+      "title": "unexpected status 503 Service Unavailable",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3244",
+      "updated_at": "2026-06-19T12:24:06Z"
+    },
+    {
+      "number": 3249,
+      "title": "Anthropic 429 window reset can be shortened by temp unschedulable rules",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3249",
+      "updated_at": "2026-06-16T12:34:38Z"
+    },
+    {
+      "number": 3253,
+      "title": "Bug: sub2api openai_gateway_responses_chat_fallback 对带 reasoning_content 的模型转换异常",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3253",
+      "updated_at": "2026-06-21T16:34:18Z"
+    },
+    {
+      "number": 3302,
+      "title": "OpenAI OAuth/Codex image_generation ignores explicit gpt-image-2 size/quality and returns gpt-image-2-codex auto/auto low-resolution output",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3302",
+      "updated_at": "2026-10-05T03:54:11Z"
+    },
+    {
+      "number": 3304,
+      "title": "Bug: VS Code Copilot Custom Endpoint fails with apiType responses due to unsupported max_tokens",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3304",
+      "updated_at": "2026-06-16T08:58:16Z"
+    },
+    {
+      "number": 3309,
+      "title": "[Question] OAuth(ChatGPT)账号生图走 codex 路径时 size/quality 被强制为 auto，无法控制输出尺寸/比例",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3309",
+      "updated_at": "2026-08-05T01:21:19Z"
+    },
+    {
+      "number": 3313,
+      "title": "Error running remote compact task: unexpected status 524 <unknown status code>: error code: 524, url: https://<api_ip>/v1/responses/compact, cf-ray: a0ca7a54aed1acf8-HKG",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3313",
+      "updated_at": "2026-06-16T14:41:40Z"
+    },
+    {
+      "number": 3325,
+      "title": "OpenAI API Key 账号 自动探测 优化",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3325",
+      "updated_at": "2026-06-17T15:22:19Z"
+    },
+    {
+      "number": 3332,
+      "title": "【已解决】诊断:为什么会 413",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3332",
+      "updated_at": "2026-06-17T11:21:49Z"
+    },
+    {
+      "number": 3338,
+      "title": "Claude Code can receive `stop_reason=tool_use` without a structured `tool_use` content block, causing malformed tool call loop",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3338",
+      "updated_at": "2026-06-18T09:48:50Z"
+    },
+    {
+      "number": 3339,
+      "title": "刷新账号有问题，gpt账号已经重置了账号额度，已经使用完的账号还是显示限流中",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3339",
+      "updated_at": "2026-10-12T03:10:28Z"
+    },
+    {
+      "number": 3349,
+      "title": "Reconnecting 频发，你们会吗？",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3349",
+      "updated_at": "2026-07-22T06:31:55Z"
+    },
+    {
+      "number": 3377,
+      "title": "Feature Request: 支持 Codex Images 原生接口以适配 gpt-image-2 2K/4K 输出",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3377",
+      "updated_at": "2026-06-25T11:29:42Z"
+    },
+    {
+      "number": 3390,
+      "title": "Codex CLI /v1/responses to Anthropic group fails on custom apply_patch tool schema",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3390",
+      "updated_at": "2026-06-26T07:42:58Z"
+    },
+    {
+      "number": 3411,
+      "title": "Bug: Native Responses passthrough duplicates function_call_arguments — breaks Codex CLI with \"trailing characters\"",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3411",
+      "updated_at": "2026-06-26T02:58:38Z"
+    },
+    {
+      "number": 3412,
+      "title": "Suggestion: support configurable streaming chunk coalescing.",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3412",
+      "updated_at": "2026-06-22T09:00:40Z"
+    },
+    {
+      "number": 3440,
+      "title": "completion频繁返回502",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3440",
+      "updated_at": "2026-06-23T15:54:22Z"
+    },
+    {
+      "number": 3447,
+      "title": "[Bug] Chat Completions 端点请求 OpenAI 的 Responses 端点会触发固定 cache input",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3447",
+      "updated_at": "2026-06-26T01:42:05Z"
+    },
+    {
+      "number": 3468,
+      "title": "The 'gpt-5.4' model is not supported when using Codex with a ChatGPT account.",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3468",
+      "updated_at": "2026-06-25T11:34:08Z"
+    },
+    {
+      "number": 3492,
+      "title": "运维监控-上游错误： \"Post \\\"https://chatgpt.com/backend-api/codex/responses\\\": NO_RAY\"",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3492",
+      "updated_at": "2026-06-26T07:17:35Z"
+    },
+    {
+      "number": 3511,
+      "title": "grok账号测试的时候没有grok的模型，串的是claude的模型",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3511",
+      "updated_at": "2026-06-30T00:43:01Z"
+    },
+    {
+      "number": 3522,
+      "title": "Feature: 分组/API Key 级别增加请求次数限制 & 单次请求 token 上限",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3522",
+      "updated_at": "2026-07-11T02:35:03Z"
+    },
+    {
+      "number": 3528,
+      "title": "Bug: per_request 定价在 /v1/chat/completions 和 /v1/messages 端点不生效，只有 /responses 正常",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3528",
+      "updated_at": "2026-06-27T18:04:52Z"
+    },
+    {
+      "number": 3540,
+      "title": "[Feature Request] 网关层增加控制字符清洗，兼容发送未转义控制字符的客户端",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3540",
+      "updated_at": "2026-07-09T06:39:56Z"
+    },
+    {
+      "number": 3574,
+      "title": "Service temporarily unavailable",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3574",
+      "updated_at": "2026-07-09T03:22:49Z"
+    },
+    {
+      "number": 3576,
+      "title": "OpenAI OAuth 账号触发 401：Missing scope api.responses.write",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3576",
+      "updated_at": "2026-08-12T07:30:23Z"
+    },
+    {
+      "number": 3603,
+      "title": "Streaming `/responses` withholds `response.created` + the entire reasoning phase until output begins (pre-output hold) — reasoning clients see a frozen stream via OpenAI-compatible / apikey upstreams",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3603",
+      "updated_at": "2026-07-01T07:12:34Z"
+    },
+    {
+      "number": 3608,
+      "title": "分组不允许生图的情况下，codex通过/image技能可以出图",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3608",
+      "updated_at": "2026-07-07T12:42:45Z"
+    },
+    {
+      "number": 3624,
+      "title": "openai oauth账号可否增加User-Agent和tlc指纹伪装",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3624",
+      "updated_at": "2026-07-14T08:13:40Z"
+    },
+    {
+      "number": 3629,
+      "title": "Codex image bridge 向 /responses/compact 注入 tool_choice，导致远程压缩 100% 失败：400 \"Unknown parameter: 'tool_choice'\"（v0.1.140+ 回归）",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3629",
+      "updated_at": "2026-07-02T09:32:44Z"
+    },
+    {
+      "number": 3644,
+      "title": "Codex 516的截断降智问题",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3644",
+      "updated_at": "2026-07-08T02:45:57Z"
+    },
+    {
+      "number": 3646,
+      "title": "codex cli下伪装漏洞，originator与useragent不匹配",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3646",
+      "updated_at": "2026-07-02T11:46:56Z"
+    },
+    {
+      "number": 3648,
+      "title": "Codex session imagen tool not available （Codex 不能用来画图了）",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3648",
+      "updated_at": "2026-08-11T06:50:09Z"
+    },
+    {
+      "number": 3662,
+      "title": "OpenAI OAuth accounts with empty model_mapping can be selected for unsupported non-OpenAI models",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3662",
+      "updated_at": "2026-07-09T06:37:34Z"
+    },
+    {
+      "number": 3669,
+      "title": "`/v1/responses` 路径账号级模型映射后计费未使用映射后模型",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3669",
+      "updated_at": "2026-07-04T02:40:54Z"
+    },
+    {
+      "number": 3687,
+      "title": "[Bug] Responses 端点请求 Responses 端点会触发固定 cache input",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3687",
+      "updated_at": "2026-07-12T08:00:08Z"
+    },
+    {
+      "number": 3700,
+      "title": "日志报错：ERROR\tservice/scheduler_snapshot_service.go:244\t[Scheduler] outbox watermark read failed: i/o timeout\t{\"service\": \"sub2api\", \"env\": \"production\", \"component\": \"service.scheduler_snapshot\", \"legacy_printf\": true}",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3700",
+      "updated_at": "2026-07-04T02:15:59Z"
+    },
+    {
+      "number": 3735,
+      "title": "[Bug] /v1/messages 入站对接不支持 Responses API 的 OpenAI 兼容上游时,ForwardAsAnthropic 未读取 openai_responses_mode/openai_responses_supported,导致全部 400",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3735",
+      "updated_at": "2026-07-07T12:45:16Z"
+    },
+    {
+      "number": 3757,
+      "title": "Antigravity OAuth token refresh succeeds but Gemini requests still fail with 401 Invalid bearer token",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3757",
+      "updated_at": "2026-07-27T05:59:49Z"
+    },
+    {
+      "number": 3766,
+      "title": "建议为 Grok/Composer 图片输入增加 grok-build 前处理桥接",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3766",
+      "updated_at": "2026-07-07T06:13:29Z"
+    },
+    {
+      "number": 3777,
+      "title": "High severity: Codex remote compact v2 fails because body-signal routing and SSE output_item.done are dropped",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3777",
+      "updated_at": "2026-07-08T02:13:00Z"
+    },
+    {
+      "number": 3782,
+      "title": "bug: /v1/responses 应本地拒绝非法 reasoning.effort",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3782",
+      "updated_at": "2026-07-07T06:30:28Z"
+    },
+    {
+      "number": 3784,
+      "title": "Bug: Grok OAuth 用量探测失败且用量窗口不显示；OAuth 建号后模型列表缺少 Composer",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3784",
+      "updated_at": "2026-07-09T11:48:35Z"
+    },
+    {
+      "number": 3785,
+      "title": "OpenAI OAuth /v1/responses 因 function_call input id=item_* 被拒绝，期望 fc*",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3785",
+      "updated_at": "2026-07-07T08:22:03Z"
+    },
+    {
+      "number": 3823,
+      "title": "拒绝非官方客户端请求的日志可否增加对方用的什么客户端",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3823",
+      "updated_at": "2026-07-08T07:53:35Z"
+    },
+    {
+      "number": 3850,
+      "title": "bug: ResponsesToAnthropicRequest 静默丢弃 instructions 字段，Codex→Anthropic 组系统提示词消失",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3850",
+      "updated_at": "2026-07-09T08:34:02Z"
+    },
+    {
+      "number": 3854,
+      "title": "bug: /v1/messages 传输层错误直接 502，不触发 failover 也不摘除坏账号",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3854",
+      "updated_at": "2026-07-09T08:34:02Z"
+    },
+    {
+      "number": 3858,
+      "title": "bug: /v1/messages 非 cyber response.failed 被吞成 200 空回复，不 failover 不报错",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3858",
+      "updated_at": "2026-07-09T09:09:29Z"
+    },
+    {
+      "number": 3875,
+      "title": "v0.1.147 openai 无法压缩上下文了！！！",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3875",
+      "updated_at": "2026-07-09T14:39:32Z"
+    },
+    {
+      "number": 3895,
+      "title": "OpenAI OAuth 转发 gpt-5.6-luna 返回 404，Codex 客户端版本仍固定为 0.125.0",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3895",
+      "updated_at": "2026-07-10T04:48:31Z"
+    },
+    {
+      "number": 3901,
+      "title": "gpt-5.6-luna 经网关请求时上游 404 Model not found（非 Codex 客户端），并触发 30 分钟模型级限流",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3901",
+      "updated_at": "2026-07-10T09:02:07Z"
+    },
+    {
+      "number": 3908,
+      "title": "codex  内置网络检索不可用，客户端提示解码错误",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3908",
+      "updated_at": "2026-07-13T00:58:03Z"
+    },
+    {
+      "number": 3933,
+      "title": "升级后开启自动透传无法识别gpt-5.6系列模型",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3933",
+      "updated_at": "2026-07-10T13:43:00Z"
+    },
+    {
+      "number": 3940,
+      "title": "最新的150出现unexpected status 404 Not Found: Model \"gpt-5.6-sol\" is not supported by any configured account in this group, url: https://api.125749.xyz/responses, request id: 43edd3eb-c877-49ae-865d-3bfb5402f25b",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3940",
+      "updated_at": "2026-07-10T06:44:35Z"
+    },
+    {
+      "number": 3952,
+      "title": "fix: Grok Responses returns 426 — CLI version (none) outdated; missing x-grok-client-version on upstream requests",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3952",
+      "updated_at": "2026-09-05T01:39:19Z"
+    },
+    {
+      "number": 3966,
+      "title": "grok 配置方法",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3966",
+      "updated_at": "2026-07-13T02:36:13Z"
+    },
+    {
+      "number": 3967,
+      "title": "add 1 click api setup",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3967",
+      "updated_at": "2026-07-13T02:36:13Z"
+    },
+    {
+      "number": 3968,
+      "title": "fix(grok): /v1/responses usage log misses flat reasoning_effort",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3968",
+      "updated_at": "2026-07-10T09:31:42Z"
+    },
+    {
+      "number": 3970,
+      "title": "bug: remote_compaction_v2 被无条件降级为 /responses/compact，导致原生 V2 上游路由到 *-openai-compact",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3970",
+      "updated_at": "2026-07-13T07:26:20Z"
+    },
+    {
+      "number": 3981,
+      "title": "OpenAI OAuth /v1/responses 因 message input id=item_* 被拒绝，期望 msg*",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3981",
+      "updated_at": "2026-07-13T00:53:52Z"
+    },
+    {
+      "number": 3983,
+      "title": "bug(channel-monitor): Luna 账户直测成功，但渠道检测触发 404 和模型冷却",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3983",
+      "updated_at": "2026-07-13T06:23:32Z"
+    },
+    {
+      "number": 3985,
+      "title": "X-OpenAI-Internal-Codex-Responses-Lite only supports function tools, custom tools, and client-executed tool search.",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3985",
+      "updated_at": "2026-07-11T04:36:32Z"
+    },
+    {
+      "number": 3990,
+      "title": "Responses↔Anthropic 协议转换丢失 cache_creation_input_tokens",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3990",
+      "updated_at": "2026-07-10T13:49:31Z"
+    },
+    {
+      "number": 3995,
+      "title": "[Bug] v0.1.151: Codex /v1/models 在 OAuth/API Key 混合分组中随机 502",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/3995",
+      "updated_at": "2026-07-12T03:38:53Z"
+    },
+    {
+      "number": 4000,
+      "title": "反馈一个 Sub2API v0.1.151 运行态有 recovered panic",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4000",
+      "updated_at": "2026-07-13T00:54:32Z"
+    },
+    {
+      "number": 4020,
+      "title": "codex 最新模型  gpt-5.6-sol 使用时 remote compact会报错导致 终端卡住",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4020",
+      "updated_at": "2026-07-11T14:19:13Z"
+    },
+    {
+      "number": 4021,
+      "title": "使用api登录codex，对话显示404",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4021",
+      "updated_at": "2026-07-11T02:20:40Z"
+    },
+    {
+      "number": 4022,
+      "title": "使用gpt5.5的情况下，Invalid Value: 'tools'. Function 'image_gen.imagegen' conflicts with a hosted tool in the same request. 使用的混合中转，登陆了openai账号 但是模型请求走的自建sub2api。",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4022",
+      "updated_at": "2026-07-14T02:13:01Z"
+    },
+    {
+      "number": 4051,
+      "title": "[Bug] Codex Desktop receives image result with status=generating and does not render it",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4051",
+      "updated_at": "2026-07-14T03:00:41Z"
+    },
+    {
+      "number": 4058,
+      "title": "grok添加对接api key接口",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4058",
+      "updated_at": "2026-07-13T02:36:13Z"
+    },
+    {
+      "number": 4069,
+      "title": "grok实际还有额度但是报错",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4069",
+      "updated_at": "2026-07-13T02:36:14Z"
+    },
+    {
+      "number": 4077,
+      "title": "claude code接入OpenAI平台分组带来的问题",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4077",
+      "updated_at": "2026-07-29T16:05:56Z"
+    },
+    {
+      "number": 4080,
+      "title": "Error running remote compact task: unexpected status 502 Bad Gateway: error code: 502",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4080",
+      "updated_at": "2026-07-12T13:40:02Z"
+    },
+    {
+      "number": 4083,
+      "title": "151版本出现内核崩溃问题",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4083",
+      "updated_at": "2026-07-12T23:36:48Z"
+    },
+    {
+      "number": 4084,
+      "title": "groksuper 账户现在大面积提示异常",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4084",
+      "updated_at": "2026-07-13T02:36:12Z"
+    },
+    {
+      "number": 4090,
+      "title": "大量 502 错误 `account has no Codex backend access token`  寻求解决方案。",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4090",
+      "updated_at": "2026-07-13T08:32:10Z"
+    },
+    {
+      "number": 4098,
+      "title": "Grok 分组账号后台测试全绿，但 /v1/chat/completions 与 /v1/responses 调度返回 503 no available OpenAI accounts supporting model",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4098",
+      "updated_at": "2026-07-13T02:36:15Z"
+    },
+    {
+      "number": 4103,
+      "title": "bug: /v1/chat/completions incorrectly routes Antigravity accounts to Anthropic upstream",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4103",
+      "updated_at": "2026-07-15T13:14:15Z"
+    },
+    {
+      "number": 4113,
+      "title": "/responses/compact upstream 503 triggers keepalive writer nil-pointer panic and disconnects Codex",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4113",
+      "updated_at": "2026-07-13T08:37:46Z"
+    },
+    {
+      "number": 4114,
+      "title": "[/v1/messages] Read 工具参数被静默丢弃,上游缺 function_call_arguments.done 时触发 Content block not found",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4114",
+      "updated_at": "2026-07-13T06:14:09Z"
+    },
+    {
+      "number": 4117,
+      "title": "feat: Antigravity groups support OpenAI /v1/chat/completions",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4117",
+      "updated_at": "2026-07-15T13:21:17Z"
+    },
+    {
+      "number": 4131,
+      "title": "0.1.152版本仍未修复websearch工具问题",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4131",
+      "updated_at": "2026-07-16T02:31:57Z"
+    },
+    {
+      "number": 4133,
+      "title": "unexpected status 502 Bad Gateway: Upstream request failed, url: https://xxx/v1/responses",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4133",
+      "updated_at": "2026-07-29T11:27:13Z"
+    },
+    {
+      "number": 4135,
+      "title": "Unknown parameter: 'input[145].namespace'",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4135",
+      "updated_at": "2026-07-14T06:51:15Z"
+    },
+    {
+      "number": 4141,
+      "title": "流式 Anthropic→Responses 转换丢失 max_tokens 截断语义 + content_filter finish_reason 被映射为 stop",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4141",
+      "updated_at": "2026-07-13T06:13:01Z"
+    },
+    {
+      "number": 4158,
+      "title": "[Bug] OpenAI WS ingress 首包 30s 硬超时导致大请求在 HTTP bridge 前被关闭",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4158",
+      "updated_at": "2026-07-15T07:45:26Z"
+    },
+    {
+      "number": 4167,
+      "title": "Upstream 混用 /v1/chat/completions 与 /v1/responses，导致 Prompt Cache 错乱以及 Tools 间歇性丢失",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4167",
+      "updated_at": "2026-07-13T08:04:45Z"
+    },
+    {
+      "number": 4170,
+      "title": "Grok 0.1.152 版本图生视频失败",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4170",
+      "updated_at": "2026-07-13T09:53:04Z"
+    },
+    {
+      "number": 4171,
+      "title": "5.6模型，开启WS协议连接报错，版本153版本",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4171",
+      "updated_at": "2026-07-15T06:22:16Z"
+    },
+    {
+      "number": 4175,
+      "title": "OpenAI Responses 已输出后收到 response.failed 后不会记录错误日志以及切换账号重试",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4175",
+      "updated_at": "2026-07-13T09:18:27Z"
+    },
+    {
+      "number": 4181,
+      "title": "1.153版本 第三方API Grok调用429",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4181",
+      "updated_at": "2026-07-15T08:07:10Z"
+    },
+    {
+      "number": 4189,
+      "title": "Upstream request failed.Grok免费账号有几千个，但是请求经常会频发这个报错",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4189",
+      "updated_at": "2026-07-14T11:34:50Z"
+    },
+    {
+      "number": 4191,
+      "title": "部署微软 openai apikey 在gpt-5.6上有不兼容冲突导致无法使用",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4191",
+      "updated_at": "2026-07-14T02:05:39Z"
+    },
+    {
+      "number": 4193,
+      "title": "[/v1/messages] 并行 tool_use 产生幽灵 content_block_delta（index 错误）→ Claude Code 报 Content block not found",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4193",
+      "updated_at": "2026-07-15T02:26:04Z"
+    },
+    {
+      "number": 4199,
+      "title": "Grok 链接过程报502错误",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4199",
+      "updated_at": "2026-07-13T13:51:15Z"
+    },
+    {
+      "number": 4209,
+      "title": "bug(openai): Codex Desktop tool-search continuation can fail with missing tool output",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4209",
+      "updated_at": "2026-07-13T16:13:33Z"
+    },
+    {
+      "number": 4220,
+      "title": "feat(server): 直连部署缺少 gzip，静态资源与 JSON 未压缩传输",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4220",
+      "updated_at": "2026-07-14T01:04:00Z"
+    },
+    {
+      "number": 4223,
+      "title": "grok订阅在codex使用遇到Could not decode the compaction blob. Ensure it is unmodified from the compact response",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4223",
+      "updated_at": "2026-07-14T02:06:02Z"
+    },
+    {
+      "number": 4228,
+      "title": "[Feature Request] 支持按渠道映射 OpenAI reasoning.effort",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4228",
+      "updated_at": "2026-07-23T06:35:17Z"
+    },
+    {
+      "number": 4234,
+      "title": "Codex 调用 GPT5.6 系统全模型，均无法使用工具？有人遇到这个问题吗？怎么解决的？ 5.5  正常使用",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4234",
+      "updated_at": "2026-07-15T07:01:26Z"
+    },
+    {
+      "number": 4237,
+      "title": "fix(grok): /v1/responses 未清洗 input 中 reasoning 项的 \"content\": null，导致 xAI 422、客户端收到 502（Codex   CLI 多轮对话必现）",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4237",
+      "updated_at": "2026-07-14T06:22:43Z"
+    },
+    {
+      "number": 4245,
+      "title": "Codex remote model refresh fails when using the root /responses compatibility alias",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4245",
+      "updated_at": "2026-07-15T08:07:01Z"
+    },
+    {
+      "number": 4248,
+      "title": "首字 15 分钟, 真的受不了,不接中转站就好了, 是不是最近有 Bug?",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4248",
+      "updated_at": "2026-07-19T09:37:53Z"
+    },
+    {
+      "number": 4253,
+      "title": "Update Codex config snippets for Responses Lite image generation",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4253",
+      "updated_at": "2026-07-17T02:57:32Z"
+    },
+    {
+      "number": 4257,
+      "title": "[Bug] 上游请求使用分离 Context，导致 OpenAI 故障转移因 context canceled 中止并返回 502",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4257",
+      "updated_at": "2026-07-15T01:36:14Z"
+    },
+    {
+      "number": 4276,
+      "title": "feat(openai): support Codex Agent Identity for least-privilege access",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4276",
+      "updated_at": "2026-07-15T01:47:01Z"
+    },
+    {
+      "number": 4277,
+      "title": "grok free账号 Agent工具调用失败之后进入循环空转，大量错误产生，这个问题存在好几天。",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4277",
+      "updated_at": "2026-07-14T11:16:44Z"
+    },
+    {
+      "number": 4301,
+      "title": "Grok 生成图片的转发地址错误，导致报错",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4301",
+      "updated_at": "2026-07-15T05:49:26Z"
+    },
+    {
+      "number": 4328,
+      "title": "feat(openai): expose a side-effect-free admin quota snapshot contract",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4328",
+      "updated_at": "2026-07-15T07:48:53Z"
+    },
+    {
+      "number": 4338,
+      "title": "只要是sub2api的中转站，接GPT 5.6模型到claude code cli ，使用Read工具offset参数总是过大，并且无限循环",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4338",
+      "updated_at": "2026-08-03T12:38:30Z"
+    },
+    {
+      "number": 4348,
+      "title": "bug(openai): reject gpt-image models on chat completions before account scheduling",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4348",
+      "updated_at": "2026-07-16T01:31:06Z"
+    },
+    {
+      "number": 4350,
+      "title": "codex 如何调用image2 模型",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4350",
+      "updated_at": "2026-08-21T09:27:56Z"
+    },
+    {
+      "number": 4357,
+      "title": "This model is not supported when using X-OpenAI-Internal-Codex-Responses-Lite.",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4357",
+      "updated_at": "2026-07-16T01:31:30Z"
+    },
+    {
+      "number": 4361,
+      "title": "0.1.156无法使用Image2生图",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4361",
+      "updated_at": "2026-07-20T18:59:39Z"
+    },
+    {
+      "number": 4365,
+      "title": "更新到156后，内存暴涨，重启不能解决问题",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4365",
+      "updated_at": "2026-08-14T06:06:21Z"
+    },
+    {
+      "number": 4388,
+      "title": "Responses GPT-5.6 顶层 explicit_cache 应返回 400",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4388",
+      "updated_at": "2026-07-15T15:40:56Z"
+    },
+    {
+      "number": 4399,
+      "title": "OAuth 订阅号生图计费读取了错误的 usage 对象，导致 image_output_tokens 恒为 0、图片输出费漏收",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4399",
+      "updated_at": "2026-07-16T01:32:20Z"
+    },
+    {
+      "number": 4417,
+      "title": "Responses image requests may be routed to accounts without Responses API support",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4417",
+      "updated_at": "2026-07-16T07:35:46Z"
+    },
+    {
+      "number": 4419,
+      "title": "grok出现未观察到配额响应头",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4419",
+      "updated_at": "2026-07-17T05:29:20Z"
+    },
+    {
+      "number": 4421,
+      "title": "super grok账号在sub2上面403，但是在网页上面又能用什么问题",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4421",
+      "updated_at": "2026-07-17T05:29:21Z"
+    },
+    {
+      "number": 4426,
+      "title": "我的Claude code 接入Grok-4.5出现这个问题是为什么",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4426",
+      "updated_at": "2026-07-16T23:17:52Z"
+    },
+    {
+      "number": 4438,
+      "title": "生成不了图片是什么原因呢？sub2api中也没看到调用了gpt-image-2模型",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4438",
+      "updated_at": "2026-09-01T01:46:51Z"
+    },
+    {
+      "number": 4447,
+      "title": "bug：Image generation is not enabled for this group 这个能不能彻底解决下啊",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4447",
+      "updated_at": "2026-07-17T08:14:36Z"
+    },
+    {
+      "number": 4449,
+      "title": "[Bug] v0.1.158: passive Codex image_gen namespace causes force_chat_completions account selection to return 503",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4449",
+      "updated_at": "2026-07-17T09:09:58Z"
+    },
+    {
+      "number": 4455,
+      "title": "X-OpenAI-Internal-Codex-Responses-Lite only supports function tools, custom tools, and client-executed tool search.",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4455",
+      "updated_at": "2026-07-17T00:25:05Z"
+    },
+    {
+      "number": 4470,
+      "title": "[Bug] APIKey pool_mode silently bypasses temp unschedulable rules, causing persistent 503 accounts to remain schedulable",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4470",
+      "updated_at": "2026-07-18T12:40:13Z"
+    },
+    {
+      "number": 4472,
+      "title": "no available accounts，请求无法命中账户",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4472",
+      "updated_at": "2026-07-17T04:06:34Z"
+    },
+    {
+      "number": 4476,
+      "title": "[Regression] v0.1.157+: OpenCode Go Chat Completions-only accounts are filtered from ordinary Codex Responses requests",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4476",
+      "updated_at": "2026-10-05T03:54:01Z"
+    },
+    {
+      "number": 4486,
+      "title": "[Regression Bug] v0.1.159 的改动 “Grok Free 账号：/v1/responses 及 WS 桥接携带函数工具时同样启用免费提示词缓存路由，并处理与内置 web_search 工具重名的冲突” 导致 VS Code `view_image` 无法读取本地图片",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4486",
+      "updated_at": "2026-07-18T12:39:38Z"
+    },
+    {
+      "number": 4487,
+      "title": "[Bug] Chat Completions 流中 INTERNAL_ERROR 未计入 Ops，客户端仅收到通用 Upstream request failed",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4487",
+      "updated_at": "2026-10-13T05:10:54Z"
+    },
+    {
+      "number": 4490,
+      "title": "bug(openai): Codex model discovery fails with standard OpenAI model-list envelope",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4490",
+      "updated_at": "2026-07-20T07:30:32Z"
+    },
+    {
+      "number": 4491,
+      "title": "OpenAI OAuth 直连 /v1/responses/input_tokens 返回 HTML 403 并批量触发 10 分钟临时不可调度",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4491",
+      "updated_at": "2026-07-17T14:51:32Z"
+    },
+    {
+      "number": 4503,
+      "title": "grok 模型映射无效,上游是newapi",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4503",
+      "updated_at": "2026-07-18T13:34:12Z"
+    },
+    {
+      "number": 4518,
+      "title": "docs/ux: 账号开启 http_bridge 后仍需全局 mode_router_v2_enabled，文档与 UI 均未说明",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4518",
+      "updated_at": "2026-07-18T12:43:03Z"
+    },
+    {
+      "number": 4519,
+      "title": "Antigravity: preserve paid tier plan_type when ineligibleTiers is present",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4519",
+      "updated_at": "2026-07-18T13:48:45Z"
+    },
+    {
+      "number": 4550,
+      "title": "测试连接时经常出现请求失败",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4550",
+      "updated_at": "2026-07-20T08:08:00Z"
+    },
+    {
+      "number": 4576,
+      "title": "v0.1.161 反向代理部署下 usage_logs 记录 IP 始终为 127.0.0.1",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4576",
+      "updated_at": "2026-07-20T05:19:11Z"
+    },
+    {
+      "number": 4582,
+      "title": "[Feature] Grok 平台 /v1/messages/count_tokens 硬编码 404，导致 Claude Code /context 卡住",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4582",
+      "updated_at": "2026-07-20T03:37:03Z"
+    },
+    {
+      "number": 4599,
+      "title": "[BUG] OpenAI OAuth 账号通过 /v1/responses 请求任意模型均返回 503,no available accounts(excluded_account_count 一直为 0,v0.1.161)",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4599",
+      "updated_at": "2026-08-06T12:30:21Z"
+    },
+    {
+      "number": 4603,
+      "title": "bug(openai): Chat Completions OAuth 转译重复 system 前缀，输入 token 接近翻倍",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4603",
+      "updated_at": "2026-07-20T03:03:02Z"
+    },
+    {
+      "number": 4605,
+      "title": "Grok Chat Completions bridge returns 502 when Responses SSE ends without terminal event",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4605",
+      "updated_at": "2026-07-19T11:59:36Z"
+    },
+    {
+      "number": 4610,
+      "title": "[Bug] Grok OAuth 的 /v1/messages 在 stream=false 时返回错误的 text/event-stream Content-Type",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4610",
+      "updated_at": "2026-07-20T02:24:24Z"
+    },
+    {
+      "number": 4615,
+      "title": "fix: return standard OpenAI insufficient_quota errors",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4615",
+      "updated_at": "2026-07-20T07:30:43Z"
+    },
+    {
+      "number": 4632,
+      "title": "bug(openai): Codex OAuth HTTP Responses 缓存命中不稳定，固定 prompt_cache_key/账号后仍跨轮 miss",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4632",
+      "updated_at": "2026-08-17T08:19:01Z"
+    },
+    {
+      "number": 4639,
+      "title": "[billing] /responses + hosted image_generation 工具漏算图片计费 (image_output_cost=0, image_output_tokens=0)",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4639",
+      "updated_at": "2026-07-20T07:36:53Z"
+    },
+    {
+      "number": 4644,
+      "title": "[billing] /v1/responses + hosted image_generation 工具的 image_output_tokens/image_output_cost 始终为 0",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4644",
+      "updated_at": "2026-07-21T02:42:48Z"
+    },
+    {
+      "number": 4653,
+      "title": "协议转换器的一个兼容问题",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4653",
+      "updated_at": "2026-07-21T02:41:52Z"
+    },
+    {
+      "number": 4668,
+      "title": "Grok 会话粘性锁死：上游 /v1/responses 返回 405 时不换号/不清 sticky/自定义临时规则不生效",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4668",
+      "updated_at": "2026-08-07T13:05:48Z"
+    },
+    {
+      "number": 4691,
+      "title": "[Bug/Docs] Caddy gzip/zstd 缓冲 SSE，导致级联 Sub2API 的 TTFT 接近总耗时",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4691",
+      "updated_at": "2026-07-27T02:23:00Z"
+    },
+    {
+      "number": 4707,
+      "title": "Codex custom tools restored as name=namespace (execexec / waitwait) on Responses path (0.1.162)",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4707",
+      "updated_at": "2026-07-23T01:16:03Z"
+    },
+    {
+      "number": 4710,
+      "title": "[Bug] Grok /v1/responses 丢弃 Codex App 的 custom/namespace/tool_search，导致工具缺失及多轮任务中断",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4710",
+      "updated_at": "2026-07-22T06:25:54Z"
+    },
+    {
+      "number": 4712,
+      "title": "gpt5.6模型缓存创建疑似没有正常计入",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4712",
+      "updated_at": "2026-07-22T07:40:38Z"
+    },
+    {
+      "number": 4720,
+      "title": "Grok platform API keys are imported into CC Switch as Claude providers",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4720",
+      "updated_at": "2026-07-23T03:18:04Z"
+    },
+    {
+      "number": 4735,
+      "title": "v0.1.163 Codex Desktop image_generation billed but image not displayed or saved",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4735",
+      "updated_at": "2026-07-29T13:35:34Z"
+    },
+    {
+      "number": 4760,
+      "title": "[Bug] v0.1.163版本 OpenAI WS passthrough：同一连接切换模型后，后续 turn 仍按首帧模型记录与计费",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4760",
+      "updated_at": "2026-07-27T02:25:58Z"
+    },
+    {
+      "number": 4761,
+      "title": "上游报错 400 Unknown parameter: input[894].namespace 导致用户端显示 502 报错",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4761",
+      "updated_at": "2026-07-25T22:42:04Z"
+    },
+    {
+      "number": 4762,
+      "title": "v0.1.163版本，使用5.6luna 自动切换到了5.6 terra",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4762",
+      "updated_at": "2026-07-23T03:12:17Z"
+    },
+    {
+      "number": 4764,
+      "title": "关于 PR #4554 与 PR #4641 的处理方式，希望维护者说明",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4764",
+      "updated_at": "2026-07-24T01:40:53Z"
+    },
+    {
+      "number": 4771,
+      "title": "This model is not supported when using X-OpenAI-Internal-Codex-Responses-Lite. v0.1.163",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4771",
+      "updated_at": "2026-07-23T03:53:11Z"
+    },
+    {
+      "number": 4772,
+      "title": "[Bug] 多 Pod 部署下单个 Pod 间歇性返回 No available accounts，账号在其他 Pod 正常",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4772",
+      "updated_at": "2026-10-08T09:36:48Z"
+    },
+    {
+      "number": 4779,
+      "title": "codex free账号，不能用API 服务模式吗？我试了几个号，都不行，提示unexpected status 503 Service Unavailable: auth_unavailable: no auth available, url: http://localhost:51305/v1/responses",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4779",
+      "updated_at": "2026-07-24T02:09:17Z"
+    },
+    {
+      "number": 4784,
+      "title": "OpenAI OAuth workspace mismatch 409 repeatedly routes traffic to one account",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4784",
+      "updated_at": "2026-07-23T12:18:03Z"
+    },
+    {
+      "number": 4789,
+      "title": "求助 sub2api 应该怎么配置支持 codex-cli 0.145.0?",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4789",
+      "updated_at": "2026-07-26T17:02:53Z"
+    },
+    {
+      "number": 4794,
+      "title": "Grok 账号手动测试返回 402 时不标记账号异常状态",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4794",
+      "updated_at": "2026-07-27T02:19:02Z"
+    },
+    {
+      "number": 4799,
+      "title": "composite 分组不支持 /v1/messages Dispatch",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4799",
+      "updated_at": "2026-08-12T14:18:25Z"
+    },
+    {
+      "number": 4800,
+      "title": "This model is not supported when using X-OpenAI-Internal-Codex-Responses-Lite.",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4800",
+      "updated_at": "2026-09-02T01:37:06Z"
+    },
+    {
+      "number": 4812,
+      "title": "[Bug] Antigravity Gemini 3.1/3.6 native function calling returns MALFORMED_FUNCTION_CALL or empty STOP with minimal schema",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4812",
+      "updated_at": "2026-07-24T07:08:35Z"
+    },
+    {
+      "number": 4813,
+      "title": "Composite 平台类型分组 没有达到想要的效果",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4813",
+      "updated_at": "2026-08-16T23:42:14Z"
+    },
+    {
+      "number": 4819,
+      "title": "[Bug] Grok Responses forwards tool_choice without tools and xAI returns invalid-argument",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4819",
+      "updated_at": "2026-07-25T06:43:03Z"
+    },
+    {
+      "number": 4825,
+      "title": "设置关闭训练数据共享失败",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4825",
+      "updated_at": "2026-09-12T11:28:11Z"
+    },
+    {
+      "number": 4828,
+      "title": "[Bug] gpt-image 误走 /v1/chat/completions 时 400 被写入模型冷却，导致正常生图接口不可用",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4828",
+      "updated_at": "2026-08-07T13:06:00Z"
+    },
+    {
+      "number": 4880,
+      "title": "[Bug] v0.1.165 OpenAI WS passthrough 新连接首轮间歇性 1011 upstream websocket proxy failed",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4880",
+      "updated_at": "2026-07-26T01:46:24Z"
+    },
+    {
+      "number": 4916,
+      "title": "v0.1.165  openai： unexpected status 503 Service Unavailable",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4916",
+      "updated_at": "2026-08-02T02:07:15Z"
+    },
+    {
+      "number": 4921,
+      "title": "fix(openai): force_priority does not inject service_tier or update billing tier",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4921",
+      "updated_at": "2026-07-26T16:23:20Z"
+    },
+    {
+      "number": 4936,
+      "title": "OpenAI passthrough account wrongly excluded by `model_mapping` whitelist during account selection (passthrough bypass missing in scheduler eligibility)",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4936",
+      "updated_at": "2026-07-28T03:06:34Z"
+    },
+    {
+      "number": 4940,
+      "title": "bug(gemini): OpenAI 兼容入口的 response_format 被静默丢弃（CC → Responses → Anthropic 中间态无承载位）",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4940",
+      "updated_at": "2026-07-27T04:54:04Z"
+    },
+    {
+      "number": 4948,
+      "title": "Codex API-key providers lose web search for Responses Lite GPT-5.6 models",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4948",
+      "updated_at": "2026-07-28T03:07:17Z"
+    },
+    {
+      "number": 4949,
+      "title": "Codex API-key providers lose web search for Responses Lite GPT-5.6 models",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4949",
+      "updated_at": "2026-08-01T09:34:55Z"
+    },
+    {
+      "number": 4956,
+      "title": "[Bug] Responses→Chat 桥接将 view_image 的 base64 序列化为 tool 文本，导致上下文暴涨",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4956",
+      "updated_at": "2026-08-01T00:54:56Z"
+    },
+    {
+      "number": 4966,
+      "title": "bug(grok): grok-4.5 prompt cache sometimes drops to 128/256 cached_tokens in large OAuth pool",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4966",
+      "updated_at": "2026-07-27T11:50:13Z"
+    },
+    {
+      "number": 4967,
+      "title": "bug(grok): 大 Grok OAuth 账号池下 grok-4.5 提示词缓存偶尔只有 128/256 cached_tokens",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4967",
+      "updated_at": "2026-07-27T11:53:05Z"
+    },
+    {
+      "number": 4971,
+      "title": "【bugfix】 OpenAI OAuth 开启自动透传后未过滤 `max_output_tokens`，导致 `/v1/responses` 返回 400",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4971",
+      "updated_at": "2026-07-28T00:57:11Z"
+    },
+    {
+      "number": 4978,
+      "title": "[Bug] OpenAI OAuth 走 HTTP 转发时摊平 Codex collaboration 命名空间，导致 code_mode_only 模型（gpt-5.6-*）无法派发子代理",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4978",
+      "updated_at": "2026-07-31T13:49:46Z"
+    },
+    {
+      "number": 4991,
+      "title": "异步生图失败",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/4991",
+      "updated_at": "2026-07-28T05:02:28Z"
+    },
+    {
+      "number": 5009,
+      "title": "bug(openai): 原生 /v1/responses 空 response.completed 被当成成功，记录 0/0 且不触发 failover",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5009",
+      "updated_at": "2026-08-11T05:53:45Z"
+    },
+    {
+      "number": 5010,
+      "title": "bug(openai): 共享 proxy_id 熔断会清空账号池，并在无候选时触发数据库查询风暴",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5010",
+      "updated_at": "2026-08-02T02:13:03Z"
+    },
+    {
+      "number": 5029,
+      "title": "[Bug] OpenAI 透传池模式下 401/403 不触发同账号重试与换号",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5029",
+      "updated_at": "2026-08-11T06:21:46Z"
+    },
+    {
+      "number": 5049,
+      "title": "[优化]大佬 请 参考 NEW-API  ui 风格  「模型广场」",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5049",
+      "updated_at": "2026-07-30T01:42:50Z"
+    },
+    {
+      "number": 5055,
+      "title": "<thinking> Content </thinking> 思考内容进入了正文",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5055",
+      "updated_at": "2026-09-28T06:46:07Z"
+    },
+    {
+      "number": 5061,
+      "title": "Codex 图片生成桥接已开启，但codex中仅返回文字、不显示生成图片",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5061",
+      "updated_at": "2026-09-20T08:38:49Z"
+    },
+    {
+      "number": 5067,
+      "title": "[Bug] Responses Lite HTTP forwarding strips namespace from continuation history",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5067",
+      "updated_at": "2026-07-29T20:45:28Z"
+    },
+    {
+      "number": 5090,
+      "title": "最近频繁遇到这个错误stream disconnected before completion: Transport error: network error: error decoding response body，有归因吗？",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5090",
+      "updated_at": "2026-07-30T12:07:08Z"
+    },
+    {
+      "number": 5091,
+      "title": "[Feature] 支持出站 IP/代理运行时自动故障切换，并为 #4749 代理流熔断增加默认关闭开关",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5091",
+      "updated_at": "2026-07-30T08:04:37Z"
+    },
+    {
+      "number": 5099,
+      "title": "/v1/messages 转发到 /v1/responses 时，上游失败未触发账号临时不可调度和 failover",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5099",
+      "updated_at": "2026-08-03T03:28:17Z"
+    },
+    {
+      "number": 5102,
+      "title": "feat：关于 Selected model is at capacity. Please try a different model. 解决方案",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5102",
+      "updated_at": "2026-08-04T06:29:08Z"
+    },
+    {
+      "number": 5105,
+      "title": "grok cli 使用/v1/responses 流式响应中混入 event: ping 计费帧，导致严格解析的客户端整轮请求失败",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5105",
+      "updated_at": "2026-07-31T11:20:17Z"
+    },
+    {
+      "number": 5111,
+      "title": "OpenAI SSE capacity failures bypass pool-mode same-account retries",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5111",
+      "updated_at": "2026-07-31T12:38:16Z"
+    },
+    {
+      "number": 5123,
+      "title": "bug: Azure API Key 后端下 Codex 上下文压缩请求存在两个 Responses API 兼容问题",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5123",
+      "updated_at": "2026-10-13T05:09:46Z"
+    },
+    {
+      "number": 5127,
+      "title": "deepseek V4 flash正式版发布了，支持了Responses API 是否可以跟进呢",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5127",
+      "updated_at": "2026-08-20T04:02:00Z"
+    },
+    {
+      "number": 5138,
+      "title": "OpenAI OAuth passthrough locally rejects Codex requests without optional instructions",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5138",
+      "updated_at": "2026-07-31T12:39:58Z"
+    },
+    {
+      "number": 5140,
+      "title": "[bug][Responses] stream=true 时 response.completed 缺少 content[].annotations，严格客户端（Grok CLI）在流结束时报 serialization error",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5140",
+      "updated_at": "2026-08-27T03:00:31Z"
+    },
+    {
+      "number": 5151,
+      "title": "[Bug] 上游 TCP 建连未设置显式超时，多账号故障转移可阻塞数分钟",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5151",
+      "updated_at": "2026-08-07T08:24:55Z"
+    },
+    {
+      "number": 5155,
+      "title": "[bug][Responses] Codex image_generation bridge: tool-call decision streamed, but image result never delivered — stream stops at message_stop",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5155",
+      "updated_at": "2026-08-01T06:02:42Z"
+    },
+    {
+      "number": 5165,
+      "title": "[Bug][Responses] HTTP 200 流内 response.failed 容量错误在已输出内容后缺少可重试语义和运维记录",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5165",
+      "updated_at": "2026-09-07T03:35:40Z"
+    },
+    {
+      "number": 5176,
+      "title": "[Feature] Compress OAuth Codex Backend `/responses` request bodies with zstd level 3",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5176",
+      "updated_at": "2026-09-11T07:52:45Z"
+    },
+    {
+      "number": 5178,
+      "title": "Bug: Codex session resume fails with `Invalid 'input[x].content': array too long` due to incompatible reasoning items in rollout JSONL",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5178",
+      "updated_at": "2026-08-24T06:36:33Z"
+    },
+    {
+      "number": 5203,
+      "title": "ForwardAsChatCompletions path injects Anthropic ping events into OpenAI Chat Completions SSE stream",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5203",
+      "updated_at": "2026-09-22T13:56:47Z"
+    },
+    {
+      "number": 5208,
+      "title": "[Bug] /v1/responses 调用 Kimi K3 时无法保留 thinking signature",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5208",
+      "updated_at": "2026-08-14T15:10:37Z"
+    },
+    {
+      "number": 5209,
+      "title": "[Feature] /v1/responses 适配 Kimi K3 Web Search",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5209",
+      "updated_at": "2026-08-14T15:10:58Z"
+    },
+    {
+      "number": 5216,
+      "title": "codex下提示词审计 “仅审最新输入和上一轮输出” 功能不预期",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5216",
+      "updated_at": "2026-08-04T08:15:06Z"
+    },
+    {
+      "number": 5235,
+      "title": "有个bug，接入上游时如果下游进站是chat/completions的协议，然后上游接受的是responses协议导致工具无法调用以及上下文增长一些，希望能够将这个统一，入站是什么协议，到上游就是什么协议",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5235",
+      "updated_at": "2026-09-09T04:16:37Z"
+    },
+    {
+      "number": 5246,
+      "title": "bug 怎么修复 一直报错",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5246",
+      "updated_at": "2026-08-04T01:12:04Z"
+    },
+    {
+      "number": 5251,
+      "title": "不知道为什么我的系统一直在报Warn：openai.ws_bind_response_account_failed acc=2 error=context canceled",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5251",
+      "updated_at": "2026-09-08T14:46:19Z"
+    },
+    {
+      "number": 5252,
+      "title": "bug(openai): Codex /models 依赖随机上游，模型列表接口异常时向客户端返回 502",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5252",
+      "updated_at": "2026-08-30T07:27:04Z"
+    },
+    {
+      "number": 5256,
+      "title": "使用记录的费用统计没有按照渠道定价的价格进行计算",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5256",
+      "updated_at": "2026-08-30T12:44:11Z"
+    },
+    {
+      "number": 5257,
+      "title": "OpenAI OAuth /responses 请求体持续增长至 38MB，未触发 compact 并导致代理产生数十 GB 流量",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5257",
+      "updated_at": "2026-08-04T05:33:23Z"
+    },
+    {
+      "number": 5265,
+      "title": "Bug: 远程 PostgreSQL 下 OpsSystemLogSink COPY 超时导致协议失步、连接池耗尽及 Billing 503",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5265",
+      "updated_at": "2026-08-07T12:20:21Z"
+    },
+    {
+      "number": 5272,
+      "title": "feat(accounts): display official DeepSeek balance in upstream billing info",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5272",
+      "updated_at": "2026-10-02T13:08:25Z"
+    },
+    {
+      "number": 5275,
+      "title": "[Bug] OpenAI APIKey 应按模型和协议探测能力，并支持周期复测",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5275",
+      "updated_at": "2026-10-05T03:54:09Z"
+    },
+    {
+      "number": 5280,
+      "title": "只要403就冷却10分钟苦不堪言",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5280",
+      "updated_at": "2026-08-10T02:57:43Z"
+    },
+    {
+      "number": 5281,
+      "title": "Bug: HTTP 200 response.failed 中的模型容量错误可能绕过 failover",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5281",
+      "updated_at": "2026-08-28T07:57:40Z"
+    },
+    {
+      "number": 5289,
+      "title": "Streaming /v1/responses swallows upstream 4xx when response committed -> client hangs until timeout",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5289",
+      "updated_at": "2026-08-10T02:52:51Z"
+    },
+    {
+      "number": 5290,
+      "title": "No first-token timeout: streaming request can hang for minutes when upstream stalls",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5290",
+      "updated_at": "2026-08-05T07:02:08Z"
+    },
+    {
+      "number": 5302,
+      "title": "OpenAI/Chat 兼容上游的思考内容（delta.reasoning）无法透传到 Anthropic 格式",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5302",
+      "updated_at": "2026-08-11T05:59:50Z"
+    },
+    {
+      "number": 5313,
+      "title": "v0.1.171: legacy OpenAI scheduler drops account exclusion diagnostics added by #4660",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5313",
+      "updated_at": "2026-08-10T02:52:16Z"
+    },
+    {
+      "number": 5314,
+      "title": "Grok video owner binding is missing when a compatible upstream returns task_id",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5314",
+      "updated_at": "2026-08-07T08:14:27Z"
+    },
+    {
+      "number": 5325,
+      "title": "feat: 支持模型名 effort 后缀映射思考等级（-none/-low/-medium/-high/-xhigh/-max）",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5325",
+      "updated_at": "2026-08-06T06:14:40Z"
+    },
+    {
+      "number": 5329,
+      "title": "[Bug] Codex /v1/responses 转 Anthropic /v1/messages 调用阿里云 GLM-5.2 时，工具执行后的下一轮返回 400",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5329",
+      "updated_at": "2026-08-07T15:22:00Z"
+    },
+    {
+      "number": 5330,
+      "title": "[Bug] 大量499/502錯誤, Upstream service temporarily unavailable",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5330",
+      "updated_at": "2026-08-11T01:02:10Z"
+    },
+    {
+      "number": 5331,
+      "title": "OpenAI OAuth 的 count_tokens 403 会误触发账号冷却并影响账号池",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5331",
+      "updated_at": "2026-08-07T08:14:49Z"
+    },
+    {
+      "number": 5334,
+      "title": "[Bug] OpenAI OAuth 无效 Responses 子路径返回 HTML 403 时误触发账号冷却与跨账号切换",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5334",
+      "updated_at": "2026-08-12T01:58:09Z"
+    },
+    {
+      "number": 5340,
+      "title": "[Bug] OpenAI WS v2 passthrough 仍将 terminal event 记为 first_token_ms",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5340",
+      "updated_at": "2026-08-12T01:59:45Z"
+    },
+    {
+      "number": 5343,
+      "title": "grok build (0.2.118) 通过 Grok 平台 API Key 账号调用 WebSearch 报 `serialization error: missing field action",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5343",
+      "updated_at": "2026-08-06T16:57:11Z"
+    },
+    {
+      "number": 5364,
+      "title": "[Bug] Codex Desktop automation_update parameters.type=null causes /v1/responses to return 502",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5364",
+      "updated_at": "2026-08-07T13:06:12Z"
+    },
+    {
+      "number": 5371,
+      "title": "上游 /v1/responses 故障时静默降级到 /v1/chat/completions，导致 Codex prompt 缓存全失效、成本涨 3.5 倍且不告警不恢复",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5371",
+      "updated_at": "2026-08-13T01:23:52Z"
+    },
+    {
+      "number": 5400,
+      "title": "[Bug] OpenAI OAuth 生图响应体 HTTP/2 INTERNAL_ERROR 被降级为通用 502，未触发 failover/错误透传",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5400",
+      "updated_at": "2026-10-05T03:54:06Z"
+    },
+    {
+      "number": 5405,
+      "title": "希望支持大请求断点续传",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5405",
+      "updated_at": "2026-08-07T18:56:25Z"
+    },
+    {
+      "number": 5410,
+      "title": "Responses API 未清理 reasoning 项中的无效 item_* ID，导致上游 400 被转换为 502",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5410",
+      "updated_at": "2026-08-11T05:53:06Z"
+    },
+    {
+      "number": 5414,
+      "title": "Add Agnes OpenAI-compatible image/video gateway support",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5414",
+      "updated_at": "2026-08-09T02:55:26Z"
+    },
+    {
+      "number": 5431,
+      "title": "Add per-account fallback-only OpenAI session stickiness",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5431",
+      "updated_at": "2026-08-21T16:37:46Z"
+    },
+    {
+      "number": 5438,
+      "title": "sub2api不支持/v1/responses/input_tokens",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5438",
+      "updated_at": "2026-08-09T02:16:12Z"
+    },
+    {
+      "number": 5451,
+      "title": "WS v2 passthrough 后续 turn 未重新占用账号并发槽，容量长期显示为 0",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5451",
+      "updated_at": "2026-09-07T09:35:58Z"
+    },
+    {
+      "number": 5461,
+      "title": "[Bug] v0.1.172 更新后 Codex Responses 流频繁透传 server_is_overloaded",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5461",
+      "updated_at": "2026-09-17T09:05:21Z"
+    },
+    {
+      "number": 5467,
+      "title": "bug(openai-ws): passthrough 模式绕过大首包 HTTP bridge，导致上游 1009 断连",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5467",
+      "updated_at": "2026-08-31T03:13:36Z"
+    },
+    {
+      "number": 5479,
+      "title": "[Regression] v0.1.173 中 #5383 对历史嵌套 parameters.type=null 的修复未生效",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5479",
+      "updated_at": "2026-08-11T01:27:35Z"
+    },
+    {
+      "number": 5485,
+      "title": "/v1/chat/completions 会静默丢弃 PDF 附件（type:\"file\" 的 content part）",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5485",
+      "updated_at": "2026-08-22T05:34:19Z"
+    },
+    {
+      "number": 5489,
+      "title": "Recovered upstream error: Post \"https://chatgpt.com/backend-api/codex/responses\": http2: client connection lost",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5489",
+      "updated_at": "2026-08-11T00:28:32Z"
+    },
+    {
+      "number": 5500,
+      "title": "fix(settings): avoid repeated warnings when scheduling thresholds are unset",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5500",
+      "updated_at": "2026-08-11T01:27:23Z"
+    },
+    {
+      "number": 5518,
+      "title": "bug(openai compat): Codex json_schema is forwarded to DeepSeek and returned as generic 502",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5518",
+      "updated_at": "2026-08-11T06:38:03Z"
+    },
+    {
+      "number": 5519,
+      "title": "bug(openai compat): Responses input_image is forwarded to text-only DeepSeek Chat and returned as generic 502",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5519",
+      "updated_at": "2026-08-11T06:55:27Z"
+    },
+    {
+      "number": 5520,
+      "title": "bug(openai compat): Responses tool history can lose reasoning_content and DeepSeek returns generic 502",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5520",
+      "updated_at": "2026-08-19T06:03:05Z"
+    },
+    {
+      "number": 5526,
+      "title": "bug(openai): Responses TTFT 被结构事件提前记录",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5526",
+      "updated_at": "2026-08-12T01:59:53Z"
+    },
+    {
+      "number": 5528,
+      "title": "[Bug] Anthropic→Chat Completions 直接桥接丢弃 assistant thinking 块，DeepSeek 等 reasoning 模型多轮对话报 400 (reasoning_content must be passed back)",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5528",
+      "updated_at": "2026-08-28T04:05:32Z"
+    },
+    {
+      "number": 5530,
+      "title": "[Bug] Empty openai_capabilities silently excludes OpenAI OAuth accounts from text scheduling",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5530",
+      "updated_at": "2026-08-21T13:53:29Z"
+    },
+    {
+      "number": 5533,
+      "title": "bug: Anthropic /v1/messages → OpenAI Codex /v1/responses 时 web_search 报 no function named 'web_search'",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5533",
+      "updated_at": "2026-08-14T07:21:18Z"
+    },
+    {
+      "number": 5536,
+      "title": "sub2api 配置 openai 转 deepseek,出现异常内容",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5536",
+      "updated_at": "2026-09-15T03:37:14Z"
+    },
+    {
+      "number": 5542,
+      "title": "[Bug] OpenAI OAuth上游返回401后未自动刷新Token，账号被临时停止调度",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5542",
+      "updated_at": "2026-10-02T23:34:53Z"
+    },
+    {
+      "number": 5547,
+      "title": "[Bug] OpenAI OAuth Responses forwards unsupported truncation field and returns 502",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5547",
+      "updated_at": "2026-08-12T06:50:24Z"
+    },
+    {
+      "number": 5586,
+      "title": "bug(openai): native compaction v2 downgrades when its beta header is lost in a gateway chain",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5586",
+      "updated_at": "2026-08-13T06:34:45Z"
+    },
+    {
+      "number": 5598,
+      "title": "3个pro账号突然变成无法压缩提示404 Not Found",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5598",
+      "updated_at": "2026-08-14T01:26:40Z"
+    },
+    {
+      "number": 5599,
+      "title": "feat(openai): persist Codex WebSocket turn correlation on usage rows",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5599",
+      "updated_at": "2026-08-13T12:18:38Z"
+    },
+    {
+      "number": 5607,
+      "title": "v0.1.176: 分组长上下文阶梯定价在网关热路径被静默关闭（认证快照漏列 long_context_pricing_enabled / model_pricing）",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5607",
+      "updated_at": "2026-08-18T05:50:15Z"
+    },
+    {
+      "number": 5619,
+      "title": "接入到 Cursor 使用的 GPT-5.6 Sol , 推理强度 不显示, 是正常的吗?",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5619",
+      "updated_at": "2026-08-15T15:13:48Z"
+    },
+    {
+      "number": 5624,
+      "title": "远程压缩端点报404",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5624",
+      "updated_at": "2026-08-15T05:46:33Z"
+    },
+    {
+      "number": 5631,
+      "title": "[bug][apicompat] 流式 chat/completions 参数增量重复输出 \"name\":\"\"，覆盖工具名导致工具调用失败",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5631",
+      "updated_at": "2026-08-21T09:49:56Z"
+    },
+    {
+      "number": 5648,
+      "title": "[bug][apicompat] force_chat_completions 下 Codex remote compaction v2 失效：compaction_trigger 被丢弃、响应无 compaction item",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5648",
+      "updated_at": "2026-08-14T14:11:53Z"
+    },
+    {
+      "number": 5652,
+      "title": "OpenAI Our servers are currently overloaded 未稳定触发 failover，无法像 model at capacity 一样正确切号",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5652",
+      "updated_at": "2026-10-13T07:06:09Z"
+    },
+    {
+      "number": 5659,
+      "title": "[Bug] OpenAI-platform /v1/responses (API-key upstream, e.g. DeepSeek) does not restore custom tool calls: Codex apply_patch fails with \"invoked with incompatible payload\"",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5659",
+      "updated_at": "2026-08-18T07:47:52Z"
+    },
+    {
+      "number": 5696,
+      "title": "[Bug] Codex 指纹收敛使用本地 account.ID 派生指纹，导致不同实例间共用 installation_id / session_id",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5696",
+      "updated_at": "2026-08-19T09:19:19Z"
+    },
+    {
+      "number": 5705,
+      "title": "[Bug] v0.1.165 API-key HTTP 转发删除 function_call.namespace，应提供 OpenAPI namespace 开关",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5705",
+      "updated_at": "2026-08-18T08:41:25Z"
+    },
+    {
+      "number": 5727,
+      "title": "设计：让 Codex 指纹收敛在 HTTP、WebSocket 与 compact 上与源码一致",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5727",
+      "updated_at": "2026-08-22T03:37:05Z"
+    },
+    {
+      "number": 5735,
+      "title": "[Bug] v0.1.177：Responses WebSocket 长连接后续 turn 未重新校验订阅日限额",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5735",
+      "updated_at": "2026-08-17T10:36:15Z"
+    },
+    {
+      "number": 5745,
+      "title": "[Bug] 提示词审计：纯工具请求绕过审计（tool_use/tool_result/function_call_output/functionResponse 未解析）",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5745",
+      "updated_at": "2026-08-17T15:27:29Z"
+    },
+    {
+      "number": 5746,
+      "title": "[Bug] 提示词审计：WebSocket 经 conversation.item.create 携带内容 + 空 response.create 绕过审计",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5746",
+      "updated_at": "2026-08-17T15:48:52Z"
+    },
+    {
+      "number": 5771,
+      "title": "fix(grok): Chat Completions 未将 reasoning_tokens 计入输出计费",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5771",
+      "updated_at": "2026-08-21T00:34:39Z"
+    },
+    {
+      "number": 5786,
+      "title": "[调查/RFC] Codex Pro 账号额度缩水：installation identity 与 session 一致性问题",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5786",
+      "updated_at": "2026-08-19T06:17:06Z"
+    },
+    {
+      "number": 5800,
+      "title": "[Bug] Chat 非流式 Responses 桥接在响应体读取中断时未触发 failover",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5800",
+      "updated_at": "2026-08-19T08:41:42Z"
+    },
+    {
+      "number": 5802,
+      "title": "[Bug/RFC] Codex 指纹收敛仍缺部署隔离与跨路径一致性保护",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5802",
+      "updated_at": "2026-08-19T15:52:48Z"
+    },
+    {
+      "number": 5803,
+      "title": "bug(openai): GPT-5.6 OAuth requests can forward legacy prompt_cache_retention and return 400",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5803",
+      "updated_at": "2026-08-23T09:02:55Z"
+    },
+    {
+      "number": 5812,
+      "title": "bug: thinking内容进入正文，并且工具调用出错",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5812",
+      "updated_at": "2026-09-28T06:46:25Z"
+    },
+    {
+      "number": 5819,
+      "title": "[Feature Request] Composite 完整支持 Kimi、Zhipu、DeepSeek，实现单 Base URL / API Key 多平台调用",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5819",
+      "updated_at": "2026-08-19T11:59:10Z"
+    },
+    {
+      "number": 5820,
+      "title": "[Bug] automation_update 根级 oneOf 缺失 parameters.type 时 /v1/responses 仍返回 400",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5820",
+      "updated_at": "2026-08-24T14:58:46Z"
+    },
+    {
+      "number": 5843,
+      "title": "[Bug] v0.1.178 Antigravity: mixed tools (function + built-in) still triggers include_server_side_tool_invocations 400",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5843",
+      "updated_at": "2026-08-29T01:07:29Z"
+    },
+    {
+      "number": 5850,
+      "title": "Bug: http_bridge 上下文重建导致 custom tool call 重复注入，会话被永久毒化（v0.1.178 仍复现）",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5850",
+      "updated_at": "2026-08-22T05:34:34Z"
+    },
+    {
+      "number": 5862,
+      "title": "bug(openai): group model_routing is accepted but ignored by OpenAI schedulers",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5862",
+      "updated_at": "2026-08-19T17:34:04Z"
+    },
+    {
+      "number": 5867,
+      "title": "[Bug] Grok Responses lowering leaves Codex tool_search discovery output without function_call_output.output",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5867",
+      "updated_at": "2026-08-20T02:07:12Z"
+    },
+    {
+      "number": 5880,
+      "title": "[Bug] Grok Responses does not promote tool_search-discovered tools for follow-up calls",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5880",
+      "updated_at": "2026-08-20T06:00:19Z"
+    },
+    {
+      "number": 5883,
+      "title": "bug(openai compat): DeepSeek emits functions__exec for Codex custom exec; Chat bridge 200-forwards an unsupported call",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5883",
+      "updated_at": "2026-08-24T03:23:39Z"
+    },
+    {
+      "number": 5886,
+      "title": "[Bug] Composite groups cannot serve OpenAI targets via /v1/messages: 400 for custom model names, permanently-closed dispatch gate (403) for resolved openai targets",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5886",
+      "updated_at": "2026-08-21T13:24:07Z"
+    },
+    {
+      "number": 5900,
+      "title": "[Bug] v0.1.178：已建立的上游 Responses WebSocket 因 keepalive ping timeout 以 1011 断开（非连接池耗尽）",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5900",
+      "updated_at": "2026-09-11T05:56:24Z"
+    },
+    {
+      "number": 5941,
+      "title": "[Feature Request] Codex OAuth 出站身份支持保留真实官方客户端类型（CLI / VS Code / Desktop）",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5941",
+      "updated_at": "2026-08-21T01:05:53Z"
+    },
+    {
+      "number": 5942,
+      "title": "Codex + MCP 请求报错：Invalid Value: 'tools.defer_loading'. Deferred tools require tools.tool_search.",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5942",
+      "updated_at": "2026-08-24T03:23:26Z"
+    },
+    {
+      "number": 5944,
+      "title": "更新8月21日的ChatGPT会报401",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5944",
+      "updated_at": "2026-08-29T09:29:28Z"
+    },
+    {
+      "number": 5945,
+      "title": "[Bug] 显式 reasoning effort \"max\" 在使用记录中一律落库为 \"xhigh\"（DeepSeek/GLM/Kimi 等所有 OpenAI 协议接入的非 GPT-5.6 模型均受影响）",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5945",
+      "updated_at": "2026-09-22T09:49:01Z"
+    },
+    {
+      "number": 5947,
+      "title": "[建议]WEB后台增加导入到CCS的模板编辑功能以及默认模型修改功能",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/5947",
+      "updated_at": "2026-08-21T05:43:18Z"
+    },
+    {
+      "number": 6057,
+      "title": "X-OpenAI-Internal-Codex-Responses-Lite requires `parallel_tool_calls` to be false. 这是什么情况啊？",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6057",
+      "updated_at": "2026-08-24T03:24:18Z"
+    },
+    {
+      "number": 6071,
+      "title": "[BUG]Responses API 工具调用类型被错误转换：custom_tool_call 使用了 fc_ ID，导致 Codex 续聊失败",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6071",
+      "updated_at": "2026-08-26T06:00:36Z"
+    },
+    {
+      "number": 6104,
+      "title": "[Bug] 长驻 Responses WebSocket 会在上游 60 分钟硬限制处被动断开",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6104",
+      "updated_at": "2026-08-23T05:24:44Z"
+    },
+    {
+      "number": 6105,
+      "title": "[Bug] Responses WebSocket 正常关闭会被误记为 proxy_failed",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6105",
+      "updated_at": "2026-08-28T07:56:36Z"
+    },
+    {
+      "number": 6115,
+      "title": "openai_responses sanitizer: 类内 -[ 与 Rust regex 判定不一致，造成 ~0.01% 的 lookaround 漏判",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6115",
+      "updated_at": "2026-08-23T10:26:34Z"
+    },
+    {
+      "number": 6120,
+      "title": "gpt-image-2 的 4K / high 请求会被静默降级为 gpt-image-2-codex + auto，导致实际输出分辨率明显降低",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6120",
+      "updated_at": "2026-08-24T04:21:51Z"
+    },
+    {
+      "number": 6146,
+      "title": "[Bug] custom 工具相关请求还原时漏掉 item id 的转换，导致 codex 后续请求被上游 400 拒绝",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6146",
+      "updated_at": "2026-09-08T01:43:31Z"
+    },
+    {
+      "number": 6147,
+      "title": "更新最新版之后报错X-OpenAI-Internal-Codex-Responses-Lite requires parallel_tool_calls to be false.",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6147",
+      "updated_at": "2026-08-25T04:31:33Z"
+    },
+    {
+      "number": 6163,
+      "title": "bug(openai): Responses Lite 无 tools 请求必须 pin parallel_tool_calls:false（官方后端实测；#6157 现在的删除做法仍会 400）",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6163",
+      "updated_at": "2026-08-25T01:50:14Z"
+    },
+    {
+      "number": 6174,
+      "title": "更新到 0.1.181 后出现大量异常 X-OpenAI-Internal-Codex-Responses-Lite requires `parallel_tool_calls` to be false.",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6174",
+      "updated_at": "2026-08-26T03:09:00Z"
+    },
+    {
+      "number": 6185,
+      "title": "[Grok][Responses] 并行 vision tool_result 后续写会串到无关会话（0.1.181 & 0.1.182 复现）",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6185",
+      "updated_at": "2026-08-31T03:15:34Z"
+    },
+    {
+      "number": 6197,
+      "title": "[BUG]国产模型compact全部显示不支持",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6197",
+      "updated_at": "2026-10-03T08:45:12Z"
+    },
+    {
+      "number": 6205,
+      "title": "Expose requested, outbound, upstream, and billed service tiers for Fast mode diagnostics",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6205",
+      "updated_at": "2026-09-21T06:50:10Z"
+    },
+    {
+      "number": 6226,
+      "title": "[Bug] 配置「强制 Chat Completions」后客户端调用未生效",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6226",
+      "updated_at": "2026-08-26T01:28:02Z"
+    },
+    {
+      "number": 6231,
+      "title": "0.1.183这个问题还是有 X-OpenAI-Internal-Codex-Responses-Lite requires `parallel_tool_calls` to be false.",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6231",
+      "updated_at": "2026-08-26T12:29:17Z"
+    },
+    {
+      "number": 6240,
+      "title": "[Bug] OpenAI API-key Responses passthrough 将多模态 custom_tool_call_output 字符串化，导致上下文超限",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6240",
+      "updated_at": "2026-08-28T03:55:04Z"
+    },
+    {
+      "number": 6243,
+      "title": "关于API Error: 400 previous_response_id requires an OpenAI API-key account for HTTP requests (request id: 202608250633426007079058268d9d6VB5fZgTo)的问题",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6243",
+      "updated_at": "2026-09-05T00:57:00Z"
+    },
+    {
+      "number": 6247,
+      "title": "[Bug] OpenAI APIKey 账号被探测为 responses_supported 时，chat/completions 的 assistant 历史（content 数组/thinking/工具）被转 Responses 触发上游 \"Input should be a valid string\" 400",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6247",
+      "updated_at": "2026-10-13T07:01:22Z"
+    },
+    {
+      "number": 6276,
+      "title": "fix(openai): preserve API-key namespace calls for compatible custom providers",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6276",
+      "updated_at": "2026-08-28T03:27:33Z"
+    },
+    {
+      "number": 6287,
+      "title": "bug(openai): WS v2 passthrough relay 缺少 cyber_policy 检测，命中后不记风控、不屏蔽会话",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6287",
+      "updated_at": "2026-08-28T04:47:09Z"
+    },
+    {
+      "number": 6305,
+      "title": "`/v1/responses` passthrough sends zero bytes before first visible output — long-reasoning requests are killed by intermediate proxy idle timeouts",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6305",
+      "updated_at": "2026-08-29T01:04:48Z"
+    },
+    {
+      "number": 6336,
+      "title": "[bug] Non-streaming /v1/chat/completions with tools returns invalid JSON in tool_calls[].function.arguments (\"{}{...}\") for Anthropic accounts",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6336",
+      "updated_at": "2026-08-29T01:00:58Z"
+    },
+    {
+      "number": 6375,
+      "title": "[Bug] claude-fable-5 returns empty completed response via /v1/responses",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6375",
+      "updated_at": "2026-08-29T18:36:14Z"
+    },
+    {
+      "number": 6382,
+      "title": "OpenAI WS replay 历史每轮多次深拷贝且无上限，长会话导致内存持续增长并 OOM",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6382",
+      "updated_at": "2026-09-05T06:32:12Z"
+    },
+    {
+      "number": 6383,
+      "title": "[Bug] Codex 子代理并发下 passthrough 抢占上游 WebSocket",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6383",
+      "updated_at": "2026-08-31T03:13:18Z"
+    },
+    {
+      "number": 6396,
+      "title": "Codex APP配合Grok出现异常错误”状态码 400 根因 openai_error“",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6396",
+      "updated_at": "2026-08-30T16:10:00Z"
+    },
+    {
+      "number": 6402,
+      "title": "[Bug] Codex Desktop 独立任务委派在 HTTP Responses 下因缺少 call_id 被拒绝",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6402",
+      "updated_at": "2026-09-01T11:48:54Z"
+    },
+    {
+      "number": 6420,
+      "title": "[Bug] openai+apikey 渠道:/v1/responses 入站在缺 instructions 时无条件注入 Codex 系统提示词(约 4.4k tokens)",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6420",
+      "updated_at": "2026-09-01T00:46:00Z"
+    },
+    {
+      "number": 6465,
+      "title": "bug(openai): APIKey Chat→Responses 转换未复用稳定会话身份，长会话 prompt cache 命中显著下降",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6465",
+      "updated_at": "2026-09-02T01:25:03Z"
+    },
+    {
+      "number": 6466,
+      "title": "[Bug] v0.1.185 Codex 定时任务执行失败",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6466",
+      "updated_at": "2026-09-01T13:24:08Z"
+    },
+    {
+      "number": 6477,
+      "title": "最近频繁出现  This model is not supported when using X-OpenAI-Internal-Codex-Responses-Lite. 目前有什么解法吗？",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6477",
+      "updated_at": "2026-09-02T01:37:49Z"
+    },
+    {
+      "number": 6508,
+      "title": "使用中转站，如何在官方客户端显示fast选项？",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6508",
+      "updated_at": "2026-09-20T06:07:57Z"
+    },
+    {
+      "number": 6521,
+      "title": "[Bug] 0.2.0 OpenAI 自动透传（apikey 账号）转发 /v1/responses 时删掉了 reasoning 字段，0.1.177 正常",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6521",
+      "updated_at": "2026-09-05T08:02:58Z"
+    },
+    {
+      "number": 6524,
+      "title": "[Bug] /v1/messages 未识别 previous_response_id is not available for this user，续接失败未触发回退",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6524",
+      "updated_at": "2026-09-05T07:06:04Z"
+    },
+    {
+      "number": 6526,
+      "title": "[Bug] 渠道模型映射后账号筛选仍使用原始模型 ID",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6526",
+      "updated_at": "2026-09-05T08:17:06Z"
+    },
+    {
+      "number": 6530,
+      "title": "Gateway-originated admission rejections are stamped rate_limit_exceeded (OpenAI's own code), so operators cannot tell sub2api's limit from OpenAI's",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6530",
+      "updated_at": "2026-09-05T08:03:18Z"
+    },
+    {
+      "number": 6534,
+      "title": "OpenAI API Key无论接入第三方上游key还是自建的CPA 上游，下 Claude Code /v1/messages 多轮请求中断、工具参数错误和 Responses 流终止异常",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6534",
+      "updated_at": "2026-10-10T01:30:37Z"
+    },
+    {
+      "number": 6547,
+      "title": "Codex Desktop heartbeat automation fails because XML bootstrap is not normalized",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6547",
+      "updated_at": "2026-09-05T08:02:37Z"
+    },
+    {
+      "number": 6548,
+      "title": "账号池无可用账号时的错误响应会向终端用户泄露内部架构，建议改为中性的 529 overloaded_error 或提供可配置文案",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6548",
+      "updated_at": "2026-09-04T05:08:26Z"
+    },
+    {
+      "number": 6558,
+      "title": "grok上游地址不能用",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6558",
+      "updated_at": "2026-09-03T12:39:35Z"
+    },
+    {
+      "number": 6569,
+      "title": "[Bug] ResponsesToAnthropicRequest: thinking.budget_tokens 超过默认 max_tokens=8192，Codex 除 low/medium 外所有 reasoning effort 均 400",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6569",
+      "updated_at": "2026-09-04T01:25:54Z"
+    },
+    {
+      "number": 6582,
+      "title": "[Bug] Generated Codex catalog forces supports_search_tool=false, disabling lazy Apps/MCP discovery",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6582",
+      "updated_at": "2026-09-05T07:03:32Z"
+    },
+    {
+      "number": 6584,
+      "title": "[Bug] Responses→Chat fallback drops Codex tool_search discoveries from tool_search_output.tools[]",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6584",
+      "updated_at": "2026-09-05T07:03:53Z"
+    },
+    {
+      "number": 6614,
+      "title": "请问如何在gpt里面使用gpt-6-astra?我在sub2api里面的测试可以调用，但codex里面似乎无法选择，仅能选择5.6 sol ultra，即使我修改了config文件，显示仍然是5.6 sol",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6614",
+      "updated_at": "2026-09-05T04:09:45Z"
+    },
+    {
+      "number": 6624,
+      "title": "feat: 允许在分组推理强度映射中将 none 按模型转换为 low",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6624",
+      "updated_at": "2026-09-05T07:06:33Z"
+    },
+    {
+      "number": 6631,
+      "title": "openai 提示Our servers are currently overloaded，当前不后台重试了吗？",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6631",
+      "updated_at": "2026-09-09T11:30:54Z"
+    },
+    {
+      "number": 6632,
+      "title": "Chat Completions clients lose reasoning items between tool turns on the Codex OAuth path (quality regression, no error)",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6632",
+      "updated_at": "2026-09-05T07:32:48Z"
+    },
+    {
+      "number": 6653,
+      "title": "[Bug] force_chat_completions 在 Codex 请求包含 input.additional_tools 时失败",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6653",
+      "updated_at": "2026-09-17T07:29:54Z"
+    },
+    {
+      "number": 6656,
+      "title": "[Bug] 0.2.1：Codex 自动同步值停留在旧版本，Astra 仍报 requires a newer version，手动更新网关版本后恢复",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6656",
+      "updated_at": "2026-09-06T23:54:39Z"
+    },
+    {
+      "number": 6672,
+      "title": "[Feature] 为第三方 Anthropic 兼容上游(阿里云 MaaS)增加 thinking/effort 参数归一化 — 上游 400: 'reasoning_effort' and 'thinking_budget' cannot be set simultaneously",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6672",
+      "updated_at": "2026-09-05T16:02:35Z"
+    },
+    {
+      "number": 6679,
+      "title": "[Bug] OpenAI WS passthrough：多轮会话中账号耗尽 5h 额度时不会 failover 换号，Codex 会话直接中断",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6679",
+      "updated_at": "2026-09-07T10:44:19Z"
+    },
+    {
+      "number": 6699,
+      "title": "最高支持到max，没有ultra",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6699",
+      "updated_at": "2026-09-07T05:11:01Z"
+    },
+    {
+      "number": 6714,
+      "title": "An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID 05db48fb-224e-4ff7-8266-b72865ef4f1f in your message.",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6714",
+      "updated_at": "2026-09-07T03:35:40Z"
+    },
+    {
+      "number": 6740,
+      "title": "如何处理？",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6740",
+      "updated_at": "2026-09-07T06:42:03Z"
+    },
+    {
+      "number": 6782,
+      "title": "原生 Responses 大图请求在无需改写时仍产生重复整包分配",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6782",
+      "updated_at": "2026-09-11T05:58:12Z"
+    },
+    {
+      "number": 6820,
+      "title": "[Bug] Antigravity OAuth drops plan_type before account creation, bypassing paid-tier endpoint selection",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6820",
+      "updated_at": "2026-09-08T12:09:14Z"
+    },
+    {
+      "number": 6852,
+      "title": "[Bug] Non-streaming Anthropic /v1/messages requests with max_tokens >= 128000 are rejected upstream",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6852",
+      "updated_at": "2026-09-08T16:26:28Z"
+    },
+    {
+      "number": 6854,
+      "title": "[Bug] 出图管线硬编码主控模型 gpt-5.4-mini，OpenAI 已于 2026-09-08 下线该系列，image_gen 全线 400 并连锁打空账号池（503）",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6854",
+      "updated_at": "2026-09-08T18:21:01Z"
+    },
+    {
+      "number": 6856,
+      "title": "[Bug] 出图管线硬编码主控模型 gpt-5.4-mini，OpenAI 已于 2026-09-08 下线该系列，image_gen 全线 400 并连锁打空账号池（503）",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6856",
+      "updated_at": "2026-09-09T06:43:57Z"
+    },
+    {
+      "number": 6862,
+      "title": "[Feature] 支持 GPT Image 2.5 Sunburst / Flare 的模型目录与账号调度",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6862",
+      "updated_at": "2026-09-09T01:54:46Z"
+    },
+    {
+      "number": 6867,
+      "title": "# [Feature] 支持 GPT-Image-2.5",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6867",
+      "updated_at": "2026-09-09T13:24:26Z"
+    },
+    {
+      "number": 6868,
+      "title": "fix: Codex Desktop full heartbeat envelopes fail HTTP call_id validation",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6868",
+      "updated_at": "2026-09-11T01:30:46Z"
+    },
+    {
+      "number": 6872,
+      "title": "OAuth gpt-image-2 requests send unsupported top-level model gpt-5.4-mini",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6872",
+      "updated_at": "2026-09-09T06:43:57Z"
+    },
+    {
+      "number": 6884,
+      "title": "[Bug] OpenAI HTTP/2 自动降级对 socks5/socks5h 代理不生效",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6884",
+      "updated_at": "2026-09-09T06:39:23Z"
+    },
+    {
+      "number": 6887,
+      "title": "[Bug] force_chat_completions silently drops Codex agent_message task content",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6887",
+      "updated_at": "2026-09-09T04:41:39Z"
+    },
+    {
+      "number": 6896,
+      "title": "不是说支持image2.5了吗，怎么我的codex调用生图还是image2呢",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6896",
+      "updated_at": "2026-09-09T11:24:57Z"
+    },
+    {
+      "number": 6905,
+      "title": "不是说更新到image2.5了吗？返回的还是2啊",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6905",
+      "updated_at": "2026-09-15T10:13:53Z"
+    },
+    {
+      "number": 6908,
+      "title": "qwen3.8-flash 第一次请求很快, 后续请求就变得异常慢, 但使用记录却显示1秒左右",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6908",
+      "updated_at": "2026-09-09T10:23:13Z"
+    },
+    {
+      "number": 6992,
+      "title": "[Bug/feature]: prevent sticky account queues from concentrating OAuth and API Key concurrency",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6992",
+      "updated_at": "2026-09-13T17:41:31Z"
+    },
+    {
+      "number": 6993,
+      "title": "[Bug/Feature] 压缩请求超过 64 MiB 被静默截断，建议支持配置解压上限并返回 413",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6993",
+      "updated_at": "2026-09-11T01:50:07Z"
+    },
+    {
+      "number": 6999,
+      "title": "Codex catalog advertises no reasoning levels for DeepSeek/MiMo models mapped to provider-qualified upstream IDs",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/6999",
+      "updated_at": "2026-09-11T02:27:33Z"
+    },
+    {
+      "number": 7002,
+      "title": "[Billing] 长流式请求余额耗尽后未强制断开，结算可将余额打成负数",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7002",
+      "updated_at": "2026-10-08T09:06:14Z"
+    },
+    {
+      "number": 7027,
+      "title": "[Bug] Chat Completions 转 Codex Responses 时，json_object 模式会重复注入完整 system prompt",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7027",
+      "updated_at": "2026-09-11T12:05:31Z"
+    },
+    {
+      "number": 7031,
+      "title": "请求所有模型都报一样的错误",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7031",
+      "updated_at": "2026-09-20T07:53:48Z"
+    },
+    {
+      "number": 7042,
+      "title": "[Bug] 本地 Codex 模型目录丢失 max_context_window，将 872k 最大窗口降为 272k",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7042",
+      "updated_at": "2026-09-12T03:34:27Z"
+    },
+    {
+      "number": 7046,
+      "title": "unexpected status 502 Bad Gateway: Upstream service temporarily unavailable, url: https://ai-api.aitoken.credit/v1/responses, request id: 429778b4-5ff9-4a25-a019-5c10b60b995e",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7046",
+      "updated_at": "2026-09-12T04:43:52Z"
+    },
+    {
+      "number": 7066,
+      "title": "/v1/responses 转发未清理 Codex 新增的 internal_chat_message_metadata_passthrough 字段，导致上游 400 (unknown_parameter)",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7066",
+      "updated_at": "2026-09-15T00:52:32Z"
+    },
+    {
+      "number": 7070,
+      "title": "管理端账号测试的视频/音频预览因默认 CSP 缺少 media-src 指令而无法播放",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7070",
+      "updated_at": "2026-09-25T08:08:16Z"
+    },
+    {
+      "number": 7081,
+      "title": "[Bug] Antigravity: MALFORMED_FUNCTION_CALL falls through to stop_reason=end_turn and returns HTTP 200 with empty content",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7081",
+      "updated_at": "2026-09-28T02:50:54Z"
+    },
+    {
+      "number": 7089,
+      "title": "最近codex 用不了, 正常吗?",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7089",
+      "updated_at": "2026-09-14T01:18:01Z"
+    },
+    {
+      "number": 7119,
+      "title": "/v1/images/generations 接口忽略 size 参数，返回图片比例错误",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7119",
+      "updated_at": "2026-10-02T20:50:59Z"
+    },
+    {
+      "number": 7128,
+      "title": "[Bug] grok-build 解析 Responses SSE 失败：missing field sequence_number",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7128",
+      "updated_at": "2026-09-15T07:28:35Z"
+    },
+    {
+      "number": 7131,
+      "title": "GPT 6 Astra 不返回思考摘要是预期行为吗？",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7131",
+      "updated_at": "2026-09-14T06:01:46Z"
+    },
+    {
+      "number": 7164,
+      "title": "支持调用外部脱敏服务，对请求脱敏后再转发上游",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7164",
+      "updated_at": "2026-09-15T10:46:29Z"
+    },
+    {
+      "number": 7219,
+      "title": "OpenAI 503 overload cooldown is hardcoded to 600s and not configurable (v0.2.5)",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7219",
+      "updated_at": "2026-09-16T13:58:13Z"
+    },
+    {
+      "number": 7222,
+      "title": "[Bug] Chat Completions 空起始 chunk 提前提交，导致小请求的流内 overloaded 跳过 failover",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7222",
+      "updated_at": "2026-09-16T07:26:14Z"
+    },
+    {
+      "number": 7241,
+      "title": "[Bug] v0.2.5 + Codex 0.154：Chat 回退丢失 namespace 内 custom exec，导致 functions__exec unsupported",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7241",
+      "updated_at": "2026-09-17T11:35:06Z"
+    },
+    {
+      "number": 7242,
+      "title": "Unexpected status 502 Bad Gateway: Upstream service temporarily unavailable",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7242",
+      "updated_at": "2026-09-16T13:56:39Z"
+    },
+    {
+      "number": 7268,
+      "title": "出现http2: client connection lost的问题",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7268",
+      "updated_at": "2026-09-20T08:04:17Z"
+    },
+    {
+      "number": 7274,
+      "title": "[Compatibility] Chat Completions 流转换为 Responses 事件流时 EOF 状态处理异常",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7274",
+      "updated_at": "2026-09-19T12:16:15Z"
+    },
+    {
+      "number": 7275,
+      "title": "在sub2api里导入的opencode账号使用deepseek时没有缓存",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7275",
+      "updated_at": "2026-09-17T15:42:36Z"
+    },
+    {
+      "number": 7285,
+      "title": "[Bug] DeepSeek 的 /responses 接受但静默忽略 input[].additional_tools，Codex (Responses Lite) 工具调用退化为 DSML 文本",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7285",
+      "updated_at": "2026-09-28T06:46:27Z"
+    },
+    {
+      "number": 7297,
+      "title": "[Bug] 「导入 CCS」在 deepseek/kimi/zhipu/minimax 等平台分组上错误生成 app=claude，导入后请求 404",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7297",
+      "updated_at": "2026-09-18T10:00:21Z"
+    },
+    {
+      "number": 7307,
+      "title": "Codex 模型目录给非 GPT 模型下发「based on GPT-5」提示词，经 Antigravity 账号必 429 RESOURCE_EXHAUSTED",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7307",
+      "updated_at": "2026-10-11T03:55:28Z"
+    },
+    {
+      "number": 7330,
+      "title": "[bug][openai] compact fallback 换模型后未重选平台，导致向 DeepSeek 账号请求 OpenAI 模型而 404",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7330",
+      "updated_at": "2026-09-19T12:15:58Z"
+    },
+    {
+      "number": 7355,
+      "title": "Unable to verify Daybreak Blue access. Please try again.",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7355",
+      "updated_at": "2026-09-19T06:19:59Z"
+    },
+    {
+      "number": 7368,
+      "title": "[问题] composite 路由表是否刻意不适用于 Responses WebSocket？路由目标为 grok 的模型在 WS 上被拒绝",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7368",
+      "updated_at": "2026-09-29T07:43:54Z"
+    },
+    {
+      "number": 7385,
+      "title": "[功能请求] 解耦账号平台与上游协议，支持强制指定 Anthropic / OpenAI Chat / Responses 及流式模式",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7385",
+      "updated_at": "2026-09-19T20:23:47Z"
+    },
+    {
+      "number": 7398,
+      "title": "[Bug] Grok 403（无可识别 body）逐个冷却 30 分钟，单个请求即可打停整个号池",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7398",
+      "updated_at": "2026-09-21T03:58:17Z"
+    },
+    {
+      "number": 7400,
+      "title": "bug(openai): 中途 system 前移导致多轮缓存前缀失效",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7400",
+      "updated_at": "2026-09-20T06:16:12Z"
+    },
+    {
+      "number": 7429,
+      "title": "[Feature] GLM Coding Plan 支持原生 Responses API 端点",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7429",
+      "updated_at": "2026-10-02T13:04:45Z"
+    },
+    {
+      "number": 7435,
+      "title": "[Bug] 提示词审计将文本内嵌的图片 Base64 逐块送审，容易耗尽总超时预算",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7435",
+      "updated_at": "2026-09-20T15:26:33Z"
+    },
+    {
+      "number": 7441,
+      "title": "[Suspected Bug] 导出的 CSV 中的 Reasoning Effort 列中的多余单引号",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7441",
+      "updated_at": "2026-09-22T10:10:36Z"
+    },
+    {
+      "number": 7458,
+      "title": "[Bug] /v1/chat/completions 流式首包 role chunk 过早提交:上游过载时无法 failover,产生 0-token 失败请求",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7458",
+      "updated_at": "2026-09-21T12:56:31Z"
+    },
+    {
+      "number": 7482,
+      "title": "[Bug] 内容审核：Claude Code 请求被静默跳过（messages 末尾追加 role:\"system\" 消息导致 last-message 提取为空）",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7482",
+      "updated_at": "2026-09-22T13:54:28Z"
+    },
+    {
+      "number": 7484,
+      "title": "[Bug] Grok 4.7 搜过网页后，同一段对话切到 OpenAI 模型会 400",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7484",
+      "updated_at": "2026-09-22T13:54:04Z"
+    },
+    {
+      "number": 7486,
+      "title": "生图 混在请求中。计费未走 定价策略 按次而是 按照 token",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7486",
+      "updated_at": "2026-09-22T13:39:52Z"
+    },
+    {
+      "number": 7517,
+      "title": "Group model allowlist: exact entries are admitted but never listed in /v1/models or the Codex catalog, so new models must wait for a release",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7517",
+      "updated_at": "2026-09-23T03:51:54Z"
+    },
+    {
+      "number": 7546,
+      "title": "bug: explicit prompt-cache hints fail across GPT chat forwarding",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7546",
+      "updated_at": "2026-09-23T14:11:12Z"
+    },
+    {
+      "number": 7561,
+      "title": "[Bug] Grok OAuth 的 Codex remote compaction v2 失败：上游 422、网关 502",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7561",
+      "updated_at": "2026-09-23T21:08:39Z"
+    },
+    {
+      "number": 7566,
+      "title": "请问opencode的免费模型报403有办法解决吗？",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7566",
+      "updated_at": "2026-09-24T05:01:41Z"
+    },
+    {
+      "number": 7583,
+      "title": "/v1/chat/completions 经 Antigravity 转发时静默丢弃 PDF（file part 未转成 inlineData）",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7583",
+      "updated_at": "2026-09-28T01:51:29Z"
+    },
+    {
+      "number": 7599,
+      "title": "麻烦作者看一下：你们有出现这个报错吗？ '^[a-zA-Z0-9_-]+$'.",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7599",
+      "updated_at": "2026-09-26T10:35:56Z"
+    },
+    {
+      "number": 7614,
+      "title": "Codex WebSocket compaction can retain previous_response_id across context windows",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7614",
+      "updated_at": "2026-09-28T02:05:07Z"
+    },
+    {
+      "number": 7625,
+      "title": "[Feature Request] Native Meta Muse app subscription support",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7625",
+      "updated_at": "2026-09-27T12:52:06Z"
+    },
+    {
+      "number": 7626,
+      "title": "feat(openai): sync the official OpenAI model catalog at runtime so new models don't wait for a release",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7626",
+      "updated_at": "2026-09-27T13:23:33Z"
+    },
+    {
+      "number": 7629,
+      "title": "Bug：Chat Completions 转 Responses 时缺少 type: \"message\"，导致 StepFun step-5-preview 多轮请求返回 400",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7629",
+      "updated_at": "2026-09-28T01:50:36Z"
+    },
+    {
+      "number": 7640,
+      "title": "commandcode Responses支持报错",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7640",
+      "updated_at": "2026-10-12T03:38:55Z"
+    },
+    {
+      "number": 7641,
+      "title": "GLM 系列模型（qwen/ZHIPU/GLM-5.3-Flash）经 sub2api 转发时报错 1214 \"输入不能为空\" / \"Stream ended before response.completed\"",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7641",
+      "updated_at": "2026-09-29T01:45:34Z"
+    },
+    {
+      "number": 7667,
+      "title": "OpenAI WS http_bridge 把 Codex 预热（generate=false）当成空 input 请求转给上游 / http_bridge forwards Codex WS prewarm upstream as an empty-input request",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7667",
+      "updated_at": "2026-09-28T12:11:03Z"
+    },
+    {
+      "number": 7690,
+      "title": "[计费] Grok 工具调用计数白名单与 xAI 官方 usage 口径不一致：漏计 code_interpreter/file_search/attachment_search，误计客户端 function_call",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7690",
+      "updated_at": "2026-09-29T03:13:28Z"
+    },
+    {
+      "number": 7694,
+      "title": "fix(openai): proxy Codex History/Notes endpoints after context-window rollover",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7694",
+      "updated_at": "2026-09-30T04:06:01Z"
+    },
+    {
+      "number": 7700,
+      "title": "[Bug] Responses：上游返回 thinking_signature_invalid 时未进入加密内容恢复逻辑，多轮对话持续报 400",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7700",
+      "updated_at": "2026-10-08T05:48:35Z"
+    },
+    {
+      "number": 7708,
+      "title": "[Bug] Responses：HTTP 200 SSE 返回加密工具结果解密失败，现有恢复逻辑未覆盖",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7708",
+      "updated_at": "2026-10-10T04:13:04Z"
+    },
+    {
+      "number": 7757,
+      "title": "Sticky session binding missing for /v1/responses endpoint with Antigravity accounts",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7757",
+      "updated_at": "2026-09-30T08:40:39Z"
+    },
+    {
+      "number": 7768,
+      "title": "[Feature] Opt-in legacy thinking compatibility for native Opus 5.5 Messages requests",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7768",
+      "updated_at": "2026-09-30T16:57:05Z"
+    },
+    {
+      "number": 7770,
+      "title": "[Bug] v0.2.11 串联 Sub2API 时 Fast 内层按 priority 计费，外层因响应 default 降为 Standard",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7770",
+      "updated_at": "2026-10-08T08:36:08Z"
+    },
+    {
+      "number": 7774,
+      "title": "fix: Grok 平台 /v1/responses 空 response.completed 静默拒绝未触发 #5009 故障转移，客户端收到成功空回复",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7774",
+      "updated_at": "2026-10-08T03:28:24Z"
+    },
+    {
+      "number": 7778,
+      "title": "fix: Grok Responses returns 426 — pinned CLIClientVersion 0.2.120 is below xAI's new minimum 1.0.13",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7778",
+      "updated_at": "2026-10-01T14:54:35Z"
+    },
+    {
+      "number": 7817,
+      "title": "antigravity平台频繁出现empty_stream报错",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7817",
+      "updated_at": "2026-10-05T03:54:16Z"
+    },
+    {
+      "number": 7835,
+      "title": "Grok explicit request refusals are cooled down as account permission errors",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7835",
+      "updated_at": "2026-10-03T12:34:44Z"
+    },
+    {
+      "number": 7838,
+      "title": "Codex 0.160.0+ 使用“使用密钥”页面提供的配置时无法获取模型列表",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7838",
+      "updated_at": "2026-10-07T00:27:19Z"
+    },
+    {
+      "number": 7857,
+      "title": "[Enhancement] APIKey 自定义上游不支持 Alpha 时，扩展 Responses hosted web_search 桥接",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7857",
+      "updated_at": "2026-10-04T10:00:11Z"
+    },
+    {
+      "number": 7858,
+      "title": "Antigravity: input_audio content part is silently dropped on /v1/chat/completions (model never receives audio)",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7858",
+      "updated_at": "2026-10-04T18:30:02Z"
+    },
+    {
+      "number": 7859,
+      "title": "Bug: /v1/chat/completions silently drops input_audio content parts",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7859",
+      "updated_at": "2026-10-04T18:53:21Z"
+    },
+    {
+      "number": 7868,
+      "title": "Anthropic thinking 块在无签名时缺少 signature 字段，严格客户端（Grok Build）解析失败",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7868",
+      "updated_at": "2026-10-08T03:27:16Z"
+    },
+    {
+      "number": 7873,
+      "title": "[Bug] Anthropic 流式中断时漏记 message_start.usage.output_tokens，导致输出少计费",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7873",
+      "updated_at": "2026-10-05T14:40:40Z"
+    },
+    {
+      "number": 7876,
+      "title": "[Bug] Kimi K3 流式响应提前结束，客户端误判为正常完成",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7876",
+      "updated_at": "2026-10-05T19:33:19Z"
+    },
+    {
+      "number": 7882,
+      "title": "[Bug] Codex 429 未考虑 credits：周窗口耗尽但积分可用的账号被冻结至窗口重置",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7882",
+      "updated_at": "2026-10-06T11:04:05Z"
+    },
+    {
+      "number": 7895,
+      "title": "Antigravity empty_stream storms: a terminal finishReason with no content is retried and unschedules the account",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7895",
+      "updated_at": "2026-10-07T03:11:47Z"
+    },
+    {
+      "number": 7927,
+      "title": "gpt 报错 response protection is unavailable",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7927",
+      "updated_at": "2026-10-09T03:50:30Z"
+    },
+    {
+      "number": 7937,
+      "title": "[Feature] 支持 Magpie",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7937",
+      "updated_at": "2026-10-08T08:59:08Z"
+    },
+    {
+      "number": 7942,
+      "title": "[Feature] Decisions API compatibility via synthesized Chat Completions with logprobs distribution passthrough",
+      "state": "closed",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7942",
+      "updated_at": "2026-10-08T12:02:05Z"
+    },
+    {
+      "number": 7946,
+      "title": "fix: OpenAI-compatible queue waits emit Anthropic JSON pings and crash strict streaming clients",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7946",
+      "updated_at": "2026-10-08T14:26:37Z"
+    },
+    {
+      "number": 7978,
+      "title": "Bug: /v1/responses returns SSE when stream=false",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7978",
+      "updated_at": "2026-10-14T08:01:36Z"
+    },
+    {
+      "number": 7980,
+      "title": "【功能建议】支持自定义 Codex OAuth 系统提示词，并统一不同 API 接口的处理逻辑",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7980",
+      "updated_at": "2026-10-10T00:30:58Z"
+    },
+    {
+      "number": 7984,
+      "title": "请求优化 Antigravity 模型的流式思考展示和首字统计（CPA 接入现象与原生接入咨询）",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7984",
+      "updated_at": "2026-10-10T02:40:17Z"
+    },
+    {
+      "number": 7997,
+      "title": "[紧急优化] 内容风控误判：日志“不能绕过安全”命中关键词导致反复停用账号，请补强研发白名单",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/7997",
+      "updated_at": "2026-10-10T08:15:13Z"
+    },
+    {
+      "number": 8000,
+      "title": "[bug]订阅模式的 Fast Mode 倍率是 2.5X  而不是2X，积分才是2X",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/8000",
+      "updated_at": "2026-10-10T20:03:44Z"
+    },
+    {
+      "number": 8015,
+      "title": "cline 请求支持provide服务商",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/8015",
+      "updated_at": "2026-10-11T08:08:16Z"
+    },
+    {
+      "number": 8019,
+      "title": "# [Bug] Codex → Claude Opus 5.5：仅返回 reasoning 后续请求报 final block cannot be thinking",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/8019",
+      "updated_at": "2026-10-12T01:51:29Z"
+    },
+    {
+      "number": 8020,
+      "title": "[BUG]v0.2.15版本设置强制 Responses会导致使用Chat Completions时无法调用工具",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/8020",
+      "updated_at": "2026-10-13T08:37:52Z"
+    },
+    {
+      "number": 8025,
+      "title": "MiniMax M3 / M3.1-Flash-Preview 思考档位支持缺口：M3.1 的 output_config.effort 未接通，M3 默认关闭思考却记为 high",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/8025",
+      "updated_at": "2026-10-12T03:29:47Z"
+    },
+    {
+      "number": 8043,
+      "title": "[Feature Request] Composite 分组支持同一模型跨多平台调度：多目标平台候选池 + 两级负载均衡",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/8043",
+      "updated_at": "2026-10-12T17:23:47Z"
+    },
+    {
+      "number": 8059,
+      "title": "[Billing] 删除 API Key 可跳过扣费：请求成功返回但 actual_cost 记 0",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/8059",
+      "updated_at": "2026-10-14T02:05:46Z"
+    },
+    {
+      "number": 8074,
+      "title": "bug: api_base_urls 在 Anthropic 网关主转发路径被静默忽略 —— 入站 /v1/messages 时 adaptive 账号走错上游 base",
+      "state": "open",
+      "url": "https://github.com/Wei-Shaw/sub2api/issues/8074",
+      "updated_at": "2026-10-14T04:36:05Z"
+    }
+  ]
+}

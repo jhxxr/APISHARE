@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -29,6 +30,24 @@ func protocolID(prefix string) string {
 
 func protocolIDPrefix(format clientFormat) string {
 	return map[clientFormat]string{FormatAnthropic: "msg_", FormatOpenAIChat: "chatcmpl-", FormatOpenAIResponse: "resp_", FormatGemini: "conv_"}[format]
+}
+
+// Output item IDs and tool call IDs have different lifetimes. Keep call IDs
+// untouched, but use the item type's prefix when clients replay output items.
+func responseItemID(responseID string, index int, block responseBlock) string {
+	prefix := "msg_"
+	switch block.Kind {
+	case "thinking":
+		prefix = "rs_"
+	case "tool":
+		prefix = "fc_"
+		if block.ToolType == "custom" {
+			prefix = "ctc_"
+		} else if block.ToolType == "tool_search" {
+			prefix = "tsc_"
+		}
+	}
+	return fmt.Sprintf("%s%s_%d", prefix, strings.TrimPrefix(responseID, "resp_"), index)
 }
 func readUsage(j map[string]any, format clientFormat) upstreamUsage {
 	u := upstreamUsage{}
@@ -58,7 +77,7 @@ func normalizeFinish(reason string) string {
 		return "length"
 	case "tool_use", "tool_calls", "function_call":
 		return "tool_calls"
-	case "SAFETY", "RECITATION", "PROHIBITED_CONTENT", "BLOCKLIST", "content_filter", "refusal":
+	case "SAFETY", "RECITATION", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT", "IMAGE_RECITATION", "ESCALATION", "content_filter", "refusal":
 		return "content_filter"
 	case "stop_sequence":
 		return "stop_sequence"
@@ -87,8 +106,8 @@ func (r *canonResponse) hasTools() bool {
 }
 
 func parseProtocolResponse(format clientFormat, body []byte) (*canonResponse, error) {
-	var j map[string]any
-	if json.Unmarshal(body, &j) != nil || j == nil {
+	j, decodeErr := decodeProtocolObject(body)
+	if decodeErr != nil {
 		return nil, fmt.Errorf("upstream returned invalid JSON")
 	}
 	if j["error"] != nil {
@@ -106,7 +125,7 @@ func parseProtocolResponse(format clientFormat, body []byte) (*canonResponse, er
 		if msg == nil {
 			return nil, fmt.Errorf("upstream response is missing message")
 		}
-		if text := str(msg["reasoning_content"]); text != "" {
+		if text := chatReasoningText(msg); text != "" {
 			r.Blocks = append(r.Blocks, responseBlock{Kind: "thinking", Text: text})
 		}
 		if text := contentText(msg["content"]); text != "" {
@@ -149,11 +168,17 @@ func parseProtocolResponse(format clientFormat, body []byte) (*canonResponse, er
 		r.StopSequence = str(j["stop_sequence"])
 		r.Usage = readUsage(object(j["usage"]), format)
 	case FormatGemini:
+		if geminiPromptBlocked(j) {
+			return nil, fmt.Errorf("upstream Gemini prompt blocked: %s", str(object(j["promptFeedback"])["blockReason"]))
+		}
 		cs := array(j["candidates"])
-		if len(cs) == 0 {
+		c := geminiPrimaryCandidate(cs)
+		if c == nil {
 			return nil, fmt.Errorf("upstream response is missing candidates")
 		}
-		c := object(cs[0])
+		if err := geminiFinishError(str(c["finishReason"])); err != nil {
+			return nil, err
+		}
 		for _, v := range array(object(c["content"])["parts"]) {
 			p := object(v)
 			if f := object(p["functionCall"]); f != nil {
@@ -164,6 +189,8 @@ func parseProtocolResponse(format clientFormat, body []byte) (*canonResponse, er
 					kind = "thinking"
 				}
 				r.Blocks = append(r.Blocks, responseBlock{Kind: kind, Text: s})
+			} else if p["thoughtSignature"] != nil && len(p) == 1 {
+				// A signature-only trailer carries no portable output content.
 			} else {
 				return nil, unsupported("upstream Gemini non-text part")
 			}
@@ -196,7 +223,11 @@ func parseProtocolResponse(format clientFormat, body []byte) (*canonResponse, er
 			case "function_call":
 				r.Blocks = append(r.Blocks, responseBlock{Kind: "tool", Call: canonCall{str(o["call_id"]), str(o["name"]), str(o["arguments"])}})
 			case "reasoning":
-				for _, v := range array(o["summary"]) {
+				parts := array(o["summary"])
+				if len(parts) == 0 {
+					parts = array(o["content"])
+				}
+				for _, v := range parts {
 					r.Blocks = append(r.Blocks, responseBlock{Kind: "thinking", Text: str(object(v)["text"])})
 				}
 			default:
@@ -211,6 +242,10 @@ func parseProtocolResponse(format clientFormat, body []byte) (*canonResponse, er
 		}
 		r.Usage = readUsage(object(j["usage"]), format)
 	}
+	return normalizeProtocolResponse(r)
+}
+
+func normalizeProtocolResponse(r *canonResponse) (*canonResponse, error) {
 	if r.hasTools() && r.Finish == "stop" {
 		r.Finish = "tool_calls"
 	}
@@ -281,8 +316,7 @@ func renderProtocolResponse(format clientFormat, model, id string, r *canonRespo
 			case "thinking":
 				blocks = append(blocks, map[string]any{"type": "thinking", "thinking": b.Text, "signature": ""})
 			case "tool":
-				var args any
-				json.Unmarshal([]byte(b.Call.Arguments), &args)
+				args, _ := decodeProtocolObject([]byte(b.Call.Arguments))
 				blocks = append(blocks, map[string]any{"type": "tool_use", "id": b.Call.ID, "name": b.Call.Name, "input": args})
 			}
 		}
@@ -295,8 +329,7 @@ func renderProtocolResponse(format clientFormat, model, id string, r *canonRespo
 		parts := []any{}
 		for _, b := range r.Blocks {
 			if b.Kind == "tool" {
-				var args any
-				json.Unmarshal([]byte(b.Call.Arguments), &args)
+				args, _ := decodeProtocolObject([]byte(b.Call.Arguments))
 				parts = append(parts, map[string]any{"functionCall": map[string]any{"id": b.Call.ID, "name": b.Call.Name, "args": args}})
 			} else {
 				j := map[string]any{"text": b.Text}
@@ -310,7 +343,7 @@ func renderProtocolResponse(format clientFormat, model, id string, r *canonRespo
 	case FormatOpenAIResponse:
 		output := []any{}
 		for i, b := range r.Blocks {
-			itemID := fmt.Sprintf("%s_%d", id, i)
+			itemID := responseItemID(id, i, b)
 			switch b.Kind {
 			case "text":
 				output = append(output, map[string]any{"id": itemID, "type": "message", "status": "completed", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": b.Text, "annotations": []any{}}}})

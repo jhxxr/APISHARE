@@ -51,14 +51,14 @@ func validOpenAIProtocol(p string) bool {
 }
 
 func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
-	var m map[string]any
-	if json.Unmarshal(body, &m) != nil || m == nil {
+	m, decodeErr := decodeProtocolObject(body)
+	if decodeErr != nil {
 		return fmt.Errorf("invalid JSON object")
 	}
 	cr.Messages = nil
 	cr.System = ""
 	var systemForInput string
-	if v, ok := m["top_p"].(float64); ok {
+	if v, ok := protocolFloat(m["top_p"]); ok {
 		cr.TopP = &v
 	}
 	if v, ok := m["parallel_tool_calls"].(bool); ok {
@@ -76,7 +76,10 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 			cr.ReasoningEffort = effort
 		}
 	}
-	for _, key := range []string{"response_format", "context_management", "functions", "function_call", "audio", "modalities"} {
+	if cfg := object(m["response_format"]); m["response_format"] != nil && str(cfg["type"]) != "text" {
+		return unsupported("Chat structured output format")
+	}
+	for _, key := range []string{"context_management", "functions", "function_call", "audio", "modalities"} {
 		if m[key] != nil {
 			return unsupported(key)
 		}
@@ -86,7 +89,7 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 			return unsupported("Responses structured output format")
 		}
 	}
-	if cfg := object(m["generationConfig"]); cfg["responseSchema"] != nil || cfg["responseJsonSchema"] != nil || cfg["responseMimeType"] != nil {
+	if cfg := object(m["generationConfig"]); cfg["responseSchema"] != nil || cfg["responseJsonSchema"] != nil || (cfg["responseMimeType"] != nil && str(cfg["responseMimeType"]) != "text/plain") {
 		return unsupported("Gemini structured output format")
 	}
 	stopKey := "stop"
@@ -105,7 +108,7 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 			return unsupported(key + " (send the full conversation when converting)")
 		}
 	}
-	if n, _ := m["n"].(float64); n > 1 {
+	if n, _ := protocolFloat(m["n"]); n > 1 {
 		return unsupported("multiple choices (n > 1)")
 	}
 	if format == FormatOpenAIResponse {
@@ -120,6 +123,8 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 	usedGeminiToolIDs := map[string]bool{}
 	pendingReasoning := ""
 	var pendingReasoningIDs []string
+	var pendingReasoningItems []canonReasoning
+	pendingAssigned := false
 	appendMessage := func(msg canonMsg) {
 		for _, c := range msg.Calls {
 			toolNames[c.ID] = c.Name
@@ -130,10 +135,12 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 		if format == FormatOpenAIResponse {
 			if msg.Role == "user" {
 				pendingReasoning, pendingReasoningIDs = "", nil
+				pendingReasoningItems, pendingAssigned = nil, false
 			}
 			if msg.Role == "assistant" {
 				msg.Reasoning = pendingReasoning
 				msg.ReasoningIDs = append([]string(nil), pendingReasoningIDs...)
+				msg.ReasoningItems = append([]canonReasoning(nil), pendingReasoningItems...)
 				// One Responses turn may contain several calls. Chat providers require
 				// one assistant tool_calls batch followed by all matching tool results.
 				if n := len(cr.Messages); n > 0 && cr.Messages[n-1].Role == "assistant" {
@@ -141,11 +148,17 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 					last.Calls = append(last.Calls, msg.Calls...)
 					last.Parts = append(last.Parts, msg.Parts...)
 					last.Text = partsText(last.Parts)
-					if msg.Reasoning != "" || len(msg.ReasoningIDs) > 0 {
-						last.Reasoning, last.ReasoningIDs = msg.Reasoning, msg.ReasoningIDs
+					if !pendingAssigned {
+						if msg.Reasoning != "" {
+							last.Reasoning = joinSystem(last.Reasoning, msg.Reasoning)
+						}
+						last.ReasoningIDs = append(last.ReasoningIDs, msg.ReasoningIDs...)
+						last.ReasoningItems = append(last.ReasoningItems, msg.ReasoningItems...)
 					}
+					pendingAssigned = true
 					return
 				}
+				pendingAssigned = true
 			}
 		}
 		cr.Messages = append(cr.Messages, msg)
@@ -160,6 +173,9 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 				continue
 			}
 			msg := canonMsg{Role: role, ToolID: str(j["tool_call_id"]), ToolName: str(j["name"])}
+			if role == "assistant" {
+				msg.Reasoning = chatReasoningText(j)
+			}
 			parts, err := parseCanonParts(format, j["content"])
 			if err != nil {
 				return err
@@ -190,6 +206,10 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 				j := object(v)
 				switch str(j["type"]) {
 				case "reasoning":
+					if pendingAssigned {
+						pendingReasoning, pendingReasoningIDs = "", nil
+						pendingReasoningItems, pendingAssigned = nil, false
+					}
 					var texts []string
 					for _, raw := range array(j["summary"]) {
 						if text := str(object(raw)["text"]); text != "" {
@@ -201,10 +221,13 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 							texts = append(texts, text)
 						}
 					}
-					pendingReasoning = strings.Join(texts, "\n")
-					pendingReasoningIDs = nil
+					text := strings.Join(texts, "\n")
+					if text != "" {
+						pendingReasoning = joinSystem(pendingReasoning, text)
+					}
+					pendingReasoningItems = append(pendingReasoningItems, canonReasoning{str(j["id"]), text})
 					if id := str(j["id"]); id != "" {
-						pendingReasoningIDs = []string{id}
+						pendingReasoningIDs = append(pendingReasoningIDs, id)
 					}
 				case "", "message":
 					role := str(j["role"])
@@ -220,11 +243,25 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 				case "function_call":
 					appendMessage(canonMsg{Role: "assistant", Calls: []canonCall{{str(j["call_id"]), str(j["name"]), str(j["arguments"])}}})
 				case "function_call_output":
-					parts, err := parseCanonParts(format, j["output"])
+					if text, ok := codexDelegationInput(j); ok {
+						appendMessage(canonMsg{Role: "user", Text: text, Parts: []canonPart{{Kind: "text", Text: text}}})
+						continue
+					}
+					parts, err := parseResponsesToolOutput(j["output"])
 					if err != nil {
 						return err
 					}
 					appendMessage(canonMsg{Role: "tool", ToolID: str(j["call_id"]), Parts: parts, Text: partsText(parts)})
+				case "agent_message":
+					// Preserve readable task content; opaque encrypted content requires
+					// a native endpoint, not treating ciphertext as a user prompt.
+					parts, err := parseCanonParts(format, j["content"])
+					if err != nil {
+						return err
+					}
+					if len(parts) > 0 {
+						appendMessage(canonMsg{Role: "user", Parts: parts, Text: partsText(parts)})
+					}
 				default:
 					return unsupported("Responses input item " + str(j["type"]))
 				}
@@ -268,7 +305,7 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 			}
 			msg := canonMsg{Role: role}
 			flush := func() {
-				if len(msg.Parts) > 0 || len(msg.Calls) > 0 {
+				if len(msg.Parts) > 0 || len(msg.Calls) > 0 || msg.Reasoning != "" {
 					msg.Text = partsText(msg.Parts)
 					appendMessage(msg)
 					msg = canonMsg{Role: role}
@@ -289,8 +326,12 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 						parts = append([]canonPart{{Kind: "text", Text: "Tool error: "}}, parts...)
 					}
 					appendMessage(canonMsg{Role: "tool", ToolID: str(b["tool_use_id"]), Parts: parts, Text: partsText(parts)})
-				case "thinking", "redacted_thinking":
-					// Provider signatures cannot be replayed on another provider; omit only replayed thinking.
+				case "thinking":
+					if text := str(b["thinking"]); text != "" {
+						msg.Reasoning = joinSystem(msg.Reasoning, text)
+					}
+				case "redacted_thinking":
+					// Provider signatures and encrypted state cannot be replayed.
 				default:
 					parts, err := parseCanonParts(format, []any{b})
 					if err != nil {
@@ -304,8 +345,21 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 	case FormatGemini:
 		cr.System = contentText(object(m["systemInstruction"])["parts"])
 		gc := object(m["generationConfig"])
-		if v, ok := gc["topP"].(float64); ok {
+		if v, ok := protocolFloat(gc["topP"]); ok {
 			cr.TopP = &v
+		}
+		if n, _ := protocolFloat(gc["candidateCount"]); n > 1 {
+			return unsupported("multiple Gemini candidates")
+		}
+		for _, field := range []string{"cachedContent", "continuationToken", "safetySettings"} {
+			if m[field] != nil {
+				return unsupported("Gemini " + field)
+			}
+		}
+		for _, field := range []string{"thinkingConfig", "topK", "responseModalities", "mediaResolution"} {
+			if gc[field] != nil {
+				return unsupported("Gemini " + field)
+			}
 		}
 		for _, v := range array(gc["stopSequences"]) {
 			cr.Stop = append(cr.Stop, str(v))
@@ -385,12 +439,12 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 			}
 		}
 	}
-	if format == FormatOpenAIResponse {
-		var err error
-		cr.Messages, err = normalizeResponsesHistory(cr.Messages)
-		if err != nil {
-			return err
-		}
+	// All converted formats must supply complete call/result batches. Native
+	// requests keep their original transcript, even when conversion fails.
+	var historyErr error
+	cr.Messages, historyErr = normalizeResponsesHistory(cr.Messages)
+	if historyErr != nil {
+		return historyErr
 	}
 	if len(cr.Messages) > 0 || cr.System != "" {
 		if format != FormatAnthropic {
@@ -588,6 +642,19 @@ func parseCanonTools(cr *canonReq, format clientFormat, m map[string]any) error 
 	default:
 		return unsupported("tool_choice " + cr.ToolChoice)
 	}
+	declared := map[string]bool{}
+	for _, tool := range cr.Tools {
+		if declared[tool.Name] {
+			return fmt.Errorf("duplicate tool name %q", tool.Name)
+		}
+		declared[tool.Name] = true
+	}
+	if cr.ToolChoice == "function" && !declared[cr.ToolName] {
+		return fmt.Errorf("tool_choice references undeclared function %q", cr.ToolName)
+	}
+	if cr.ToolChoice == "required" && len(cr.Tools) == 0 {
+		return fmt.Errorf("required tool_choice has no tools")
+	}
 	return nil
 }
 
@@ -702,7 +769,15 @@ func renderProtocolRequest(format clientFormat, cr *canonReq, model string) ([]b
 	if cr.System != "" && format == FormatOpenAIChat {
 		msgs = append(msgs, map[string]any{"role": "system", "content": cr.System})
 	}
-	for _, msg := range cr.Messages {
+	messages := cr.Messages
+	if format == FormatOpenAIChat || format == FormatGemini {
+		messages = liftToolResultImages(messages)
+	}
+	for _, msg := range messages {
+		if format != FormatOpenAIChat && msg.Role == "assistant" && msg.Reasoning != "" && len(messageParts(msg)) == 0 && len(msg.Calls) == 0 {
+			// Plaintext reasoning alone is not a valid portable assistant turn.
+			continue
+		}
 		parts, err := renderCanonParts(format, messageParts(msg))
 		if err != nil {
 			return nil, err
@@ -765,8 +840,8 @@ func renderProtocolRequest(format clientFormat, cr *canonReq, model string) ([]b
 				parts = []any{map[string]any{"type": "tool_result", "tool_use_id": msg.ToolID, "content": parts}}
 			}
 			for _, c := range msg.Calls {
-				var input any
-				if json.Unmarshal([]byte(c.Arguments), &input) != nil {
+				input, decodeErr := decodeProtocolObject([]byte(c.Arguments))
+				if decodeErr != nil {
 					return nil, fmt.Errorf("invalid tool arguments")
 				}
 				parts = append(parts, map[string]any{"type": "tool_use", "id": c.ID, "name": c.Name, "input": input})
@@ -787,14 +862,18 @@ func renderProtocolRequest(format clientFormat, cr *canonReq, model string) ([]b
 					return nil, fmt.Errorf("tool result %q has no matching function name", msg.ToolID)
 				}
 				var result any
-				if json.Unmarshal([]byte(msg.Text), &result) != nil || object(result) == nil {
+				decoded, decodeErr := decodeProtocolObject([]byte(msg.Text))
+				result = decoded
+				if decodeErr != nil {
 					result = map[string]any{"result": msg.Text}
 				}
 				parts = []any{map[string]any{"functionResponse": map[string]any{"id": msg.ToolID, "name": msg.ToolName, "response": result}}}
 			}
 			for _, c := range msg.Calls {
-				var args any
-				json.Unmarshal([]byte(c.Arguments), &args)
+				args, decodeErr := decodeProtocolObject([]byte(c.Arguments))
+				if decodeErr != nil {
+					return nil, fmt.Errorf("invalid Gemini function arguments: %w", decodeErr)
+				}
 				parts = append(parts, map[string]any{"functionCall": map[string]any{"id": c.ID, "name": c.Name, "args": args}})
 			}
 			msgs = append(msgs, map[string]any{"role": role, "parts": parts})
@@ -888,10 +967,7 @@ func renderProtocolRequest(format clientFormat, cr *canonReq, model string) ([]b
 	if len(cr.Tools) > 0 {
 		tools := []any{}
 		for _, t := range cr.Tools {
-			schema := t.Schema
-			if schema == nil {
-				schema = map[string]any{"type": "object", "properties": map[string]any{}}
-			}
+			schema := functionParameterSchema(t.Schema)
 			f := map[string]any{"name": t.Name, "description": t.Description, "parameters": schema}
 			switch format {
 			case FormatAnthropic:
@@ -905,6 +981,10 @@ func renderProtocolRequest(format clientFormat, cr *canonReq, model string) ([]b
 				f["type"] = "function"
 				if t.Strict != nil {
 					f["strict"] = *t.Strict
+				} else {
+					// Converted Chat/Anthropic functions are non-strict by default.
+					// Responses otherwise attempts to strengthen their schemas.
+					f["strict"] = false
 				}
 			case FormatGemini:
 				delete(f, "parameters")
@@ -922,7 +1002,7 @@ func renderProtocolRequest(format clientFormat, cr *canonReq, model string) ([]b
 			m["tools"] = tools
 		}
 	}
-	if cr.ToolChoice != "" {
+	if cr.ToolChoice != "" && len(cr.Tools) > 0 {
 		switch format {
 		case FormatAnthropic:
 			typ := cr.ToolChoice

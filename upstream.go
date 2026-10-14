@@ -117,6 +117,14 @@ func (u *Upstream) mapModel(clientModel string) string {
 // nativeOnly=true 时（如 embeddings）只考虑原生类型。
 //
 // exclude 里的上游（本轮已试过的）不重复选择。weight<=0 的上游不接新流量。
+func supportsNativeEndpoint(up *Upstream, format clientFormat) bool {
+	if up.Type != format.nativeUpstreamType() {
+		return false
+	}
+	// Responses-only operations such as compact cannot use a Chat-only channel.
+	return format != FormatOpenAIResponse || up.wireFormat(format) == FormatOpenAIResponse
+}
+
 func pickUpstream(format clientFormat, model string, exclude map[int64]bool, nativeOnly bool) (*Upstream, error) {
 	snapshot, err := getRoutingSnapshot()
 	if err != nil {
@@ -134,7 +142,7 @@ func pickUpstream(format clientFormat, model string, exclude map[int64]bool, nat
 		}
 		var tier int
 		if nativeOnly {
-			if u.Type != format.nativeUpstreamType() {
+			if !supportsNativeEndpoint(&u, format) {
 				continue
 			}
 			tier = 0

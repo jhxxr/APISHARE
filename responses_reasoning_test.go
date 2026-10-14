@@ -96,3 +96,37 @@ func TestResponsesReasoningConcurrentReplay(t *testing.T) {
 		t.Fatal("oversized replay key was cached")
 	}
 }
+
+func TestResponsesMultipleReasoningItemsKeepIndividualCacheEntries(t *testing.T) {
+	resetResponseReasoningForTest(t)
+	scope := responseReplayScope{1, 2, "alias", "deepseek"}
+	cr := parseCodexFixture(t, `{"model":"alias","input":[{"role":"user","content":"work"},{"type":"reasoning","id":"rs_a","summary":[{"type":"summary_text","text":"first plan"}]},{"type":"reasoning","id":"rs_b","summary":[{"type":"summary_text","text":"second plan"}]},{"type":"function_call","call_id":"a","name":"read","arguments":"{}"},{"type":"function_call","call_id":"b","name":"read","arguments":"{}"},{"type":"function_call_output","call_id":"b","output":"B"},{"type":"function_call_output","call_id":"a","output":"A"}]}`)
+	if cr.Messages[1].Reasoning != "first plan\nsecond plan" || len(cr.Messages[1].ReasoningItems) != 2 || len(cr.Messages[1].Calls) != 2 {
+		t.Fatalf("parallel tool batch lost or duplicated reasoning: %+v", cr.Messages)
+	}
+	got := replayResponseReasoning(cr.Messages, scope)
+	if got[1].Reasoning != "first plan\nsecond plan" || lookupResponseReasoning(scope, "rs_a") != "first plan" || lookupResponseReasoning(scope, "rs_b") != "second plan" {
+		t.Fatal("combined reasoning was cached under individual item IDs")
+	}
+	opaque := []canonMsg{{Role: "assistant", ReasoningIDs: []string{"rs_a", "rs_b"}}}
+	if replayResponseReasoning(opaque, scope)[0].Reasoning != "first plan\nsecond plan" || lookupResponseReasoning(scope, "rs_b") != "second plan" {
+		t.Fatal("opaque multi-item replay dropped an item or corrupted its cache")
+	}
+}
+
+func TestResponsesMixedPlaintextAndOpaqueReasoningStayDistinct(t *testing.T) {
+	resetResponseReasoningForTest(t)
+	scope := responseReplayScope{1, 2, "alias", "deepseek"}
+	cacheResponseReasoning(scope, "rs_opaque", "cached plan")
+	cr := parseCodexFixture(t, `{"model":"alias","input":[{"role":"user","content":"work"},{"type":"reasoning","id":"rs_plain","summary":[{"type":"summary_text","text":"plain plan"}]},{"type":"reasoning","id":"rs_opaque","summary":[]},{"type":"function_call","call_id":"a","name":"read","arguments":"{}"},{"type":"reasoning","id":"rs_after","summary":[{"type":"summary_text","text":"extra plan"}]},{"type":"function_call","call_id":"b","name":"read","arguments":"{}"},{"type":"function_call_output","call_id":"a","output":"A"},{"type":"function_call_output","call_id":"b","output":"B"},{"role":"user","content":"next"},{"role":"assistant","content":"answer"}]}`)
+	got := replayResponseReasoning(cr.Messages, scope)
+	if got[1].Reasoning != "plain plan\ncached plan\nextra plan" || lookupResponseReasoning(scope, "rs_plain") != "plain plan" || lookupResponseReasoning(scope, "rs_opaque") != "cached plan" || lookupResponseReasoning(scope, "rs_after") != "extra plan" {
+		t.Fatalf("reasoning identities were mixed: %+v", got)
+	}
+	if got[len(got)-1].Reasoning != "" {
+		t.Fatal("reasoning carried into a later user turn")
+	}
+	if cr.Messages[1].Reasoning != "plain plan\nextra plan" {
+		t.Fatal("retry changed the original reasoning span")
+	}
+}

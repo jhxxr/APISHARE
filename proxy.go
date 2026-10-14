@@ -143,7 +143,6 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 		skey := sessionKeyFromCanon(endpoint, c.Request.Header, cr)
 
 		s := getSettings()
-		nativeType := format.nativeUpstreamType()
 		tried := map[int64]bool{}
 		attempts := 1 + s.Retry
 		var info relayInfo
@@ -164,7 +163,7 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			if i == 0 {
 				if id, ok := affinityGet(skey); ok {
 					if u, err := cachedRoutingUpstream(id); err == nil && !tried[u.ID] && u.Enabled && u.Weight > 0 &&
-						u.servesModel(cr.Model) && healthAvailable(u.ID) && (!nativeOnly || u.Type == nativeType) {
+						u.servesModel(cr.Model) && healthAvailable(u.ID) && (!nativeOnly || supportsNativeEndpoint(u, format)) {
 						up = u
 					}
 				}
@@ -353,6 +352,9 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	req.Header.Set("Content-Type", "application/json")
 	if task.stream {
 		req.Header.Set("Accept", "text/event-stream")
+		// Compressors that do not flush each SSE frame can hide the entire
+		// reasoning phase. An upstream may explicitly override this in headers.
+		req.Header.Set("Accept-Encoding", "identity")
 	}
 	switch up.Type {
 	case "anthropic":
@@ -425,13 +427,33 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	isSSE := strings.Contains(ct, "text/event-stream")
 
 	if native {
-		if task.stream && isSSE {
-			err = relaySSENative(c, resp, task.format, &info)
-			return info, true, err
+		if !task.stream && isSSE && (!task.nativeOnly || task.format == FormatOpenAIResponse) {
+			body, err := collectNativeProtocolSSE(resp.Body, task.format, &info)
+			if err != nil {
+				return info, false, err
+			}
+			var finalInfo relayInfo
+			parseNativeNonStream(task.format, body, &finalInfo)
+			info.mergeUsage(upstreamUsage{Prompt: finalInfo.PromptTok, Completion: finalInfo.CompletionTok, InKnown: finalInfo.InKnown, OutKnown: finalInfo.OutKnown})
+			if finalInfo.OutputText.Len() > 0 {
+				info.OutputText.Reset()
+				info.OutputText.WriteString(finalInfo.OutputText.String())
+			}
+			c.Data(http.StatusOK, "application/json", body)
+			return info, true, nil
 		}
-		b, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+		if task.stream && isSSE {
+			err = relaySSENative(c, resp, task.format, &info, !task.nativeOnly)
+			return info, c.Writer.Written(), err
+		}
+		b, err := readProtocolBody(resp.Body, 64<<20)
 		if err != nil {
 			return info, false, err
+		}
+		if !task.nativeOnly || task.format == FormatOpenAIResponse {
+			if err := nativeProtocolResponseError(task.format, b); err != nil {
+				return info, false, err
+			}
 		}
 		parseNativeNonStream(task.format, b, &info)
 		c.Data(info.Status, ct, b)
@@ -440,13 +462,20 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 
 	if task.stream && isSSE {
 		err = relayProtocolSSE(c, resp, wireFormat, task, &info)
-		return info, true, err
+		return info, c.Writer.Written(), err
 	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
-	if err != nil {
-		return info, false, err
+	var result *canonResponse
+	if isSSE {
+		// Some upstreams always stream. Buffer only for non-streaming clients;
+		// do not commit a response until a valid terminal event has arrived.
+		result, err = collectProtocolSSE(resp.Body, wireFormat)
+	} else {
+		var b []byte
+		b, err = readProtocolBody(resp.Body, 64<<20)
+		if err == nil {
+			result, err = parseProtocolResponse(wireFormat, b)
+		}
 	}
-	result, err := parseProtocolResponse(wireFormat, b)
 	if err != nil {
 		return info, false, err
 	}
@@ -486,35 +515,71 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 }
 
 // relaySSENative 原生透传：逐行转发 SSE，同时按客户端格式解析用量与输出文本。
-func relaySSENative(c *gin.Context, resp *http.Response, format clientFormat, info *relayInfo) error {
-	h := c.Writer.Header()
-	h.Set("Content-Type", "text/event-stream; charset=utf-8")
-	h.Set("Cache-Control", "no-cache")
-	h.Set("X-Accel-Buffering", "no")
-	c.Writer.WriteHeader(http.StatusOK)
-
+func relaySSENative(c *gin.Context, resp *http.Response, format clientFormat, info *relayInfo, checkTerminal ...bool) error {
+	verify := len(checkTerminal) == 0 || checkTerminal[0]
 	flusher, _ := c.Writer.(http.Flusher)
 	reader := bufio.NewReaderSize(resp.Body, 1<<16)
+	terminal := false
+	var data []string
+	frameSize := 0
+	consume := func() error {
+		if len(data) == 0 {
+			return nil
+		}
+		payload := strings.Join(data, "\n")
+		data, frameSize = nil, 0
+		if strings.TrimSpace(payload) == "" {
+			return nil
+		}
+		recordNativeEvent(format, payload, info)
+		if !verify {
+			return nil
+		}
+		done, err := nativeSSETerminal(format, payload)
+		terminal = terminal || done
+		return err
+	}
 
 	for {
 		line, rerr := reader.ReadString('\n')
 		if line != "" {
 			if strings.HasPrefix(line, "data:") {
-				payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-				if payload != "" && payload != "[DONE]" {
-					recordNativeEvent(format, payload, info)
+				payload := strings.TrimPrefix(strings.TrimRight(line, "\r\n"), "data:")
+				payload = strings.TrimPrefix(payload, " ")
+				frameSize += len(payload)
+				if frameSize > maxBodyBytes {
+					return fmt.Errorf("upstream SSE frame too large")
 				}
+				data = append(data, payload)
+			}
+			if !c.Writer.Written() {
+				h := c.Writer.Header()
+				h.Set("Content-Type", "text/event-stream; charset=utf-8")
+				h.Set("Cache-Control", "no-cache")
+				h.Set("X-Accel-Buffering", "no")
+				c.Writer.WriteHeader(http.StatusOK)
 			}
 			if _, err := c.Writer.WriteString(line); err != nil {
 				return fmt.Errorf("%w: %w", errDownstreamWrite, err)
 			}
-			if line == "\n" && flusher != nil {
-				flusher.Flush()
+			if line == "\n" || line == "\r\n" {
+				if flusher != nil {
+					flusher.Flush()
+				}
+				if err := consume(); err != nil {
+					return err
+				}
 			}
 		}
 		if rerr != nil {
 			if rerr == io.EOF {
-				if flusher != nil {
+				if err := consume(); err != nil {
+					return err
+				}
+				if verify && !terminal {
+					return io.ErrUnexpectedEOF
+				}
+				if flusher != nil && c.Writer.Written() {
 					flusher.Flush()
 				}
 				return nil
@@ -549,12 +614,24 @@ func recordNativeEvent(format clientFormat, payload string, info *relayInfo) {
 		usage = object(object(j["message"])["usage"])
 	}
 	if format == FormatOpenAIResponse {
-		usage = object(object(j["response"])["usage"])
+		response := object(j["response"])
+		if response == nil {
+			response = j
+		}
+		usage = object(response["usage"])
 	}
 	info.mergeUsage(readUsage(usage, format))
 }
 
 func intFromAny(v any) int {
+	if n, ok := v.(json.Number); ok {
+		if integer, err := n.Int64(); err == nil {
+			return int(integer)
+		}
+		if number, err := n.Float64(); err == nil {
+			return int(number)
+		}
+	}
 	if f, ok := v.(float64); ok {
 		return int(f)
 	}

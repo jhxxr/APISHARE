@@ -57,6 +57,7 @@ func main() {
 	v1.Use(corsV1(), keyAuth(), keyRateLimit())
 	v1.POST("/chat/completions", relayHandler(FormatOpenAIChat, false))
 	v1.POST("/responses", relayHandler(FormatOpenAIResponse, false))
+	v1.POST("/responses/compact", relayHandler(FormatOpenAIResponse, true))
 	v1.POST("/messages", relayHandler(FormatAnthropic, false))
 	v1.POST("/embeddings", relayHandler(FormatOpenAIChat, true))
 	registerModelRoutes(v1)

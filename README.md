@@ -50,26 +50,55 @@ Anthropic SDK / Claude Code → /v1/messages
 | OpenAI Responses / `responses` | 所有对话请求统一发送到 `/v1/responses`；只支持 Responses 的上游选此项 |
 | OpenAI · 旧配置（跟随客户端） / `auto` 或空值 | 沿用旧行为：OpenAI Chat / Responses 请求使用对应端点，Anthropic / Gemini 请求转换为 Chat；仅编辑旧连接时显示此选项，升级或修改其他字段不会改变其格式 |
 
-支持四种客户端格式与四种上游接口（Chat、Responses、Anthropic、Gemini）的互相转换：
+支持四种客户端格式与四种上游接口（Chat、Responses、Anthropic、Gemini）的基础对话与函数工具转换。高级能力和已知边界见 [Codex Responses 完整排查清单](docs/SUB2API_RESPONSES_AUDIT.md)：
 
 - system、多轮文本、max_tokens、temperature、top_p、函数工具定义、工具选择、工具调用与工具结果；支持多个工具和分段工具参数，模型映射仍然生效。
 - Codex 的 Responses 客户端工具支持 `custom` 自由文本工具、`namespace` 命名空间、`input.additional_tools` 与 `execution: "client"` 的 `tool_search`。转入 Chat / Anthropic / Gemini 时把自由文本包装成只有 `input` 字符串参数的函数；回程恢复 `custom_tool_call`、原始命名空间、工具搜索调用与 `call_id`。多工具历史合并为一个 assistant 调用批次，保留对应工具结果；搜索返回的工具加入下一轮定义。支持命名工具选择与 `allowed_tools` 子集。重名或展平后撞名会明确报错。grammar 转为工具描述提示，不能保持原生协议的强制语法约束。
 - 自由文本工具的描述明确区分函数的 JSON 参数包装和 `input` 内的原始补丁／代码，保留客户端原说明。模型误将顶层 custom 工具 `apply_patch` 写成已有命名空间下的 `functions__apply_patch`，或遗漏唯一 custom 工具的命名空间时，会恢复原始工具身份；已明确声明的同名函数始终优先，存在歧义时不猜测工具归属。
 - Responses 历史按实际调用批次配对结果，将并行调用的结果放到对应 assistant 批次之后。取消或重连后没有结果的调用、孤立结果，以及参数被截断的历史 function 调用与其结果会被清理；同一批次重复结果使用最后一份。供应商在后续批次复用调用 ID 时仍分别配对，同一批次内重复调用 ID 会报错。该整理只用于协议转换，原生请求保持完整透传。
 - 兼容 Claude Code 在 Anthropic `messages[]` 中插入的纯文本 `role: "system"`：跨格式转换时按出现顺序合并到目标接口的系统指令，保留其他对话、图片和工具调用，且不让中途插入的指令改变会话指纹。转换后无法保留这些指令的原始生效位置；原生 Anthropic 路径仍透传完整请求。消息级 `clear_at`（除 `never`）、`output_config` 和工具增删块等特性不支持跨格式转换，会返回明确错误。
-- 图片支持 OpenAI URL / data URL、Anthropic URL / base64、Gemini inlineData / fileData。转入 Gemini 的远程图片需要 MIME 类型；没有 MIME 时返回明确错误，可改用 base64。Chat Completions 的工具结果只支持文本；图片工具结果不能转入此接口。
+- 图片支持 OpenAI URL / data URL、Anthropic URL / base64、Gemini inlineData / fileData。转入 Gemini 的远程图片需要 MIME 类型；没有 MIME 时返回明确错误，可改用 base64。Responses 工具输出中的结构化图片、JSON 字符串包装的图片内容及整段图片 data URL 可转换：Chat / Gemini 将图片移到整批工具结果之后的 user 图片消息，按 call_id 标注归属，原工具结果保留文本和图片位置提示。孤立或被取消的工具结果不会带入图片，后续批次复用 call_id 时各自配对。图片不转为 Base64 普通文本，普通 JSON 文本保持原样；目标模型仍需要支持视觉输入。原生 Responses 与 Anthropic 转换保留结构化图片。
 - SSE 逐增量转换文本、思考文本与工具参数，保留工具调用 ID、停止原因和真实 usage，包含上游明确返回的 0 Token。Gemini 的函数调用要求完整 JSON，因此只缓冲工具参数；上游忽略 stream 并返回 JSON 时，将完整结果包装成客户端 SSE。
+- 转换路径在首次实际文本、推理或工具输出前不提交 SSE；空 role / 前导事件后报错或断流时，仍可按现有重试预算切换上游。已有输出后报错会发送失败事件并停止，避免重复执行工具。非流式客户端遇到 SSE 上游时先收齐有效结束事件，再聚合为 JSON；缓冲上限为 64 MiB，未结束或非法参数不会当成成功响应。
+- 流式上游请求默认使用 `Accept-Encoding: identity`，避免上游压缩器未逐事件刷新、使推理阶段的 SSE 积压到正文开始时才下发；上游自定义请求头可覆盖该默认值。网关自身的静态资源 gzip 与 SSE 无关。
+- Responses 上游仅提供文本／推理 done 事件、output_item.done 或最终 output 快照时，转换器会补读尚未输出的内容，避免空回答；已逐增量输出的块不会重复追加。转换后的输出项分别生成 `msg_`、`rs_`、`fc_`、`ctc_`、`tsc_` ID，所有增量、done 事件和最终快照使用同一 ID，工具结果配对的 `call_id` 保持原值。历史 function 参数兼容 JSON 字符串与对象，工具结果支持文本数组。
 - Responses 生成完整的输出项、增量、完成事件；Anthropic 生成带 `event:` 名称的 Messages 事件。上游错误、非法工具参数与缺少结束事件的断流会返回客户端错误并记为失败，不补发成功结束事件。
 - 自由文本工具的 JSON 参数会先收齐再解包，下发 `response.custom_tool_call_input.delta/done` 与完整的 `output_item.done`；不会把 JSON 包装或截断输入交给客户端执行。普通函数仍逐增量转发参数，支持上游分片或迟发工具名。
+- 向 Anthropic 输出并行工具时，统一收齐、校验参数后按顺序发送完整内容块，正文和思考切换时关闭上一块，避免交错参数或错误块索引。普通 Chat / Responses 函数仍逐增量转发；工具初始 input 与后续参数 delta 不重复拼接。
+- 完成事件可补齐已发送增量的缺失后缀；兼容 `response.done`、文本/推理/refusal 和 content part 的完成内容，矛盾快照判失败。支持 Chat 的 `reasoning` 与明文 `reasoning_details` 别名、Anthropic 明文 thinking 回放到 Chat；不将密文或推理过程伪装成最终答案。
+- 函数参数 Schema 缺失根 type 或根 type 为 null 时补对象类型，保留 oneOf、defs 与 ref；转入 Responses 时未声明 strict 的函数使用 false。JSON 对象参数中的大整数 ID 保持原值。
+- 明文 `agent_message` 和符合 Codex 委派信封的独立任务输入可以转换；加密任务内容仍需要原生支持。模型当前尚未加载的未知工具不会伪装为已加载能力。
+- 四种原生对话上游忽略 stream=false 并返回 SSE 时，聚合为 JSON；Responses 保留原生输出项、ID、加密字段及服务端工具结果，Messages 保留签名与引用，Gemini 保留签名附着的 parts、图片和 grounding，Chat 保留末尾用量和按索引配对的工具。未结束的内容块/候选或未知 Messages 增量不作为成功；原生非流式 HTTP 200 的显式错误同样判失败。原生流式 SSE 字节仍保持原样。`/v1/responses/compact` 仅选原生 Responses 上游，不将远程压缩转为 Chat 摘要。
 - 思考强度按模型映射后的实际目标适配：优先使用已缓存的上游模型目录 `effort.supported_levels`，没有声明时按已知模型规则兜底。保留受支持的档位，缺失档位映射到下一档，超过上限则使用最高档；例如 DeepSeek 的 `xhigh → max`、`medium → high`、`minimal → low`。支持 Chat 的 `reasoning_effort`、Responses 的 `reasoning.effort`、Anthropic 的 `output_config.effort`，原生与转换路径、流式与非流式均生效；每次故障转移重新适配，未知模型/自定义档位及 `none` 保留原值。
 - 原生路径透传完整请求与响应，仅在需要模型映射或思考强度适配时改写对应字段。跨供应商转换无法保留 prompt cache 控制、思考签名或加密推理状态；历史 Anthropic thinking 与 Gemini thought 块不会作为普通文本重新发给其他供应商。
-- Responses reasoning 历史优先读取明文 summary，为空时读取明文 content，在 Chat 上游恢复为 assistant 的 `reasoning_content`。网关生成的 reasoning 输出按 API Key、客户端模型、上游 ID 和映射模型隔离缓存，后续只有同一 reasoning item ID 的不透明历史时可恢复明文。缓存命中后续期 7 天，最多 1024 项／8 MiB，容量满时淘汰最久未使用的内容，重启后清空；不会解密供应商的 `encrypted_content`。缓存未命中时可回用同一用户轮次内之前已有的推理，新的 user 消息会清除该回用范围；回用内容不会伪装成未知 reasoning ID 的原始内容写入缓存。Anthropic / Gemini 上游不回放其他供应商的思考签名。
-- 内置服务端工具（包括 `web_search`、`file_search` 和服务端 `tool_search`）、音频/视频/文档块、结构化输出配置、Responses 的 `previous_response_id` / `conversation` 等不支持跨格式转换，返回 400；普通 `text.format.type: "text"` 可转换。转换路径请发送完整会话，特殊特性请使用原生接口。Responses 上游不支持 stop 序列；跨入 Gemini 时不支持 reasoning effort，跨入 Anthropic 时不支持 `none`（关闭思考），Gemini 不支持关闭并行工具调用。
+- Responses reasoning 历史优先读取明文 summary，为空时读取明文 content，在 Chat 上游恢复为 assistant 的 `reasoning_content`。连续的多个 reasoning 项与同一工具批次中的不同推理片段按顺序保留，重复附带同一推理的并行调用不会重复拼接。网关生成的 reasoning 输出按 API Key、客户端模型、上游 ID 和映射模型隔离缓存，每个 item ID 仅缓存自己的明文；明文与不透明项混合时逐项查找，不把已找到的内容写到其他 ID 下。缓存命中后续期 7 天，最多 1024 项／8 MiB，容量满时淘汰最久未使用的内容，重启后清空；不会解密供应商的 `encrypted_content`。缓存未命中时可回用同一用户轮次内之前已有的推理，新的 user 消息会清除该回用范围；回用内容不会伪装成未知 reasoning ID 的原始内容写入缓存。Anthropic / Gemini 上游不回放其他供应商的思考签名。
+- 内置服务端工具（包括 `web_search`、`file_search` 和服务端 `tool_search`）、音频/视频/文档块、结构化输出配置、Responses 的 `previous_response_id` / `conversation` 等不支持跨格式转换，返回 400；普通 `text.format.type: "text"`、Chat `response_format.type: "text"`、Gemini `responseMimeType: "text/plain"` 可转换。Gemini 缓存上下文、continuationToken、安全控制、思考配置、topK、输出模态等没有等价映射，转换路径明确拒绝。转换路径请发送完整会话，特殊特性请使用原生接口。Responses 上游不支持 stop 序列；跨入 Gemini 时不支持 reasoning effort，跨入 Anthropic 时不支持 `none`（关闭思考），Gemini 不支持关闭并行工具调用。
+- 四种格式的转换历史统一按调用批次配对结果；取消留下的未配对调用和孤立回复不会伪造回放，原生历史保持原样。工具重名及强制选择未声明工具明确失败。缓存/推理计费分项、独立 thinking 预算和原生 JSON-only 上游的流式包装仍需专项适配，详见[四种协议排查](docs/SUB2API_ALL_FORMATS_AUDIT.md)。
 - 路由优先级（`pickUpstream`）：原生格式+显式白名单 ＞ 其他格式+显式白名单 ＞ 原生格式+通配 ＞ 其他格式+通配。Chat 与 Responses 分别判断原生匹配；想精确控制就给每个上游配模型白名单。
 - 会话粘性对转换路径同样生效
 - 转换能力不匹配时跳过该候选，继续寻找兼容或原生上游；本地转换失败不消耗网络重试次数，不请求上游、不计费。所有候选都无法转换时才返回 400。
 
 设计参考：[New API 的 OpenAI 适配器](https://github.com/QuantumNous/new-api/blob/main/relay/channel/openai/adaptor.go)通过转换器接收 Claude / Gemini 请求；[Sub2API 的 Messages 分发](https://github.com/Wei-Shaw/sub2api/blob/main/backend/internal/service/openai_gateway_messages.go)按上游协议选择 Anthropic 直通、Chat 转换或 Responses 转换。本项目采用自己的规范化表示与转换实现。
+
+Sub2API 兼容问题吸收记录（2026-10-14，参考源码 `9c2cca9`；Issue 是问题线索，不代表所有版本都仍有该问题）：
+
+| 问题记录 | 本项目处理 |
+|---|---|
+| [#5659：apply_patch 返回 JSON 包装](https://github.com/Wei-Shaw/sub2api/issues/5659)、[#7241：namespace 中的 custom 被丢弃](https://github.com/Wei-Shaw/sub2api/issues/7241) | 自由文本先包装为函数、回程收齐并解包；支持 namespace 中的 custom，保留工具身份 |
+| [#6146：custom 输出项 ID 前缀错误](https://github.com/Wei-Shaw/sub2api/issues/6146) | 按输出项类型生成 ID，并保持事件引用与最终快照一致；不混用 item ID 和 call_id |
+| [#6584：搜索发现的工具没有加入下一轮](https://github.com/Wei-Shaw/sub2api/issues/6584)、[#5867：搜索结果没有 output](https://github.com/Wei-Shaw/sub2api/issues/5867) | 提取 tool_search_output.tools 加入工具定义，并保留发现结果供模型阅读 |
+| [#5520：工具历史丢失 reasoning_content](https://github.com/Wei-Shaw/sub2api/issues/5520) | 回放明文及按 Key／上游／模型隔离的缓存推理；同一用户轮次可回用已有推理；不伪造加密状态 |
+| [#2913：arguments 对象、output 数组及缺失 SSE 事件](https://github.com/Wei-Shaw/sub2api/issues/2913)、[#3253：空文本增量](https://github.com/Wei-Shaw/sub2api/issues/3253) | 接受对象参数与文本数组，生成完整输出事件，跳过空文本增量 |
+| [#7222：空起始 chunk 阻断故障转移](https://github.com/Wei-Shaw/sub2api/issues/7222)、[#5800：非流式缓冲断流不重试](https://github.com/Wei-Shaw/sub2api/issues/5800) | 未提交输出时保留有界重试；SSE 聚合缺少终止事件判失败；提交之后禁止透明重放 |
+| [#7285：HTTP 200 但忽略工具定义](https://github.com/Wei-Shaw/sub2api/issues/7285) | 协议由上游配置明确选择；仅测试连通性不能证明工具兼容，Chat-only 上游应明确选 Chat |
+| [#4956：工具图片 Base64 进入文本上下文](https://github.com/Wei-Shaw/sub2api/issues/4956)、[#6240：原生路径把图片数组字符串化](https://github.com/Wei-Shaw/sub2api/issues/6240) | 转换时图片跟随完整工具批次并保留调用归属；原生路径不改写工具输出结构；普通 JSON 文本不重序列化 |
+| [#3603：SSE 压缩导致推理阶段积压](https://github.com/Wei-Shaw/sub2api/issues/3603) | 按报告后续更正采用流式 identity 编码，不把延迟简单归因于前导事件缓冲 |
+| [#4114：Read 参数等待 done 事件，缺事件时丢失](https://github.com/Wei-Shaw/sub2api/issues/4114) | 不给 Read 等工具增加特殊参数过滤；Anthropic 工具统一校验并收尾，其他函数按目标协议发送增量 |
+| [#2098：WS 编辑重发破坏延续链](https://github.com/Wei-Shaw/sub2api/issues/2098)、[#6632：OAuth 加密推理丢失](https://github.com/Wei-Shaw/sub2api/issues/6632) | 当前没有 OAuth／WebSocket 状态桥；转换要求完整历史，不自动推断 previous_response_id，不改写原生会话链 |
+
+服务端搜索／生图等工具不会伪装为普通客户端函数，此类请求需要原生支持，转换路径明确报错。模型是否选择 apply_patch 属于模型行为，协议兼容不能保证其一定调用该工具。[#2556](https://github.com/Wei-Shaw/sub2api/issues/2556) 的空 completion 静默拒绝检测尚未引入：仅推理输出、输出额度耗尽和供应商明确返回的 0 Token 不能简单判为失败；当前仍按实际结束原因与 usage 处理空回答。
+
+要求 thoughtSignature 的新 Gemini 模型尚未实现跨格式工具签名回放，不能承诺 Responses 转 Gemini 的多轮闭环；原生 Gemini 保持签名。缓存读写 token、推理细分和服务端工具的细分计价也尚未完整承载，当前没有自动套用供应商缓存价格。完整处理状态与后续方案见排查清单。
 
 #### Codex 接入 Chat 上游
 

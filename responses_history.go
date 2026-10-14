@@ -5,8 +5,8 @@ import (
 	"strings"
 )
 
-// A Responses transcript is a sequence of items, whereas Chat providers require
-// an assistant call batch immediately followed by its matching replies. Repair
+// A transcript may interleave parts and tool results, whereas Chat providers
+// require an assistant call batch immediately followed by its matching replies. Repair
 // history only; this never executes, repeats or invents an unanswered tool call.
 func normalizeResponsesHistory(messages []canonMsg) ([]canonMsg, error) {
 	type callKey struct {
@@ -18,7 +18,7 @@ func normalizeResponsesHistory(messages []canonMsg) ([]canonMsg, error) {
 	for i, msg := range messages {
 		for _, call := range msg.Calls {
 			if owner, exists := owners[call.ID]; exists && owner.Batch == i {
-				return nil, fmt.Errorf("Responses tool batch repeats call ID %q", call.ID)
+				return nil, fmt.Errorf("tool batch repeats call ID %q", call.ID)
 			}
 			owners[call.ID] = callKey{i, call.ID}
 		}

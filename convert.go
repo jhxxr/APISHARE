@@ -43,14 +43,19 @@ func (f clientFormat) nativeUpstreamType() string {
 // ---------- 规范化请求 ----------
 
 type canonMsg struct {
-	Role         string // user | assistant（system 单独放在 System）
-	Text         string
-	Parts        []canonPart
-	Calls        []canonCall
-	ToolID       string
-	ToolName     string
-	Reasoning    string
-	ReasoningIDs []string
+	Role           string // user | assistant（system 单独放在 System）
+	Text           string
+	Parts          []canonPart
+	Calls          []canonCall
+	ToolID         string
+	ToolName       string
+	Reasoning      string
+	ReasoningIDs   []string
+	ReasoningItems []canonReasoning
+}
+
+type canonReasoning struct {
+	ID, Text string
 }
 
 type canonReq struct {
