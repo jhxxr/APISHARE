@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"math/rand"
 	"strings"
@@ -60,10 +59,13 @@ func (u *Upstream) servesModel(m string) bool {
 	return serves
 }
 
-// servesModelExplicit 返回 (是否服务该模型, 是否为显式白名单命中)。
-// 白名单为空表示通配所有模型（非显式）。
+// Explicit mapping sources are public models, even if the allowlist only
+// contains upstream identifiers. An empty allowlist remains a wildcard.
 func (u *Upstream) servesModelExplicit(m string) (bool, bool) {
 	m = strings.TrimSpace(m)
+	if target, ok := u.modelMap()[m]; ok && strings.TrimSpace(target) != "" {
+		return true, true
+	}
 	if config := u.config; config != nil && config.modelsRaw == u.Models {
 		if config.models == nil {
 			return true, false
@@ -89,11 +91,8 @@ func (u *Upstream) modelMap() map[string]string {
 	if strings.TrimSpace(u.ModelMap) == "" {
 		return nil
 	}
-	var m map[string]string
-	if json.Unmarshal([]byte(u.ModelMap), &m) == nil {
-		return m
-	}
-	return nil
+	m, _ := parseModelMap(u.ModelMap)
+	return m
 }
 
 func (u *Upstream) mapModel(clientModel string) string {

@@ -228,7 +228,27 @@
             <p id="headerOverridesError" class="form-error hidden" role="alert"></p>
             <div id="headerOverridesHint" class="header-config-hint"><p>支持变量：<code>{api_key}</code> 上游密钥，<code>{client_header:NAME}</code> 客户端请求头值；<code>{codex_user_agent}</code>、<code>{claude_code_user_agent}</code> 自动使用最新已检测版本。</p><p><code>true</code> 透传，<code>false</code> 移除；<code>*</code> 匹配全部，<code>re:</code> 使用正则。固定请求头优先于批量规则。</p><p>批量透传会过滤认证、Cookie 和连接控制头。测试与模型获取使用固定值和上游密钥变量；缺失的客户端变量会跳过对应规则。</p></div>
           </section>
-          <section id="editorModels" class="editor-section"><div class="editor-section-heading"><span>04</span><div><h3>模型访问</h3><p>按当前接口类型和 Key 获取模型，再勾选白名单。</p></div><button id="probeEditorButton" type="button" class="btn mini ghost" onclick="probeEditUpstream()"><svg class="icon"><use href="#i-refresh"/></svg> 获取当前 Key 模型</button></div><label class="field"><span>模型白名单 <span class="optional">可选</span></span><textarea id="editModels" rows="2" placeholder="claude-sonnet-4-20250514, claude-opus-4-20250514" spellcheck="false" oninput="onModelsInput()"></textarea><small>模型名用逗号分隔。留空允许全部模型；建议明确指定，方便准确路由。</small></label><div id="selectedModelChips" class="model-chips" aria-label="白名单模型"></div><p id="editProbeInfo" class="probe-info" role="status"></p><div id="editProbeArea" class="model-picker hidden"><div class="model-picker-toolbar"><label class="search-field"><svg class="icon"><use href="#i-search"/></svg><input id="editProbeFilter" placeholder="搜索模型…" aria-label="筛选可用模型" oninput="renderEditProbeList()"></label><button type="button" class="text-btn" onclick="selectAllEditProbe(true)">全选</button><button type="button" class="text-btn" onclick="selectAllEditProbe(false)">清空</button><span id="editProbeCount" class="muted"></span></div><div id="editProbeList" class="probe-box"></div></div><details id="modelMapDetails" class="advanced-options"><summary><svg class="icon"><use href="#i-code"/></svg> 模型映射 <span class="optional">高级选项</span><svg class="icon"><use href="#i-chevron"/></svg></summary><div class="field"><div class="field-label-row"><label for="editModelMap">映射规则 · JSON</label><button type="button" class="text-btn" onclick="formatJSON('editModelMap')">格式化</button></div><textarea id="editModelMap" class="code-input" rows="4" placeholder='{"gpt-4o": "deepseek-chat"}' spellcheck="false" oninput="validateModelMap()" aria-describedby="modelMapHint modelMapError"></textarea><small id="modelMapHint">将请求中的模型名映射为上游模型名。</small><small id="modelMapError" class="form-error hidden" role="alert"></small></div></details></section>
+          <section id="editorModels" class="editor-section">
+            <div class="editor-section-heading"><span>04</span><div><h3>模型访问</h3><p>添加可用模型，配置客户端名称与上游名称的对应关系。</p></div><button id="probeEditorButton" type="button" class="btn mini ghost" onclick="probeEditUpstream()"><svg class="icon"><use href="#i-refresh"/></svg> 获取当前 Key 模型</button></div>
+            <div class="field">
+              <div class="field-label-row"><label for="editModelInput">模型白名单 <span class="optional">可选</span></label><small id="selectedModelCount" aria-live="polite">留空允许全部模型</small></div>
+              <input id="editModels" type="hidden">
+              <div id="modelTagInput" class="model-tag-input"><div id="selectedModelChips" class="model-chips" aria-label="白名单模型"></div><input id="editModelInput" type="text" placeholder="输入模型名，按回车添加" spellcheck="false" autocomplete="off" list="upstreamModelOptions" aria-describedby="editModelsHint"></div>
+              <small id="editModelsHint">回车或逗号添加，支持粘贴多行模型；点击 × 移除。留空允许全部模型。</small>
+            </div>
+            <p id="editProbeInfo" class="probe-info" role="status"></p>
+            <div id="editProbeArea" class="model-picker hidden"><div class="model-picker-toolbar"><label class="search-field"><svg class="icon"><use href="#i-search"/></svg><input id="editProbeFilter" placeholder="搜索模型…" aria-label="筛选可用模型" oninput="renderEditProbeList()"></label><button type="button" class="text-btn" onclick="selectAllEditProbe(true)">全选</button><button type="button" class="text-btn" onclick="selectAllEditProbe(false)">清空</button><span id="editProbeCount" class="muted"></span></div><div id="editProbeList" class="probe-box"></div></div>
+            <div id="modelMapDetails" class="model-map-editor" aria-labelledby="modelMapHeading">
+              <div class="field-label-row"><h4 id="modelMapHeading">模型映射</h4><span id="modelMapCount" class="muted"></span></div>
+              <p id="modelMapHint" class="muted">将客户端请求的模型名替换为上游模型名。映射中的请求模型会自动加入可用模型列表。</p>
+              <div class="model-map-toolbar"><div class="segmented" role="group" aria-label="模型映射编辑方式"><button id="modelMapVisualTab" type="button" class="active" aria-pressed="true" onclick="setModelMapMode('visual')">可视化</button><button id="modelMapJSONTab" type="button" aria-pressed="false" onclick="setModelMapMode('json')">JSON</button></div><div class="model-map-actions"><button id="modelMapBatchToggle" type="button" class="btn mini ghost" aria-expanded="false" aria-controls="modelMapBatchArea" onclick="toggleModelMapBatch()">批量添加</button><button type="button" class="text-btn" onclick="fillModelMapTemplate()">填入模板</button></div></div>
+              <div id="modelMapVisual"><div class="model-map-columns" aria-hidden="true"><span>请求模型名称</span><span></span><span>上游模型名称</span><span></span></div><div id="modelMapRows"></div><button id="addModelMapButton" type="button" class="btn ghost model-map-add" onclick="addModelMapRow()"><svg class="icon"><use href="#i-plus"/></svg> 添加映射</button></div>
+              <div id="modelMapJSON" class="field hidden"><div class="field-label-row"><label for="editModelMap">映射规则 · JSON</label><button type="button" class="text-btn" onclick="formatJSON('editModelMap')">格式化</button></div><textarea id="editModelMap" class="code-input" rows="6" placeholder='{"gpt-4o": "deepseek-chat"}' spellcheck="false" oninput="validateModelMap()" aria-describedby="modelMapHint modelMapError"></textarea></div>
+              <small id="modelMapError" class="form-error hidden" role="alert"></small>
+              <div id="modelMapBatchArea" class="model-map-batch field hidden"><label for="modelMapBatch">每行一条映射</label><textarea id="modelMapBatch" class="code-input" rows="4" spellcheck="false" placeholder="gpt-4o = deepseek-chat&#10;gpt-4o-mini = deepseek-reasoner" aria-describedby="modelMapBatchError"></textarea><small id="modelMapBatchError" class="form-error hidden" role="alert"></small><div><button type="button" class="btn mini" onclick="applyModelMapBatch()">添加到映射</button></div></div>
+            </div>
+            <datalist id="requestModelOptions"></datalist><datalist id="upstreamModelOptions"></datalist>
+          </section>
           <section id="editorRouting" class="editor-section"><div class="editor-section-heading"><span>05</span><div><h3>调度策略</h3><p>决定这条连接如何参与请求分配。</p></div></div><div class="routing-grid"><label class="field"><span>分配权重</span><input id="editWeight" type="number" min="0" step="1" value="1" required><small>权重越高，分配的请求越多。</small></label><label id="editEnabledRow" class="switch-row"><span><strong>启用此上游</strong><small>允许接收新的请求</small></span><input id="editEnabled" type="checkbox" class="switch-input" checked><span class="switch-track"></span></label><div id="createEnabledNote" class="inline-note hidden"><svg class="icon"><use href="#i-check"/></svg> 创建后自动启用</div></div></section>
           <p id="editorError" class="form-error editor-error hidden" role="alert"></p>
         </div>
@@ -247,6 +267,27 @@
     </fieldset></form>
   </dialog>
 
+  <dialog id="modelTestDialog" class="action-dialog model-test-dialog" aria-labelledby="modelTestHeading" aria-describedby="modelTestDescription">
+    <form id="modelTestForm">
+      <div class="action-dialog-header"><h2 id="modelTestHeading">模型测试</h2><button type="button" class="icon-btn" onclick="closeModelTest()" aria-label="关闭模型测试"><svg class="icon"><use href="#i-close"/></svg></button></div>
+      <p id="modelTestDescription"></p>
+      <fieldset id="modelTestFields">
+        <label class="field"><span>测试模型 <span class="required">*</span></span><input id="modelTestModel" list="modelTestOptions" required maxlength="512" placeholder="选择或输入模型名称" spellcheck="false" aria-describedby="modelTestHint"><datalist id="modelTestOptions"></datalist></label>
+        <div class="model-test-tools"><small id="modelTestHint" class="muted"></small><button id="modelTestFetch" type="button" class="btn ghost" onclick="fetchModelTestModels()">获取模型</button></div>
+        <label class="field"><span>测试消息</span><textarea id="modelTestMessage" rows="4" maxlength="16000" aria-describedby="modelTestMessageHint">hi</textarea><small id="modelTestMessageHint">默认发送 hi，可改为任意测试内容；留空时仍发送 hi。每次测试独立发送，不携带历史对话。</small></label>
+        <label class="field"><span>最大输出 Token</span><input id="modelTestMaxTokens" type="number" min="1" max="32768" step="1" value="4096" required></label>
+        <button type="button" class="text-btn" onclick="document.getElementById('modelTestMessage').value = 'hi'">恢复默认消息 hi</button>
+      </fieldset>
+      <p id="modelTestProgress" role="status" aria-live="polite"></p>
+      <div id="modelTestError" class="form-error model-test-error hidden" role="alert"></div>
+      <section id="modelTestResult" class="model-test-result hidden" aria-labelledby="modelTestReplyHeading" aria-live="polite">
+        <h3 id="modelTestReplyHeading">模型回复</h3><p id="modelTestSummary"></p><pre id="modelTestReply"></pre>
+        <details id="modelTestThinkingDetails" class="hidden"><summary>查看思考内容</summary><pre id="modelTestThinking"></pre></details>
+      </section>
+      <div class="form-actions"><button type="button" class="btn ghost" onclick="closeModelTest()">关闭</button><button id="modelTestSend" type="submit" class="btn">发送测试</button></div>
+    </form>
+  </dialog>
+
   <dialog id="actionDialog" class="action-dialog" aria-labelledby="actionHeading"><form id="actionForm"><div class="action-dialog-header"><span class="section-icon"><svg class="icon"><use href="#i-info"/></svg></span><button type="button" class="icon-btn" onclick="resolveAction(false)" aria-label="关闭对话框"><svg class="icon"><use href="#i-close"/></svg></button></div><h2 id="actionHeading"></h2><p id="actionDescription"></p><label id="actionInputField" class="field hidden"><span id="actionInputLabel">共享额度 · USD</span><input id="actionInput" type="number" min="0" step="0.01" required></label><div class="form-actions"><button type="button" class="btn ghost" onclick="resolveAction(false)">取消</button><button id="actionConfirm" type="submit" class="btn">确认</button></div></form></dialog>
   <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="false"></div>
   <script src="/public/static/clipboard.js"></script>
@@ -255,6 +296,8 @@
   <script src="static/headers.js"></script>
   <script src="static/keys.js"></script>
   <script src="static/announcements.js"></script>
+  <script src="static/models.js"></script>
+  <script src="static/model-test.js"></script>
   <script src="static/app.js"></script>
 </body>
 </html>

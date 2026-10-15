@@ -2,7 +2,6 @@ package main
 
 import (
 	"database/sql"
-	"encoding/json"
 	"net/http"
 	"strings"
 	"sync"
@@ -27,9 +26,7 @@ func compileUpstreamConfig(up *Upstream) {
 			config.models[strings.TrimSpace(model)] = true
 		}
 	}
-	if json.Unmarshal([]byte(up.ModelMap), &config.modelMap) != nil {
-		config.modelMap = nil
-	}
+	config.modelMap, _ = parseModelMap(up.ModelMap)
 	config.headerRules, config.headerError = parseHeaderOverrides(up.HeaderOverrides)
 	up.config = config
 }

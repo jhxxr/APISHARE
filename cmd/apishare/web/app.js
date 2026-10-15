@@ -405,7 +405,7 @@ function renderUpstreams() {
   $("upstreamHealthy").textContent = upsCache.filter((item) => item.enabled && item.healthy).length;
   $("upstreamModelCount").textContent = new Set(upsCache.flatMap((item) => parseAllowlist(item.models))).size;
   $("upstreamListCount").textContent = list.length + (list.length !== upsCache.length ? " / " + upsCache.length : "");
-  $("upsTable").querySelector("tbody").innerHTML = list.map((item) => '<tr><td><div class="provider-cell">' + providerIcon(item.type) + '<span class="cell-stack"><strong>' + esc(item.name || "未命名上游") + '</strong><small>' + esc(upstreamFormatNames[upstreamFormat(item)] || item.type) + ' · #' + item.id + '</small></span></div></td><td class="endpoint-cell"><span>' + esc(item.base_url) + '</span><small>' + esc(item.key_masked) + '</small><small>代理：' + esc(upstreamProxyLabel(item.proxy_id)) + '</small></td><td class="cell-stack"><strong>' + (parseAllowlist(item.models).length ? parseAllowlist(item.models).length + " 个模型" : "全部模型") + '</strong><small>权重 ' + item.weight + '</small></td><td><span class="badge ' + (item.healthy ? "on" : "warn") + '">' + (item.healthy ? "健康" : "冷却中") + '</span>' + (item.fails ? '<span class="cell-stack"><small>连续失败 ' + item.fails + ' 次</small></span>' : "") + '</td><td><button class="toggle-btn" role="switch" aria-checked="' + !!item.enabled + '" aria-label="' + (item.enabled ? "停用 " : "启用 ") + esc(item.name) + '" onclick="toggleUpstream(' + item.id + ", " + !item.enabled + ', this)"><span></span></button></td><td><div class="row-actions"><button class="text-btn" onclick="openEditUpstream(' + item.id + ')" aria-label="编辑 ' + esc(item.name) + '">' + icon("edit") + '编辑</button><button class="icon-btn" onclick="testUpstream(' + item.id + ', this)" aria-label="测试 ' + esc(item.name) + '" title="测试连接">' + icon("activity") + '</button><button class="icon-btn danger" onclick="deleteUpstream(' + item.id + ')" aria-label="删除 ' + esc(item.name) + '" title="删除上游">' + icon("trash") + '</button></div></td></tr>').join("") || emptyRow(6, query || type ? "没有匹配的上游" : "连接你的第一个上游", query || type ? "调整搜索条件或接口类型。" : "支持 OpenAI Chat Completions、Responses、Anthropic 与 Gemini 接口。", query || type ? "" : "openCreateUpstream()", "添加上游");
+  $("upsTable").querySelector("tbody").innerHTML = list.map((item) => '<tr><td><div class="provider-cell">' + providerIcon(item.type) + '<span class="cell-stack"><strong>' + esc(item.name || "未命名上游") + '</strong><small>' + esc(upstreamFormatNames[upstreamFormat(item)] || item.type) + ' · #' + item.id + '</small></span></div></td><td class="endpoint-cell"><span>' + esc(item.base_url) + '</span><small>' + esc(item.key_masked) + '</small><small>代理：' + esc(upstreamProxyLabel(item.proxy_id)) + '</small></td><td class="cell-stack"><strong>' + (parseAllowlist(item.models).length ? parseAllowlist(item.models).length + " 个模型" : "全部模型") + '</strong><small>权重 ' + item.weight + '</small></td><td><span class="badge ' + (item.healthy ? "on" : "warn") + '">' + (item.healthy ? "健康" : "冷却中") + '</span>' + (item.fails ? '<span class="cell-stack"><small>连续失败 ' + item.fails + ' 次</small></span>' : "") + '</td><td><button class="toggle-btn" role="switch" aria-checked="' + !!item.enabled + '" aria-label="' + (item.enabled ? "停用 " : "启用 ") + esc(item.name) + '" onclick="toggleUpstream(' + item.id + ", " + !item.enabled + ', this)"><span></span></button></td><td><div class="row-actions"><button class="text-btn" onclick="openEditUpstream(' + item.id + ')" aria-label="编辑 ' + esc(item.name) + '">' + icon("edit") + '编辑</button><button class="text-btn" onclick="openModelTest(' + item.id + ')" aria-label="测试模型 ' + esc(item.name) + '">测试模型</button><button class="icon-btn" onclick="testUpstream(' + item.id + ', this)" aria-label="测试 ' + esc(item.name) + '" title="测试连接">' + icon("activity") + '</button><button class="icon-btn danger" onclick="deleteUpstream(' + item.id + ')" aria-label="删除 ' + esc(item.name) + '" title="删除上游">' + icon("trash") + '</button></div></td></tr>').join("") || emptyRow(6, query || type ? "没有匹配的上游" : "连接你的第一个上游", query || type ? "调整搜索条件或接口类型。" : "支持 OpenAI Chat Completions、Responses、Anthropic 与 Gemini 接口。", query || type ? "" : "openCreateUpstream()", "添加上游");
   labelTableCells("upsTable");
 }
 async function toggleUpstream(id, enabled, button) {
@@ -431,7 +431,7 @@ async function testUpstream(id, button) {
 
 /* One editor for both creation and updates. */
 function editorValue() {
-  return JSON.stringify(["editName", "editType", "editBase", "editKey", "editProxy", "editHeaderOverrides", "editWeight", "editModels", "editModelMap"].map((id) => $(id).value).concat($("editEnabled").checked));
+  return JSON.stringify(["editName", "editType", "editBase", "editKey", "editProxy", "editHeaderOverrides", "editWeight", "editModels"].map((id) => $(id).value).concat($("editEnabled").checked, $("editModelInput").value, $("modelMapBatch").value, [modelMappingDirtyValue()]));
 }
 function editorDirty() { return $("editModal").open && editorValue() !== editProbe.initial; }
 function updateEditorDirty() {
@@ -479,7 +479,7 @@ async function openEditor(upstream) {
   $("editProbeArea").classList.add("hidden");
   $("editProbeList").innerHTML = ""; $("editProbeFilter").value = ""; $("editProbeInfo").textContent = "";
   $("editorError").classList.add("hidden"); $("modelMapError").classList.add("hidden");
-  $("modelMapDetails").open = !!upstream?.model_map;
+  resetModelMappingEditor();
   setBusy($("probeEditorButton"), false);
   updateEditorProvider(false); renderModelChips(); validateHeaderOverrides();
   editProbe.initial = editorValue();
@@ -505,7 +505,6 @@ function updateEditorProvider(changed = true) {
     gemini: "上游使用 Gemini 原生 generateContent / streamGenerateContent 接口。"
   }[format];
   $("editBase").placeholder = providerURLs[type];
-  $("editModels").placeholder = { openai: "gpt-4o, deepseek-chat", anthropic: "claude-sonnet-4-20250514, claude-opus-4-20250514", gemini: "gemini-2.5-flash, gemini-2.5-pro" }[type];
   if (changed) { clearProbeResults(); updateEditorDirty(); }
 }
 function clearProbeResults() {
@@ -515,6 +514,7 @@ function clearProbeResults() {
   setBusy($("probeEditorButton"), false);
   editProbe.models = [];
   editProbe.selected = new Set(parseAllowlist($("editModels").value));
+  refreshModelSuggestions();
   $("editProbeArea").classList.add("hidden");
   $("editProbeInfo").textContent = "";
 }
@@ -565,31 +565,8 @@ async function closeEdit() {
   }
   finishCloseEditor();
 }
-function renderModelChips() {
-  const box = $("selectedModelChips");
-  box.replaceChildren();
-  parseAllowlist($("editModels").value).forEach((model) => {
-    const chip = document.createElement("span"); chip.className = "model-chip";
-    const text = document.createElement("span"); text.textContent = model;
-    const button = document.createElement("button"); button.type = "button"; button.setAttribute("aria-label", "移除模型 " + model); button.innerHTML = icon("close");
-    button.addEventListener("click", () => {
-      editProbe.selected.delete(model);
-      $("editModels").value = parseAllowlist($("editModels").value).filter((item) => item !== model).join(", ");
-      renderModelChips(); renderEditProbeList(); updateEditorDirty();
-      $("editModels").focus();
-    });
-    chip.append(text, button); box.append(chip);
-  });
-}
-function onModelsInput() {
-  editProbe.selected = new Set(parseAllowlist($("editModels").value));
-  renderModelChips(); renderEditProbeList(); updateEditorDirty();
-}
-function syncEditModels() {
-  $("editModels").value = [...editProbe.selected].join(", ");
-  renderModelChips(); updateEditorDirty();
-}
 function renderEditProbeList() {
+  refreshModelSuggestions();
   const query = $("editProbeFilter").value.trim().toLowerCase();
   const models = editProbe.models.filter((model) => model.toLowerCase().includes(query));
   $("editProbeList").innerHTML = models.map((model) => '<label><input type="checkbox" data-model="' + esc(model) + '" ' + (editProbe.selected.has(model) ? "checked" : "") + '><span>' + esc(model) + '</span></label>').join("") || '<span class="muted">没有匹配的模型</span>';
@@ -603,21 +580,6 @@ function renderEditProbeList() {
 function selectAllEditProbe(on) {
   editProbe.selected = on ? new Set([...editProbe.selected, ...editProbe.models]) : new Set();
   renderEditProbeList(); syncEditModels();
-}
-function validateModelMap() {
-  const field = $("editModelMap"), value = field.value.trim();
-  let error = "";
-  if (value) {
-    try {
-      const mapping = JSON.parse(value);
-      if (!mapping || Array.isArray(mapping) || typeof mapping !== "object" || Object.values(mapping).some((item) => typeof item !== "string")) error = "请填写 JSON 对象，模型名与映射值都必须是字符串。";
-    } catch { error = 'JSON 格式不正确，例如：{"gpt-4o": "deepseek-chat"}'; }
-  }
-  field.setCustomValidity(error);
-  field.setAttribute("aria-invalid", String(!!error));
-  $("modelMapError").textContent = error;
-  $("modelMapError").classList.toggle("hidden", !error);
-  return !error;
 }
 function formatJSON(id) {
   const field = $(id);
@@ -669,7 +631,13 @@ async function saveEditUpstream(event) {
   event.preventDefault();
   if (editProbe.saving) return false;
   if (!validateHeaderOverrides()) { jumpEditor("editorHeaders"); $("editHeaderOverrides").reportValidity(); return false; }
-  if (!validateModelMap()) { $("modelMapDetails").open = true; jumpEditor("editorModels"); $("editModelMap").reportValidity(); return false; }
+  commitModelInput();
+  if ($("modelMapBatch").value.trim() && !applyModelMapBatch()) { jumpEditor("editorModels"); return false; }
+  if (!validateModelMap()) {
+    jumpEditor("editorModels");
+    const invalid = modelEditor.mode === "json" ? $("editModelMap") : $("modelMapRows").querySelector(":invalid");
+    invalid?.reportValidity(); invalid?.focus(); return false;
+  }
   if (!$("editName").value.trim()) { $("editName").setCustomValidity("请输入上游名称"); jumpEditor("editorBasic"); $("editName").reportValidity(); return false; }
   const creating = editProbe.id === null;
   if (creating && !$("editKey").value.trim()) { $("editKey").setCustomValidity("请输入上游 API 密钥"); jumpEditor("editorConnection"); $("editKey").reportValidity(); return false; }
@@ -699,14 +667,13 @@ async function saveEditUpstream(event) {
   return false;
 }
 $("upstreamEditorForm").addEventListener("input", (event) => {
-  if (!["editModelMap", "editHeaderOverrides"].includes(event.target.id) && event.target.setCustomValidity) event.target.setCustomValidity("");
+  if (!event.target.closest(".model-map-editor") && !["editModelMap", "editHeaderOverrides"].includes(event.target.id) && event.target.setCustomValidity) event.target.setCustomValidity("");
   if (["editBase", "editKey", "editHeaderOverrides"].includes(event.target.id)) clearProbeResults();
   updateEditorDirty();
 });
 $("upstreamEditorForm").addEventListener("change", updateEditorDirty);
 $("upstreamEditorForm").addEventListener("invalid", (event) => {
   const section = event.target.closest(".editor-section");
-  if (event.target.id === "editModelMap") $("modelMapDetails").open = true;
   if (section) jumpEditor(section.id);
 }, true);
 $("editModal").addEventListener("cancel", (event) => { event.preventDefault(); closeEdit(); });
@@ -831,7 +798,7 @@ async function saveSettings(event) {
 }
 
 /* Reusable accessible confirmation and quota dialogs. */
-function syncModalLock() { document.body.classList.toggle("modal-open", $("editModal").open || $("actionDialog").open || $("keyModelsDialog").open); }
+function syncModalLock() { document.body.classList.toggle("modal-open", $("editModal").open || $("actionDialog").open || $("keyModelsDialog").open || $("modelTestDialog").open); }
 function setPricingError(message) {
   $("pricingError").textContent = message;
   $("pricingError").classList.toggle("hidden", !message);
@@ -896,6 +863,8 @@ $("todayLabel").textContent = new Date().toLocaleDateString("zh-CN", { timeZone:
 initDeployment();
 initOutboundProxies();
 initKeyModels();
+initModelEditor();
+initModelTest();
 initAnnouncements();
 syncSidebar();
 (async function init() {

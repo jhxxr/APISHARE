@@ -319,6 +319,10 @@ func registerAdminRoutes(r *gin.Engine) {
 			c.JSON(400, gin.H{"error": "base_url and api_key are required"})
 			return
 		}
+		if err := normalizeUpstreamModelMap(&u); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
 		if !validOpenAIProtocol(u.OpenAIProtocol) {
 			c.JSON(400, gin.H{"error": "openai_protocol must be auto, chat or responses"})
 			return
@@ -394,6 +398,10 @@ func registerAdminRoutes(r *gin.Engine) {
 		}
 		if req.ModelMap != nil {
 			u.ModelMap = *req.ModelMap
+			if err := normalizeUpstreamModelMap(u); err != nil {
+				c.JSON(400, gin.H{"error": err.Error()})
+				return
+			}
 		}
 		if req.HeaderOverrides != nil {
 			if _, err := parseHeaderOverrides(*req.HeaderOverrides); err != nil {
@@ -429,6 +437,8 @@ func registerAdminRoutes(r *gin.Engine) {
 		}
 		c.JSON(200, gin.H{"ok": true})
 	})
+
+	registerModelTestRoutes(auth)
 
 	auth.POST("/upstreams/:id/test", func(c *gin.Context) {
 		id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
