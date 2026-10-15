@@ -381,9 +381,20 @@ type upstreamUsage struct {
 	CacheWrite5mKnown, CacheWrite1hKnown                             bool
 	PromptTotalAlias, PromptMissAlias                                int
 	PromptTotalAliasKnown, PromptMissAliasKnown                      bool
+	InputAudio, OutputAudio, CacheReadAudio                          int
+	InputAudioKnown, OutputAudioKnown, CacheReadAudioKnown           bool
 }
 
 func (u *upstreamUsage) merge(n upstreamUsage) {
+	if n.InputAudioKnown {
+		u.InputAudio, u.InputAudioKnown = n.InputAudio, true
+	}
+	if n.OutputAudioKnown {
+		u.OutputAudio, u.OutputAudioKnown = n.OutputAudio, true
+	}
+	if n.CacheReadAudioKnown {
+		u.CacheReadAudio, u.CacheReadAudioKnown = n.CacheReadAudio, true
+	}
 	if n.Source == FormatAnthropic && n.InKnown && !n.PromptTotalAliasKnown && !n.PromptMissAliasKnown {
 		// A later independent input bucket supersedes earlier provider totals.
 		u.PromptTotalAliasKnown, u.PromptMissAliasKnown = false, false

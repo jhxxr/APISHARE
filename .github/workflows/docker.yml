@@ -17,6 +17,19 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Verify gateway startup, assets and build
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          go test ./cmd/apishare -run '^(TestProductionRouterStartupAndPreflight|TestHTMLAssetsChangeURLsWhenContentChanges|TestPagesServeMatchingVersionedAssetsAndCachePolicy)$' -count=1
+          go build -trimpath -o "${{ runner.temp }}/apishare" ./cmd/apishare
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
@@ -50,6 +63,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}

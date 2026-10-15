@@ -3,6 +3,7 @@ module apishare
 go 1.26.2
 
 require (
+	github.com/coder/websocket v1.8.15
 	github.com/gin-gonic/gin v1.12.0
 	github.com/pkoukk/tiktoken-go v0.1.8
 	golang.org/x/crypto v0.57.0

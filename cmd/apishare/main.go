@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -47,6 +48,20 @@ func main() {
 	warmTokenEncodings()
 
 	gin.SetMode(gin.ReleaseMode)
+	r := newRouter()
+
+	addr := ":" + port
+	fmt.Println("apishare listening on", addr, "| admin:", currentAdminPath())
+	if adminSetupRequired() {
+		fmt.Println("首次部署：打开首页完成管理员密码和后台路径配置")
+	}
+	if err := r.Run(addr); err != nil {
+		fmt.Println("server error:", err)
+		os.Exit(1)
+	}
+}
+
+func newRouter() *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.SetTrustedProxies(nil)
@@ -60,6 +75,7 @@ func main() {
 	v1.POST("/responses/compact", relayHandler(FormatOpenAIResponse, true))
 	v1.POST("/messages", relayHandler(FormatAnthropic, false))
 	v1.POST("/embeddings", relayHandler(FormatOpenAIChat, true))
+	registerAudioRoutes(v1)
 	registerModelRoutes(v1)
 
 	v1beta := r.Group("/v1beta")
@@ -71,18 +87,15 @@ func main() {
 
 	// Unregistered routes remain private; the root is the explicit public dashboard.
 	r.NoRoute(func(c *gin.Context) {
+		// Handle generic API preflights here: a wildcard OPTIONS route would
+		// conflict with the explicit model preflights and panic during startup.
+		if c.Request.Method == http.MethodOptions && strings.HasPrefix(c.Request.URL.Path, "/v1/") {
+			corsV1()(c)
+			return
+		}
 		c.String(http.StatusNotFound, "404 page not found")
 	})
-
-	addr := ":" + port
-	fmt.Println("apishare listening on", addr, "| admin:", currentAdminPath())
-	if adminSetupRequired() {
-		fmt.Println("首次部署：打开首页完成管理员密码和后台路径配置")
-	}
-	if err := r.Run(addr); err != nil {
-		fmt.Println("server error:", err)
-		os.Exit(1)
-	}
+	return r
 }
 
 // corsV1 允许浏览器端 OpenAI SDK 直接调用（Key 本身就是凭证，放开 CORS 无风险）。
@@ -91,7 +104,8 @@ func corsV1() gin.HandlerFunc {
 		h := c.Writer.Header()
 		h.Set("Access-Control-Allow-Origin", "*")
 		h.Set("Access-Control-Allow-Headers",
-			"Authorization, Content-Type, x-api-key, x-goog-api-key, anthropic-version, anthropic-beta, X-Session-Id, X-Conversation-Id")
+			"Authorization, Content-Type, OpenAI-Beta, x-api-key, x-goog-api-key, anthropic-version, anthropic-beta, X-Session-Id, X-Conversation-Id")
+		h.Set("Access-Control-Expose-Headers", "Location, X-Request-Id")
 		h.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		if c.Request.Method == http.MethodOptions {
 			if requested := c.GetHeader("Access-Control-Request-Headers"); requested != "" {

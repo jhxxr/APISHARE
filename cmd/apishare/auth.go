@@ -39,6 +39,18 @@ func keyAuth() gin.HandlerFunc {
 			key = strings.TrimSpace(c.Query("key")) // Gemini REST 风格 ?key=
 		}
 		if key == "" {
+			// Browser WebSockets cannot set Authorization. Accept the OpenAI
+			// credential subprotocol only on the authenticated Realtime route.
+			if c.FullPath() == "/v1/realtime" && c.Request.Method == http.MethodGet {
+				for _, protocol := range websocketProtocols(c.Request.Header) {
+					if strings.HasPrefix(protocol, "openai-insecure-api-key.") {
+						key = strings.TrimPrefix(protocol, "openai-insecure-api-key.")
+						break
+					}
+				}
+			}
+		}
+		if key == "" {
 			errJSON(c, http.StatusUnauthorized, "missing API key")
 			c.Abort()
 			return
@@ -102,7 +114,7 @@ func limiterJanitorLoop() {
 		time.Sleep(10 * time.Minute)
 		limReg.Lock()
 		for id, kl := range limReg.m {
-			if time.Since(kl.lastAt) > time.Hour {
+			if time.Since(kl.lastAt) > time.Hour && len(kl.sem) == 0 {
 				delete(limReg.m, id)
 			}
 		}

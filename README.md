@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="web/public/brand/apishare-icon-v2.png" alt="API Share Logo" width="128" height="128" />
+  <img src="cmd/apishare/web/public/brand/apishare-icon-v2.png" alt="API Share Logo" width="128" height="128" />
 </p>
 
 <h1 align="center">API Share</h1>
@@ -104,6 +104,9 @@ flowchart TD
 | **OpenAI Chat Completions** | `POST /v1/chat/completions` | `Authorization: Bearer sk-xxx` | OpenAI SDK、Chatbox、LobeChat、NextChat |
 | **OpenAI Responses** | `POST /v1/responses` | `Authorization: Bearer sk-xxx` | 新版 OpenAI SDK、OpenAI Codex CLI |
 | **OpenAI Embeddings** | `POST /v1/embeddings` | `Authorization: Bearer sk-xxx` | 各类 RAG 知识库检索客户端 |
+| **OpenAI Audio** | `POST /v1/audio/speech`、`/v1/audio/transcriptions`、`/v1/audio/translations` | `Authorization: Bearer sk-xxx` | TTS、语音识别、音频翻译 |
+| **OpenAI Realtime WebSocket** | `GET /v1/realtime?model={model}`（WebSocket Upgrade） | Bearer 或浏览器凭证子协议 | 双向实时音频、文本与工具事件 |
+| **OpenAI Realtime WebRTC** | `POST /v1/realtime/calls`；兼容 `POST /v1/realtime?model={model}` | `Authorization: Bearer sk-xxx` | 浏览器 SDP 建连 |
 | **Anthropic Messages** | `POST /v1/messages` | `x-api-key` 或 `Authorization` | Claude Code CLI、Anthropic SDK |
 | **Google Gemini** | `POST /v1beta/models/{model}:generateContent`<br>`POST /v1beta/models/{model}:streamGenerateContent` | `x-goog-api-key`、`Authorization` 或 `?key=` | Gemini CLI、google-genai SDK |
 | **模型目录 / 详情** | `GET /v1/models`<br>`GET /v1/models/{model}` | OpenAI Bearer 或 Claude `x-api-key` | OpenAI SDK、Claude 客户端 |
@@ -166,11 +169,11 @@ git clone https://github.com/<owner>/<repo>.git && cd apishare
 
 # 2. 编译为单二进制文件
 # Linux / macOS
-CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o apishare .
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o apishare ./cmd/apishare
 PORT=8080 API_DB=apishare.db ./apishare
 
 # Windows (PowerShell)
-go build -trimpath -ldflags="-s -w" -o apishare.exe .
+go build -trimpath -ldflags="-s -w" -o apishare.exe ./cmd/apishare
 $env:PORT = "8080"; $env:API_DB = "apishare.db"; .\apishare.exe
 ```
 
@@ -267,6 +270,47 @@ curl "http://127.0.0.1:8080/v1beta/models/gemini-2.5-flash:generateContent" \
 
 ---
 
+### 4. 音频与 Realtime 接入
+
+在后台添加 `type: "openai"` 上游，将音频 / Realtime 模型加入上游和客户端 Key 的模型白名单即可，无需新增协议类型。`openai_protocol` 的 Chat / Responses 选项不改变这些独立端点；上游必须原生支持对应接口，音频不会转换为 Claude / Gemini 文本请求。模型别名、独立 HTTP(S) / SOCKS 代理、动态请求头和建连前故障切换均可使用。
+
+服务端 WebSocket 连接示例（替换地址、模型及 Key）：
+
+```javascript
+import WebSocket from "ws";
+
+const socket = new WebSocket("wss://gateway.example/v1/realtime?model=voice-alias", {
+  headers: { Authorization: `Bearer ${process.env.APISHARE_API_KEY}` },
+});
+socket.on("open", () => socket.send(JSON.stringify({
+  type: "session.update", session: { type: "realtime", instructions: "请用中文回答。" },
+})));
+socket.on("message", data => console.log(data.toString()));
+```
+
+浏览器原生 `WebSocket` 可使用 `["realtime", "openai-insecure-api-key." + apiShareKey]` 子协议鉴权；网关仅向客户端协商 `realtime`，使用上游自己的 Key 建连。可选 `OpenAI-Beta: realtime=v1` 请求头用于 beta 协议。每条 WebSocket 在整个连接期间占用一个 Key 并发槽，连接内不能切换模型；已建立的会话不会重试到其他上游。网关按不同 `response.done.response.id` 的真实 usage 逐轮记账，自动去重；每轮结束以及显式创建响应、提交音频或更新会话时重新检查 Key 权限与额度，额度耗尽使用关闭码 `1008` 结束会话。没有上游 usage 的事件不会按文本猜测音频 Token。
+
+WebRTC 推荐统一建连方式：
+
+```javascript
+const form = new FormData();
+form.set("sdp", offer.sdp); // RTCPeerConnection 创建的本地 SDP
+form.set("session", JSON.stringify({ type: "realtime", model: "voice-alias" }));
+const response = await fetch("https://gateway.example/v1/realtime/calls", {
+  method: "POST", headers: { Authorization: `Bearer ${apiShareKey}` }, body: form,
+});
+if (!response.ok) throw new Error(await response.text());
+await pc.setRemoteDescription({ type: "answer", sdp: await response.text() });
+```
+
+也支持 `Content-Type: application/sdp` 配合 `?model=voice-alias` 的建连请求。SDP、上传音频和其他 multipart 字段保持原样，仅按上游模型映射改写模型字段；上传总请求体上限为 32 MiB。语音合成的二进制响应及转录 SSE 增量直接转发。
+
+**计费边界：** WebRTC 音频和数据通道直连上游，网关只记录 SDP 建连，不掌握后续 usage，因此不能对通话逐轮扣费、限制通话并发或在额度耗尽后结束直连通话。需要完整网关计费与会话配额控制时使用 WebSocket。当前不提供临时上游密钥签发、`call_id` sideband 和通话控制 API；也不转发上游的 `Location`。HTTP 音频接口仅按上游返回的 Token usage 记账；MP3 / WAV、纯文本和仅报告时长的结果没有 Token usage 时，记录请求但不按字符数或时长猜测费用。
+
+自动价格同步支持音频单价；手动价格 JSON 可增加 `in_audio`、`out_audio`、`cache_read_audio`（USD / 1M tokens），分别用于音频输入、输出和缓存读取，后台日志会展示对应的用量与费用。未配置专用音频单价时回退到普通输入、输出、缓存读取单价。
+
+实现参考 [sub2api 的 WebSocket passthrough relay（固定版本）](https://github.com/Wei-Shaw/sub2api/blob/9c2cca9e627291bc719bada3d57de23b625a4180/backend/internal/service/openai_ws_v2/passthrough_relay.go) 中的双向转发与终止事件用量处理；音频接口依照 [OpenAI WebSocket 文档](https://developers.openai.com/api/docs/guides/realtime-websocket) 和 [WebRTC 文档](https://developers.openai.com/api/docs/guides/realtime-webrtc) 实现。
+
 ## 🔄 跨协议转换引擎
 
 API Share 实现了业界领先的高保真度协议转换层，具备针对复杂工程级场景的深度健壮性保证：
@@ -357,11 +401,31 @@ Anthropic 规范 SSE 增量推送 (message_start -> content_block_delta -> messa
 | `UPSTREAM_DIAL_TIMEOUT_SEC` | `15` | TCP 建连与 TLS 握手超时时间（秒） |
 | `UPSTREAM_HEADER_TIMEOUT_SEC` | `180` | 等待上游响应首包头部的最长超时（秒，0 为不限） |
 | `UPSTREAM_IDLE_TIMEOUT_SEC` | `300` | 等待上游数据包的空闲超时（秒，不限制流式持续总长，0 为不限） |
+| `REALTIME_MAX_DURATION_SEC` | `3600` | Realtime WebSocket 单连接最长存活时间（秒，1～86400）；空闲读取另受 `UPSTREAM_IDLE_TIMEOUT_SEC` 限制 |
 | `TIKTOKEN_CACHE_DIR` | 临时目录/`data-gym-cache` | 本地 Token 分词词表缓存路径 |
 
 ---
 
 ## 🛠️ 本地联调与开发测试
+
+### 目录结构
+
+```text
+.
+├── cmd/
+│   ├── apishare/          # 网关主程序与 Go 测试
+│   │   └── web/           # 编译时内嵌的管理后台和公开页面
+│   └── mockupstream/      # 多协议 Mock 上游
+├── docs/                  # 协议兼容与计费排查文档
+├── .github/workflows/     # 自动构建与镜像发布
+├── Dockerfile
+├── go.mod
+├── go.sum
+├── LICENSE
+└── README.md
+```
+
+以下命令均在仓库根目录执行；Go 模块文件保留在根目录，主程序入口为 `./cmd/apishare`。
 
 代码库内置了多协议 Mock 测试桩 `cmd/mockupstream`，可一次性模拟四大协议服务端，方便脱机验证转换逻辑与计费：
 
@@ -375,7 +439,7 @@ go test -v ./...
 
 # 运行真实的 Codex CLI 协议回路测试 (需本地已安装 codex)
 export APISHARE_CODEX_BINARY="codex"
-go test . -run TestCodexCLIResponsesToolLoop -v -count=1
+go test ./cmd/apishare -run TestCodexCLIResponsesToolLoop -v -count=1
 ```
 
 ---
@@ -389,7 +453,7 @@ go test . -run TestCodexCLIResponsesToolLoop -v -count=1
 - [x] 现代化公开展现主页（分钟级 24H Uptime 仪表盘、Token 滚轮动画）
 - [x] 独立模型专属配额与共享额度混合结算
 - [x] 客户端真实 User-Agent 自动检测与无缝同步
-- [ ] 多模态音频 / 实时语音 (Realtime WebRTC & WebSocket) 协议代理支持
+- [x] 多模态音频 / 实时语音（Audio HTTP、Realtime WebSocket 双向代理、WebRTC SDP 建连；计费边界见上文）
 - [ ] 分布式集群模式与 SQLite 异地自动备份同步
 
 ---
@@ -408,7 +472,7 @@ go test . -run TestCodexCLIResponsesToolLoop -v -count=1
 ## 📄 开源协议与致谢
 
 - 本项目基于 **[MIT License](LICENSE)** 开源。
-- 前端内嵌的 Space Grotesk 和 Orbitron 字体分别遵循其各自的 [SIL Open Font License](web/public/fonts/OFL.txt)。
+- 前端内嵌的 Space Grotesk 和 Orbitron 字体分别遵循其各自的 [SIL Open Font License](cmd/apishare/web/public/fonts/OFL.txt)。
 - **技术致谢**：感谢 [LiteLLM](https://github.com/BerriAI/litellm) 提供的全网模型官方价格规范；感谢 [New API](https://github.com/QuantumNous/new-api) 与 [Sub2API](https://github.com/Wei-Shaw/sub2api) 在多格式协议兼容设计上给予的灵感与先驱探索。
 
 <div align="center">

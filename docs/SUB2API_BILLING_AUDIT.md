@@ -4,10 +4,10 @@
 
 改动保留在工作区，没有更新运行中的程序或实际数据库。新增 12 个回归测试函数，按用户要求未执行测试或真实模型调用；静态检查、程序编译和前端语法检查通过。数据库迁移、事务回滚和浏览器展示尚未运行验证。
 
-- [用量归一化与费用计算](/F:/cpa/APISHARE/billing_usage.go)
-- [日志迁移和原子扣费](/F:/cpa/APISHARE/billing_store.go)
-- [回归定义](/F:/cpa/APISHARE/billing_audit_test.go)
-- [全格式兼容边界](/F:/cpa/APISHARE/docs/SUB2API_ALL_FORMATS_AUDIT.md)
+- [用量归一化与费用计算](../cmd/apishare/billing_usage.go)
+- [日志迁移和原子扣费](../cmd/apishare/billing_store.go)
+- [回归定义](../cmd/apishare/billing_audit_test.go)
+- [全格式兼容边界](SUB2API_ALL_FORMATS_AUDIT.md)
 
 ## 已处理的供应商口径
 

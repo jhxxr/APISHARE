@@ -642,12 +642,15 @@ func settingsSet(k, v string) error {
 // ---------- runtime settings cache ----------
 
 type Price struct {
-	In           float64  `json:"in"`  // USD / 1M prompt tokens
-	Out          float64  `json:"out"` // USD / 1M completion tokens
-	CacheRead    *float64 `json:"cache_read,omitempty"`
-	CacheWrite   *float64 `json:"cache_write,omitempty"`
-	CacheWrite1h *float64 `json:"cache_write_1h,omitempty"`
-	Reasoning    *float64 `json:"reasoning,omitempty"`
+	In             float64  `json:"in"`  // USD / 1M prompt tokens
+	Out            float64  `json:"out"` // USD / 1M completion tokens
+	CacheRead      *float64 `json:"cache_read,omitempty"`
+	CacheWrite     *float64 `json:"cache_write,omitempty"`
+	CacheWrite1h   *float64 `json:"cache_write_1h,omitempty"`
+	Reasoning      *float64 `json:"reasoning,omitempty"`
+	InAudio        *float64 `json:"in_audio,omitempty"`
+	OutAudio       *float64 `json:"out_audio,omitempty"`
+	CacheReadAudio *float64 `json:"cache_read_audio,omitempty"`
 }
 
 func (price *Price) UnmarshalJSON(data []byte) error {

@@ -56,7 +56,7 @@ func readUsage(j map[string]any, format clientFormat) upstreamUsage {
 	}
 	u.Source = format
 	in, out := "prompt_tokens", "completion_tokens"
-	if format == FormatAnthropic || format == FormatOpenAIResponse {
+	if format == FormatAnthropic || format == FormatOpenAIResponse || format == FormatRealtime {
 		in, out = "input_tokens", "output_tokens"
 	}
 	if format == FormatGemini {
@@ -117,6 +117,14 @@ func readUsage(j map[string]any, format clientFormat) upstreamUsage {
 			}
 		}
 		readDetail(object(j[inputDetail]), "cached_tokens", &u.CacheRead, &u.CacheReadKnown)
+		// Realtime uses singular *_token_details; Chat/Responses use plural.
+		if format == FormatRealtime || (object(j[inputDetail]) == nil && object(j["input_token_details"]) != nil) {
+			inputDetail, outputDetail = "input_token_details", "output_token_details"
+			readDetail(object(j[inputDetail]), "cached_tokens", &u.CacheRead, &u.CacheReadKnown)
+		}
+		readDetail(object(j[inputDetail]), "audio_tokens", &u.InputAudio, &u.InputAudioKnown)
+		readDetail(object(j[outputDetail]), "audio_tokens", &u.OutputAudio, &u.OutputAudioKnown)
+		readDetail(object(object(j[inputDetail])["cached_tokens_details"]), "audio_tokens", &u.CacheReadAudio, &u.CacheReadAudioKnown)
 		readDetail(object(j[inputDetail]), "cache_creation_tokens", &u.CacheWrite, &u.CacheWriteKnown)
 		if !u.CacheWriteKnown {
 			readDetail(object(j[inputDetail]), "cache_write_tokens", &u.CacheWrite, &u.CacheWriteKnown)

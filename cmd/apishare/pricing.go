@@ -22,7 +22,7 @@ import (
 const defaultAutoPricingURL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 
 const pricingRefreshInterval = 24 * time.Hour
-const pricingCacheSchemaVersion = "2"
+const pricingCacheSchemaVersion = "3"
 
 // 内置兜底价格表（USD/1M tokens）：仅在官方价格库不可用且无手动覆盖时使用。
 var builtInPricing = map[string]Price{
@@ -74,8 +74,8 @@ func loadAutoPricingCache() {
 		if json.Unmarshal([]byte(blob), &data) == nil && len(data) > 0 {
 			at, _ := settingsGet("auto_pricing_fetched_at")
 			if version, _ := settingsGet("auto_pricing_schema_version"); version != pricingCacheSchemaVersion {
-				// Pre-upgrade snapshots discarded cache prices. Keep base prices
-				// available offline, but schedule a refresh immediately on startup.
+				// Older snapshots lack some detailed rates. Keep them available
+				// offline, but schedule a refresh immediately on startup.
 				at = ""
 			}
 			autoPricing.Lock()
@@ -107,12 +107,15 @@ func refreshAutoPricing() (int, error) {
 
 	// LiteLLM 原始结构：{ "模型名": { "input_cost_per_token": 2.5e-6, "output_cost_per_token": 1e-5, ... } }
 	var src map[string]struct {
-		InputCostPerToken        *float64 `json:"input_cost_per_token"`
-		OutputCostPerToken       *float64 `json:"output_cost_per_token"`
-		CacheReadCostPerToken    *float64 `json:"cache_read_input_token_cost"`
-		CacheWriteCostPerToken   *float64 `json:"cache_creation_input_token_cost"`
-		CacheWrite1hCostPerToken *float64 `json:"cache_creation_input_token_cost_above_1hr"`
-		ReasoningCostPerToken    *float64 `json:"output_cost_per_reasoning_token"`
+		InputCostPerToken          *float64 `json:"input_cost_per_token"`
+		OutputCostPerToken         *float64 `json:"output_cost_per_token"`
+		CacheReadCostPerToken      *float64 `json:"cache_read_input_token_cost"`
+		CacheWriteCostPerToken     *float64 `json:"cache_creation_input_token_cost"`
+		CacheWrite1hCostPerToken   *float64 `json:"cache_creation_input_token_cost_above_1hr"`
+		ReasoningCostPerToken      *float64 `json:"output_cost_per_reasoning_token"`
+		InputAudioCostPerToken     *float64 `json:"input_cost_per_audio_token"`
+		OutputAudioCostPerToken    *float64 `json:"output_cost_per_audio_token"`
+		CacheReadAudioCostPerToken *float64 `json:"cache_read_input_audio_token_cost"`
 	}
 	if err := json.Unmarshal(raw, &src); err != nil {
 		return 0, err
@@ -137,6 +140,9 @@ func refreshAutoPricing() (int, error) {
 		p.CacheWrite = ratePerMillion(e.CacheWriteCostPerToken)
 		p.CacheWrite1h = ratePerMillion(e.CacheWrite1hCostPerToken)
 		p.Reasoning = ratePerMillion(e.ReasoningCostPerToken)
+		p.InAudio = ratePerMillion(e.InputAudioCostPerToken)
+		p.OutAudio = ratePerMillion(e.OutputAudioCostPerToken)
+		p.CacheReadAudio = ratePerMillion(e.CacheReadAudioCostPerToken)
 		if !validPrice(p) {
 			continue
 		}

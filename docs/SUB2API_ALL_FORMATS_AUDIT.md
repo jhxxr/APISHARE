@@ -6,11 +6,11 @@ APISHARE 的兼容能力需要分两层看：原生请求保留供应商字段�
 
 扩展共新增 29 个回归测试函数，其中计费相关新增 12 个（含 DeepSeek Flash 统一计价与原模型额度池回归），按用户要求未执行测试或调用真实模型；静态检查 `go vet ./...` 与程序编译通过。“已有处理”指代码层面，运行稳定性仍需后续验证。
 
-- [Responses 的 70 项排查及公开问题索引](/F:/cpa/APISHARE/docs/SUB2API_RESPONSES_AUDIT.md)
-- [本次回归定义](/F:/cpa/APISHARE/protocol_formats_audit_test.go)
-- [原生三种格式的 SSE 聚合](/F:/cpa/APISHARE/protocol_native_buffer.go)
-- [四种原生 JSON→SSE 包装](/F:/cpa/APISHARE/protocol_native_writer.go)、[思考配置](/F:/cpa/APISHARE/protocol_thinking.go)与[用量转换](/F:/cpa/APISHARE/protocol_usage.go)
-- [本轮配置与协议回归定义](/F:/cpa/APISHARE/protocol_optimization_test.go)
+- [Responses 的 70 项排查及公开问题索引](SUB2API_RESPONSES_AUDIT.md)
+- [本次回归定义](../cmd/apishare/protocol_formats_audit_test.go)
+- [原生三种格式的 SSE 聚合](../cmd/apishare/protocol_native_buffer.go)
+- [四种原生 JSON→SSE 包装](../cmd/apishare/protocol_native_writer.go)、[思考配置](../cmd/apishare/protocol_thinking.go)与[用量转换](../cmd/apishare/protocol_usage.go)
+- [本轮配置与协议回归定义](../cmd/apishare/protocol_optimization_test.go)
 
 ## 本轮继续优化
 
@@ -20,7 +20,7 @@ APISHARE 的兼容能力需要分两层看：原生请求保留供应商字段�
 
 用量转换开始保留缓存读取、缓存创建、推理和 Gemini 工具提示 Token，按源协议换算总数。OpenAI 已含推理的输出不再次加推理；Gemini 候选输出之外的 thoughts 单独计入；Gemini 输入已含缓存，转为 Messages 时拆分为普通输入与缓存读取，不伪造缓存创建。累计分项覆盖，缺失分项保留，显式 0 覆盖旧值。流式与非流式使用同一转换器；缓存创建在 OpenAI details 中使用兼容网关扩展字段 cache_creation_tokens，不能当成官方 OpenAI 缓存写入计费定义。
 
-后续计费轮已将主要缓存、思考和工具提示分桶接入扣费，响应和新日志使用同一归一化口径。价格支持可选缓存读写、1 小时缓存创建和推理单价，缺省继承基础输入/输出价格，显式 0 保留免费语义；扣费与日志原子提交并保存价格快照。Kimi/GLM/DeepSeek 的兼容别名和 Grok 独立推理计数也已补齐。长上下文分档、托管工具及分模态费用仍不完整，详见[细分计费排查](/F:/cpa/APISHARE/docs/SUB2API_BILLING_AUDIT.md)。
+后续计费轮已将主要缓存、思考和工具提示分桶接入扣费，响应和新日志使用同一归一化口径。价格支持可选缓存读写、1 小时缓存创建和推理单价，缺省继承基础输入/输出价格，显式 0 保留免费语义；扣费与日志原子提交并保存价格快照。Kimi/GLM/DeepSeek 的兼容别名和 Grok 独立推理计数也已补齐。长上下文分档、托管工具及分模态费用仍不完整，详见[细分计费排查](SUB2API_BILLING_AUDIT.md)。
 
 ## 本次修正
 
@@ -94,7 +94,7 @@ sub2api 曾出现签名重试时移除 thinking 却遗留 thinking_strategy/cont
 
 ## 共用边界与后续顺序
 
-1. **继续扩展特殊计价类别。** 主要缓存/思考分项、时长和额度扣费已补；长上下文分档、服务端工具、存储和分模态计费仍需专项适配。新日志保存当次价格及费用明细，不回写旧账。[本轮实现](/F:/cpa/APISHARE/docs/SUB2API_BILLING_AUDIT.md)
+1. **继续扩展特殊计价类别。** 主要缓存/思考分项、时长和额度扣费已补；长上下文分档、服务端工具、存储和分模态计费仍需专项适配。新日志保存当次价格及费用明细，不回写旧账。[本轮实现](SUB2API_BILLING_AUDIT.md)
 2. **供应商状态需独立适配。** Gemini 签名、Anthropic 签名/暂停、Responses 密文和压缩项的回放需区分上游、账号、模型和对话。现有 Responses 明文缓存不能替代这些状态。会话粘性有帮助，故障转移仍可能使旧状态失效。
 3. **继续完善原生特殊输出事件。** JSON→SSE 已包装四种协议的主要生命周期，特殊托管工具和加密/压缩项完整保留于输出项及最终快照；不是每种新托管工具的过程事件都能从最终 JSON 重建。
 4. **尚未声明的扩展字段需要能力表。** 主要无映射配置已拒绝，但 Chat logprobs/prediction、思考显示策略等仍可能没有等价转换。后续应按源协议、目标协议、目标模型逐项允许/拒绝，而不是笼统删字段。

@@ -742,6 +742,7 @@ function logUsageDetails(log) {
   const usage = log.billing?.usage;
   if (!usage) return "";
   const rows = [["普通输入", usage.input], ["缓存读取", usage.cache_read], ["缓存创建", usage.cache_write], ["其中 1 小时缓存", usage.cache_write_1h], ["工具提示", usage.tool_prompt], ["正文输出", usage.output], ["推理", usage.reasoning]];
+  if (usage.input_audio || usage.output_audio || usage.cache_read_audio) rows.push(["音频输入", usage.input_audio], ["音频缓存读取", usage.cache_read_audio], ["音频输出", usage.output_audio]);
   const estimate = usage.estimated_input || usage.estimated_output ? '<small>部分用量为估算</small>' : "";
   return '<details><summary>用量明细</summary><span class="cell-stack">' + rows.map(([name, count]) => '<small>' + name + '：' + number(count || 0) + '</small>').join("") + estimate + '</span></details>';
 }
@@ -750,6 +751,7 @@ function logCostDetails(log) {
   const cost = log.billing?.cost;
   if (!cost) return "";
   const rows = [["普通输入", cost.input], ["缓存读取", cost.cache_read], ["缓存创建", cost.cache_write], ["工具提示", cost.tool_prompt], ["正文输出", cost.output], ["推理", cost.reasoning]];
+  if (log.billing.usage.input_audio || log.billing.usage.output_audio || log.billing.usage.cache_read_audio) rows.push(["音频输入", cost.input_audio], ["音频缓存读取", cost.cache_read_audio], ["音频输出", cost.output_audio]);
   const billing = log.billing;
   const sources = { override: "手动覆盖", official: "官方定价", builtin: "内置兜底", default: "默认兜底", none: "未匹配价格" };
   const source = '<small>价格来源：' + esc(sources[billing.price_source] || billing.price_source || "未知") + '</small>';
@@ -811,9 +813,9 @@ async function saveSettings(event) {
     if (!pricing || Array.isArray(pricing) || typeof pricing !== "object" || !Object.keys(pricing).length) throw new Error("请填写模型价格 JSON 对象。");
     for (const [model, item] of Object.entries(pricing)) {
       if (!item || Array.isArray(item) || typeof item !== "object" || !validRate(item.in) || !validRate(item.out)) throw new Error(model + "：in 和 out 必须是有限的非负单价。");
-      const allowedFields = ["in", "out", "cache_read", "cache_write", "cache_write_1h", "reasoning"];
+      const allowedFields = ["in", "out", "cache_read", "cache_write", "cache_write_1h", "reasoning", "in_audio", "out_audio", "cache_read_audio"];
       if (Object.keys(item).some((field) => !allowedFields.includes(field))) throw new Error(model + "：包含不支持的价格字段，请检查拼写。");
-      for (const field of ["cache_read", "cache_write", "cache_write_1h", "reasoning"]) {
+      for (const field of ["cache_read", "cache_write", "cache_write_1h", "reasoning", "in_audio", "out_audio", "cache_read_audio"]) {
         if (item[field] != null && !validRate(item[field])) throw new Error(model + "：" + field + " 必须是有限的非负单价，或留空使用默认单价。");
       }
     }
