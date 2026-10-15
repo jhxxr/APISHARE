@@ -327,6 +327,10 @@ func registerAdminRoutes(r *gin.Engine) {
 			c.JSON(400, gin.H{"error": "openai_protocol must be auto, chat or responses"})
 			return
 		}
+		if !validStructuredOutputMode(u.StructuredOutput) {
+			c.JSON(400, gin.H{"error": "structured_output must be empty, json_schema, json_object or disabled"})
+			return
+		}
 		if _, err := parseHeaderOverrides(u.HeaderOverrides); err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
@@ -356,17 +360,18 @@ func registerAdminRoutes(r *gin.Engine) {
 			return
 		}
 		var req struct {
-			Name            *string `json:"name"`
-			Type            *string `json:"type"`
-			BaseURL         *string `json:"base_url"`
-			APIKey          *string `json:"api_key"`
-			Weight          *int    `json:"weight"`
-			Models          *string `json:"models"`
-			ModelMap        *string `json:"model_map"`
-			Enabled         *bool   `json:"enabled"`
-			ProxyID         *int64  `json:"proxy_id"`
-			HeaderOverrides *string `json:"header_overrides"`
-			OpenAIProtocol  *string `json:"openai_protocol"`
+			Name             *string `json:"name"`
+			Type             *string `json:"type"`
+			BaseURL          *string `json:"base_url"`
+			APIKey           *string `json:"api_key"`
+			Weight           *int    `json:"weight"`
+			Models           *string `json:"models"`
+			ModelMap         *string `json:"model_map"`
+			Enabled          *bool   `json:"enabled"`
+			ProxyID          *int64  `json:"proxy_id"`
+			HeaderOverrides  *string `json:"header_overrides"`
+			OpenAIProtocol   *string `json:"openai_protocol"`
+			StructuredOutput *string `json:"structured_output"`
 		}
 		if c.BindJSON(&req) != nil {
 			return
@@ -379,6 +384,13 @@ func registerAdminRoutes(r *gin.Engine) {
 		}
 		if req.OpenAIProtocol != nil {
 			u.OpenAIProtocol = *req.OpenAIProtocol
+		}
+		if req.StructuredOutput != nil {
+			u.StructuredOutput = *req.StructuredOutput
+		}
+		if !validStructuredOutputMode(u.StructuredOutput) {
+			c.JSON(400, gin.H{"error": "structured_output must be empty, json_schema, json_object or disabled"})
+			return
 		}
 		if !validOpenAIProtocol(u.OpenAIProtocol) || (u.Type != "openai" && u.Type != "anthropic" && u.Type != "gemini") {
 			c.JSON(400, gin.H{"error": "invalid upstream type or openai_protocol"})

@@ -124,7 +124,7 @@ func supportsNativeEndpoint(up *Upstream, format clientFormat) bool {
 	return format != FormatOpenAIResponse || up.wireFormat(format) == FormatOpenAIResponse
 }
 
-func pickUpstream(format clientFormat, model string, exclude map[int64]bool, nativeOnly bool) (*Upstream, error) {
+func pickUpstream(format clientFormat, model string, exclude map[int64]bool, nativeOnly bool, requests ...*canonReq) (*Upstream, error) {
 	snapshot, err := getRoutingSnapshot()
 	if err != nil {
 		return nil, err
@@ -156,6 +156,19 @@ func pickUpstream(format clientFormat, model string, exclude map[int64]bool, nat
 				tier = 3
 			default:
 				tier = 4
+			}
+			if len(requests) > 0 && requests[0] != nil && requests[0].OutputFormat != nil {
+				// Preserve explicit model routing tiers. Within a tier prefer
+				// schema-capable conversion over opt-in JSON compatibility.
+				tier *= 3
+				if !native {
+					switch u.StructuredOutput {
+					case "json_object":
+						tier++
+					case "disabled":
+						tier += 2
+					}
+				}
 			}
 		}
 		if tier < bestTier {

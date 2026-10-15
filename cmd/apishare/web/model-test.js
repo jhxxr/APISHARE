@@ -13,6 +13,7 @@ function openModelTest(id) {
   $("modelTestModel").value = models[0] || "";
   $("modelTestMessage").value = "hi";
   $("modelTestMaxTokens").value = "4096";
+  $("modelTestStream").value = "true";
   $("modelTestResult").classList.add("hidden");
   $("modelTestError").classList.add("hidden");
   $("modelTestHint").textContent = models.length ? "可选择已配置模型，也可手动输入其他模型；模型映射会自动生效。" : "请输入模型名称，或点击“获取模型”加载上游模型列表。";
@@ -72,11 +73,11 @@ async function submitModelTest(event) {
   try {
     const result = await api("api/upstreams/" + modelTest.id + "/model-test", {
       method: "POST", signal: controller.signal,
-      body: JSON.stringify({ model, message: $("modelTestMessage").value, max_tokens: Number($("modelTestMaxTokens").value) })
+      body: JSON.stringify({ model, message: $("modelTestMessage").value, max_tokens: Number($("modelTestMaxTokens").value), stream: $("modelTestStream").value === "true" })
     });
     if (controller.signal.aborted) return;
     if (!result.ok) throw new Error((result.error || "模型测试失败") + "（耗时 " + result.latency_ms + " ms）");
-    $("modelTestSummary").textContent = "测试成功 · " + result.latency_ms + " ms · " + result.upstream_model + (result.input_tokens != null ? " · 输入 " + result.input_tokens + " Token" : "") + (result.output_tokens != null ? " · 输出 " + result.output_tokens + " Token" : "");
+    $("modelTestSummary").textContent = "测试成功 · " + (result.stream ? "流式" : "非流式") + " · " + result.latency_ms + " ms · " + result.upstream_model + (result.input_tokens != null ? " · 输入 " + result.input_tokens + " Token" : "") + (result.output_tokens != null ? " · 输出 " + result.output_tokens + " Token" : "");
     $("modelTestReply").textContent = result.reply || "模型未返回文本。结束原因：" + (result.finish_reason || "未知") + "。可增加最大输出 Token 后重试。";
     $("modelTestThinking").textContent = result.thinking || "";
     $("modelTestThinkingDetails").classList.toggle("hidden", !result.thinking);

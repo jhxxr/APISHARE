@@ -233,7 +233,10 @@ func (d *protocolDecoder) decode(payload string) ([]streamDelta, upstreamUsage, 
 			b := object(ch["delta"])
 			add("text", "text", str(b["content"]))
 			add("thinking", "thinking", chatReasoningText(b))
-			add("text", "text", str(b["refusal"]))
+			if refusal := str(b["refusal"]); refusal != "" {
+				add("text", "text", refusal)
+				d.finish = "content_filter"
+			}
 			for _, v := range array(b["tool_calls"]) {
 				c := object(v)
 				f := object(c["function"])
@@ -243,7 +246,9 @@ func (d *protocolDecoder) decode(payload string) ([]streamDelta, upstreamUsage, 
 				tool(intFromAny(c["index"]), str(c["id"]), str(f["name"]), str(f["arguments"]))
 			}
 			if s := str(ch["finish_reason"]); s != "" {
-				d.finish = normalizeFinish(s)
+				if d.finish != "content_filter" {
+					d.finish = normalizeFinish(s)
+				}
 				d.terminal = true
 			}
 		}

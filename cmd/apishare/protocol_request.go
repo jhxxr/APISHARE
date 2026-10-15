@@ -69,12 +69,18 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 		cr.ReasoningEffort = str(r["effort"])
 	}
 	if config := object(m["output_config"]); config != nil {
-		if config["format"] != nil {
-			return unsupported("Anthropic structured output format")
-		}
 		if effort := str(config["effort"]); effort != "" {
 			cr.ReasoningEffort = effort
 		}
+	}
+	if format == FormatAnthropic {
+		var err error
+		cr.OutputFormat, err = parseAnthropicOutputFormat(m)
+		if err != nil {
+			return err
+		}
+	} else if object(m["output_config"])["format"] != nil || m["output_format"] != nil {
+		return unsupported("Anthropic structured output on a non-Anthropic request")
 	}
 	if err := parseProtocolThinking(cr, format, m); err != nil {
 		return err
@@ -760,9 +766,18 @@ func renderCanonParts(format clientFormat, parts []canonPart) ([]any, error) {
 	return out, nil
 }
 
-func renderProtocolRequest(format clientFormat, cr *canonReq, model string) ([]byte, error) {
+func renderProtocolRequest(format clientFormat, cr *canonReq, model string, outputModes ...string) ([]byte, error) {
 	if cr.ConversionError != nil {
 		return nil, cr.ConversionError
+	}
+	mode := ""
+	if len(outputModes) > 0 {
+		mode = outputModes[0]
+	}
+	var err error
+	cr, err = prepareStructuredOutput(format, cr, mode)
+	if err != nil {
+		return nil, err
 	}
 	m := map[string]any{"model": model, "stream": cr.Stream}
 	msgs := []any{}
@@ -1050,6 +1065,9 @@ func renderProtocolRequest(format clientFormat, cr *canonReq, model string) ([]b
 	}
 	if cr.Parallel != nil && (format == FormatOpenAIChat || format == FormatOpenAIResponse) {
 		m["parallel_tool_calls"] = *cr.Parallel
+	}
+	if err := renderStructuredOutput(format, cr, mode, m); err != nil {
+		return nil, err
 	}
 	return json.Marshal(m)
 }

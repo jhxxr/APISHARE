@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS upstreams (
   proxy_id INTEGER NOT NULL DEFAULT 0,
   header_overrides TEXT NOT NULL DEFAULT '',
   openai_protocol TEXT NOT NULL DEFAULT '',
+  structured_output TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS outbound_proxies (
@@ -247,6 +248,21 @@ CREATE TABLE IF NOT EXISTS session_affinity (
 			return err
 		}
 	}
+	rows, err = db.Query(`SELECT name FROM pragma_table_info('upstreams') WHERE name='structured_output'`)
+	if err != nil {
+		return err
+	}
+	hasStructuredOutput := rows.Next()
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	if !hasStructuredOutput {
+		if _, err = db.Exec(`ALTER TABLE upstreams ADD COLUMN structured_output TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
 	if err := migrateBillingLogSchema(); err != nil {
 		return err
 	}
@@ -276,20 +292,21 @@ type ApiKey struct {
 }
 
 type Upstream struct {
-	config          *upstreamConfig // Immutable parsed runtime configuration; never exposed by APIs.
-	ID              int64           `json:"id"`
-	Name            string          `json:"name"`
-	Type            string          `json:"type"` // provider: openai | anthropic | gemini; OpenAIProtocol selects its wire format
-	BaseURL         string          `json:"base_url"`
-	APIKey          string          `json:"api_key"`
-	Weight          int             `json:"weight"`
-	Models          string          `json:"models"`
-	ModelMap        string          `json:"model_map"`
-	Enabled         bool            `json:"enabled"`
-	ProxyID         int64           `json:"proxy_id"`
-	HeaderOverrides string          `json:"header_overrides"`
-	OpenAIProtocol  string          `json:"openai_protocol"` // auto (legacy), chat, responses
-	CreatedAt       string          `json:"created_at"`
+	config           *upstreamConfig // Immutable parsed runtime configuration; never exposed by APIs.
+	ID               int64           `json:"id"`
+	Name             string          `json:"name"`
+	Type             string          `json:"type"` // provider: openai | anthropic | gemini; OpenAIProtocol selects its wire format
+	BaseURL          string          `json:"base_url"`
+	APIKey           string          `json:"api_key"`
+	Weight           int             `json:"weight"`
+	Models           string          `json:"models"`
+	ModelMap         string          `json:"model_map"`
+	Enabled          bool            `json:"enabled"`
+	ProxyID          int64           `json:"proxy_id"`
+	HeaderOverrides  string          `json:"header_overrides"`
+	OpenAIProtocol   string          `json:"openai_protocol"`   // auto (legacy), chat, responses
+	StructuredOutput string          `json:"structured_output"` // empty/json_schema, json_object compatibility, disabled; converted requests only
+	CreatedAt        string          `json:"created_at"`
 }
 
 type CallLog struct {
@@ -508,12 +525,12 @@ func dbAddUsedUSD(keyID int64, cost float64) error {
 // ---------- upstreams ----------
 
 func dbGetUpstream(id int64) (*Upstream, error) {
-	row := db.QueryRow(`SELECT id,name,type,base_url,api_key,weight,models,model_map,enabled,created_at,proxy_id,header_overrides,openai_protocol
+	row := db.QueryRow(`SELECT id,name,type,base_url,api_key,weight,models,model_map,enabled,created_at,proxy_id,header_overrides,openai_protocol,structured_output
 		FROM upstreams WHERE id=?`, id)
 	u := &Upstream{}
 	var enabled int
 	if err := row.Scan(&u.ID, &u.Name, &u.Type, &u.BaseURL, &u.APIKey, &u.Weight,
-		&u.Models, &u.ModelMap, &enabled, &u.CreatedAt, &u.ProxyID, &u.HeaderOverrides, &u.OpenAIProtocol); err != nil {
+		&u.Models, &u.ModelMap, &enabled, &u.CreatedAt, &u.ProxyID, &u.HeaderOverrides, &u.OpenAIProtocol, &u.StructuredOutput); err != nil {
 		return nil, err
 	}
 	u.Enabled = enabled == 1
@@ -521,7 +538,7 @@ func dbGetUpstream(id int64) (*Upstream, error) {
 }
 
 func dbListUpstreams() ([]Upstream, error) {
-	rows, err := db.Query(`SELECT id,name,type,base_url,api_key,weight,models,model_map,enabled,created_at,proxy_id,header_overrides,openai_protocol
+	rows, err := db.Query(`SELECT id,name,type,base_url,api_key,weight,models,model_map,enabled,created_at,proxy_id,header_overrides,openai_protocol,structured_output
 		FROM upstreams ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -532,7 +549,7 @@ func dbListUpstreams() ([]Upstream, error) {
 		var u Upstream
 		var enabled int
 		if err := rows.Scan(&u.ID, &u.Name, &u.Type, &u.BaseURL, &u.APIKey, &u.Weight,
-			&u.Models, &u.ModelMap, &enabled, &u.CreatedAt, &u.ProxyID, &u.HeaderOverrides, &u.OpenAIProtocol); err != nil {
+			&u.Models, &u.ModelMap, &enabled, &u.CreatedAt, &u.ProxyID, &u.HeaderOverrides, &u.OpenAIProtocol, &u.StructuredOutput); err != nil {
 			return nil, err
 		}
 		u.Enabled = enabled == 1
@@ -542,9 +559,9 @@ func dbListUpstreams() ([]Upstream, error) {
 }
 
 func dbInsertUpstream(u *Upstream) error {
-	res, err := db.Exec(`INSERT INTO upstreams(name,type,base_url,api_key,weight,models,model_map,enabled,created_at,proxy_id,header_overrides,openai_protocol)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-		u.Name, u.Type, u.BaseURL, u.APIKey, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), nowStr(), u.ProxyID, u.HeaderOverrides, u.OpenAIProtocol)
+	res, err := db.Exec(`INSERT INTO upstreams(name,type,base_url,api_key,weight,models,model_map,enabled,created_at,proxy_id,header_overrides,openai_protocol,structured_output)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		u.Name, u.Type, u.BaseURL, u.APIKey, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), nowStr(), u.ProxyID, u.HeaderOverrides, u.OpenAIProtocol, u.StructuredOutput)
 	if err == nil {
 		u.ID, _ = res.LastInsertId()
 		invalidateRoutingSnapshot()
@@ -554,8 +571,8 @@ func dbInsertUpstream(u *Upstream) error {
 }
 
 func dbUpdateUpstream(u *Upstream) error {
-	_, err := db.Exec(`UPDATE upstreams SET name=?,type=?,base_url=?,api_key=?,weight=?,models=?,model_map=?,enabled=?,proxy_id=?,header_overrides=?,openai_protocol=? WHERE id=?`,
-		u.Name, u.Type, u.BaseURL, u.APIKey, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), u.ProxyID, u.HeaderOverrides, u.OpenAIProtocol, u.ID)
+	_, err := db.Exec(`UPDATE upstreams SET name=?,type=?,base_url=?,api_key=?,weight=?,models=?,model_map=?,enabled=?,proxy_id=?,header_overrides=?,openai_protocol=?,structured_output=? WHERE id=?`,
+		u.Name, u.Type, u.BaseURL, u.APIKey, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), u.ProxyID, u.HeaderOverrides, u.OpenAIProtocol, u.StructuredOutput, u.ID)
 	if err == nil {
 		invalidateRoutingSnapshot()
 		invalidatePublicOverviews()

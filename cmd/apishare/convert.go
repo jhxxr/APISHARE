@@ -75,6 +75,7 @@ type canonReq struct {
 	ThinkingMode    string
 	ThinkingBudget  *int
 	ConversionError error
+	OutputFormat    *canonOutputFormat
 	ResponseTools   map[string]responseTool
 	InputText       string // system + 首条 user 消息，用于会话指纹与 token 估算
 }

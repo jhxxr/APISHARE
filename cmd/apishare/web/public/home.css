@@ -301,6 +301,12 @@ select { min-height: 44px; max-width: 150px; padding: 9px 11px; border: 1px soli
 .models-grid-head,.model-card { display: grid; grid-template-columns: minmax(190px,1.15fr) minmax(190px,1.45fr) minmax(110px,.55fr) minmax(115px,.7fr) 104px; gap: 24px; align-items: center; }
 .models-grid-head { padding: 17px 24px; font: 11px/1.5 var(--display); color: var(--muted); border-bottom: 1px solid var(--border); background: var(--surface-soft); }.models-grid-head > span:nth-child(3) { text-align: right; }
 .model-card { min-width: 0; min-height: 128px; padding: 25px 24px; border-bottom: 1px solid var(--border); transition: background 200ms; }.model-card:last-child { border-bottom: 0; }.model-card:hover,.model-card:focus-within { background: #f3ead8; }
+.model-card.is-unavailable { background: var(--surface-soft); color: var(--gray); }
+.model-card.is-unavailable:hover,.model-card.is-unavailable:focus-within { background: var(--surface-soft); }
+.model-card.is-unavailable .model-uptime,.model-card.is-unavailable .uptime-bars,.model-card.is-unavailable .minute-track { filter: grayscale(1); opacity: .55; }
+.model-card.is-unavailable .family-symbol { color: var(--gray); filter: grayscale(1); }
+.model-card.is-unavailable h3 { color: var(--gray); }
+.unavailable-tag { display: inline-flex; align-items: center; margin-top: 8px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); color: var(--muted); font-size: 11px; line-height: 1.6; white-space: nowrap; }
 .model-identity { display: flex; align-items: center; gap: 14px; min-width: 0; }.model-name { min-width: 0; }
 .family-symbol { display: grid; place-items: center; width: 42px; height: 46px; flex: 0 0 auto; background: var(--accent-soft); color: var(--accent); border: 1px solid var(--border); border-radius: 12px; font: 500 17px var(--display); }
 .family { display: block; color: var(--muted); font-size: 12px; }.model-card h3 { margin: 3px 0 8px; font: 500 17px/1.35 var(--display); letter-spacing: -.2px; overflow-wrap: anywhere; }

@@ -298,11 +298,24 @@ function renderModels() {
  const scrollPositions=new Map([...$("modelsGrid").querySelectorAll(".minute-track")].map(track=>[track.dataset.model,track.scrollLeft]));
  const minute=overview.history_interval==="minute";
  const query=$("modelSearch").value.trim().toLowerCase(),status=$("statusFilter").value;
+ const denied=m=>!!keyOverview&&!Object.hasOwn(keyOverview.models,m.model);
+ const recent=m=>(m.history||[]).reduce((sum,d)=>sum+(Number(d.calls)||0),0);
  const list=overview.models.filter(m=>(!query||(m.model+" "+m.family).toLowerCase().includes(query))&&(!status||m.status===status));
+ // Heat first: most requested in the last 24 hours on top, idle models sink.
+ // When a key is verified, models it cannot use sink below every usable one.
+ list.sort((a,b)=>{
+  const access=(denied(a)?1:0)-(denied(b)?1:0);
+  if(access)return access;
+  const heat=recent(b)-recent(a);
+  if(heat)return heat;
+  if(a.family!==b.family)return a.family<b.family?-1:1;
+  return a.model.localeCompare(b.model);
+ });
  $("modelsGrid").innerHTML=list.map(m=>{
+  const unavailable=denied(m);
   const familyTag=({Anthropic:"C",Google:"G",OpenAI:"O",DeepSeek:"D",xAI:"X",Qwen:"Q",GLM:"Z"})[m.family]||"AI";
   const track=minute?'<div class="minute-track" data-model="'+esc(m.model)+'" tabindex="0" role="region" aria-label="'+esc(m.model)+' 的 24 小时分钟轨迹，可横向滚动"><canvas class="minute-canvas" aria-hidden="true"></canvas></div>':'<div class="uptime-bars" style="--history-buckets:'+m.history.length+'" aria-hidden="true">'+m.history.map(d=>'<span class="interval-bar '+(!d.calls?"":d.successes===d.calls?"success":!d.successes?"failure":"partial")+'" title="'+esc(intervalTitle(d))+'"></span>').join("")+'</div>';
-  return '<article class="model-card state-'+m.status+'" data-motion-key="'+esc(m.model)+'"><div class="model-identity"><span class="family-symbol" aria-hidden="true">'+familyTag+'</span><div class="model-name"><span class="family">'+esc(m.family)+'</span><h3>'+esc(m.model)+'</h3><span class="model-state"><i class="dot"></i>'+statusText[m.status]+'</span></div></div><div class="model-timeline">'+track+'<div class="history-labels"><span>'+esc(historyTime(m.history[0].start))+'</span><span>'+esc(historyTime(m.history.at(-1).end))+'</span></div></div><div class="model-uptime '+(m.uptime_percent===null?'no-results':'has-results')+'"><strong>'+rate(m.uptime_percent)+'</strong><span>24 小时请求成功率</span><span class="model-speed'+(m.avg_tps==null?" is-empty":"")+'" title="'+(m.avg_tps==null?"最近 24 小时没有可测量的输出速度样本":"按输出 Token ÷ 生成时长加权平均")+'">平均 '+speed(m.avg_tps)+'</span></div><div class="model-consumption"><div><strong title="'+fmt(tokens(m))+' Tokens">'+compact(tokens(m))+'</strong><span>Tokens</span></div><div><strong>'+ fmt(m.calls)+'</strong><span>次调用</span></div><span class="last-call">'+relativeTime(m.last_call)+'</span></div><button class="model-history" type="button" data-model="'+esc(m.model)+'" aria-label="查看 '+esc(m.model)+' 的 24 小时调用历史">'+svg("clock")+'<span>调用历史</span></button>'+renderModelQuota(m)+'</article>';
+  return '<article class="model-card state-'+m.status+(unavailable?" is-unavailable":"")+'" data-motion-key="'+esc(m.model)+'"><div class="model-identity"><span class="family-symbol" aria-hidden="true">'+familyTag+'</span><div class="model-name"><span class="family">'+esc(m.family)+'</span><h3>'+esc(m.model)+'</h3><span class="model-state"><i class="dot"></i>'+statusText[m.status]+'</span>'+(unavailable?'<span class="unavailable-tag">当前密钥不可用</span>':'')+'</div></div><div class="model-timeline">'+track+'<div class="history-labels"><span>'+esc(historyTime(m.history[0].start))+'</span><span>'+esc(historyTime(m.history.at(-1).end))+'</span></div></div><div class="model-uptime '+(m.uptime_percent===null?'no-results':'has-results')+'"><strong>'+rate(m.uptime_percent)+'</strong><span>24 小时请求成功率</span><span class="model-speed'+(m.avg_tps==null?" is-empty":"")+'" title="'+(m.avg_tps==null?"最近 24 小时没有可测量的输出速度样本":"按输出 Token ÷ 生成时长加权平均")+'">平均 '+speed(m.avg_tps)+'</span></div><div class="model-consumption"><div><strong title="'+fmt(tokens(m))+' Tokens">'+compact(tokens(m))+'</strong><span>Tokens</span></div><div><strong>'+ fmt(m.calls)+'</strong><span>次调用</span></div><span class="last-call">'+relativeTime(m.last_call)+'</span></div><button class="model-history" type="button" data-model="'+esc(m.model)+'" aria-label="查看 '+esc(m.model)+' 的 24 小时调用历史">'+svg("clock")+'<span>调用历史</span></button>'+renderModelQuota(m)+'</article>';
  }).join("")||'<div class="empty-state">'+svg("layers")+'<h3>'+(query||status?"没有匹配的模型":overview.models_loading?"模型列表正在更新":"模型服务即将上线")+'</h3><p>'+(query||status?"试试其他模型名称或状态。":"模型准备就绪后，将在这里展示服务状态。")+'</p></div>';
  if(activeModel){[...$("modelsGrid").querySelectorAll(activeTrack?".minute-track":"button")].find(b=>b.dataset.model===activeModel)?.focus({preventScroll:true});}
  if(minute){const models=new Map(list.map(m=>[m.model,m]));$("modelsGrid").querySelectorAll(".minute-track").forEach(track=>{drawMinuteHistory(track.querySelector("canvas"),models.get(track.dataset.model).history);track.scrollLeft=scrollPositions.get(track.dataset.model)??track.scrollWidth;});}

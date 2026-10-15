@@ -200,7 +200,7 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			}
 			if up == nil {
 				var err error
-				up, err = pickUpstream(format, cr.Model, tried, task.nativeOnly)
+				up, err = pickUpstream(format, cr.Model, tried, task.nativeOnly, cr)
 				if err != nil {
 					if attemptErr != nil && upstreamAttempted {
 						attemptErr = fmt.Errorf("%w; failover unavailable: %v", attemptErr, err)
@@ -215,10 +215,16 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			}
 			tried[up.ID] = true
 
+			previousInfo, previousErr := info, attemptErr
 			info, wrote, attemptErr = doRelay(c, up, task)
 			var conversion *protocolConversionError
 			if errors.As(attemptErr, &conversion) {
 				conversionErr = attemptErr
+				if upstreamAttempted {
+					// A later local capability rejection must not replace the
+					// actual upstream failure, its usage or the last attempted ID.
+					info, attemptErr = previousInfo, previousErr
+				}
 				// A local conversion rejection made no upstream request. Try other
 				// eligible protocols without spending a network retry or breaking affinity.
 				i--
@@ -384,7 +390,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 			cr.Messages = replayResponseReasoning(cr.Messages, replayScope)
 		}
 		cr.ReasoningEffort = mapReasoningEffort(cr.ReasoningEffort, effortLevels)
-		reqBody, err = renderProtocolRequest(wireFormat, &cr, upModel)
+		reqBody, err = renderProtocolRequest(wireFormat, &cr, upModel, up.StructuredOutput)
 		if err != nil {
 			info.Status = http.StatusBadRequest
 			return info, false, &protocolConversionError{err}
@@ -524,14 +530,14 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		return info, true, nil
 	}
 
-	if task.stream && isSSE {
+	if task.stream && isSSE && task.canon.OutputFormat == nil {
 		err = relayProtocolSSE(c, resp, wireFormat, task, &info)
 		return info, relayResponseCommitted(c), err
 	}
 	var result *canonResponse
 	if isSSE {
-		// Some upstreams always stream. Buffer only for non-streaming clients;
-		// do not commit a response until a valid terminal event has arrived.
+		// Buffer non-streaming clients and converted structured output. Validate
+		// the complete JSON before sending content; Messages heartbeats continue.
 		result, err = collectProtocolSSE(resp.Body, wireFormat)
 	} else {
 		var b []byte
@@ -545,6 +551,9 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	}
 	info.OutputText.WriteString(result.text())
 	info.mergeUsage(result.Usage)
+	if err := validateStructuredOutput(task.canon.OutputFormat, result); err != nil {
+		return info, false, err
+	}
 	if task.stream {
 		// A JSON-only upstream still returns an SSE envelope to a streaming client.
 		info.markFirstToken()

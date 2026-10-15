@@ -59,7 +59,7 @@
   - **公开首页 `/`**：滚动 24 小时真实请求 Uptime（分钟/小时粒度）与每个模型的**平均输出速度**（输出 Token ÷ 生成时长加权平均，无样本显示“—”）、全站 Token 滚轮动效、模型调用趋势，并提供基于 HttpOnly Cookie 的免登录安全额度查验。
   - **管理控制台**：首启进入 `/setup/` 初始化，支持一键热重命名安全后台路径（如 `/secret-portal`），全可视化管理密钥、模型白名单、代理、公告与详细审计日志。
   - **调用速度指标**：每条调用记录显示**首字延迟**（请求发出到首个输出增量）、**总耗时**（覆盖流式输出的完整转发时间）与**输出 TPS**（输出 Token ÷ 实际生成时长），与耗时列区分开，便于直接对比上游响应速度。
-  - **自定义模型测试**：在上游列表点击“测试模型”，选择或输入模型，默认发送 `hi`，也可填写自己的多行测试消息；支持恢复默认消息、调整最大输出 Token，查看回复、思考内容、耗时和用量。测试直接使用该上游保存的协议、模型映射、代理及请求头，不经过其他上游；每次测试为独立请求，可能产生上游费用。
+  - **自定义模型测试**：在上游列表点击“测试模型”，选择或输入模型，默认发送 `hi`，也可填写自己的多行测试消息；默认使用流式请求，可切换非流式对比兼容性，结果在请求完成后统一展示。支持恢复默认消息、调整最大输出 Token，查看回复、思考内容、耗时、用量和上游错误提示。测试直接使用该上游保存的协议、模型映射、代理及请求头，不经过其他上游；每次测试为独立请求，可能产生上游费用。
 
 ---
 
@@ -224,6 +224,22 @@ export ANTHROPIC_BASE_URL="http://127.0.0.1:8080"
 export ANTHROPIC_API_KEY="sk-your-apishare-key"
 claude
 ```
+
+Claude Code 会独立发起 Haiku 后台请求；将 Haiku 别名映射到其他模型时，也需要上游支持该请求使用的功能。对于 `output_config.format`（兼容旧版 `output_format`）中的 JSON Schema，网关会转换为目标 Chat 的 `response_format.json_schema`、Responses 的 `text.format` 或 Gemini 的 `generationConfig.responseJsonSchema`，不再一律拒绝。
+
+在上游编辑器的「结构化输出转换」中选择：
+
+| 选项 | 管理 API 的 `structured_output` | 行为 |
+| --- | --- | --- |
+| 保留结构约束（默认） | `""` 或 `"json_schema"` | 将完整 Schema 转换为上游对应参数；上游必须支持该功能及所用 Schema。 |
+| JSON 兼容模式（校验后返回） | `"json_object"` | 仅用于支持 JSON 模式的 Chat / Responses 上游。发送 JSON 模式及 Schema 提示，验证结果后再返回。要求 Schema 根类型明确为 `object`。 |
+| 不支持跨格式结构化输出 | `"disabled"` | 在本地跳过该转换候选，继续寻找可用上游，不消耗网络重试次数。 |
+
+DeepSeek 官方 Chat 文档提供 `json_object`，Responses 文档提供 `json_schema`；WorkBuddy 等第三方入口需以实际支持情况为准。对于只支持 JSON 模式的 DeepSeek Chat 入口，选择「JSON 兼容模式」；若已经验证入口支持 Schema，则保留默认设置。不同模型能力不同，可拆分为不同上游配置。连接测试仅检查连接和模型列表，不代表已验证结构化输出能力。
+
+跨格式的结构化响应会在完整接收并通过 JSON Schema 校验后交付；流式 Messages 客户端等待期间继续收到心跳，普通流式任务仍实时转发。正常结束但不符合 Schema 的结果不会当作成功返回，可按既有重试设置切换其他候选；工具调用、明确拒绝和达到 token 上限仍保留各自的协议语义。原生同协议请求保留原有透传行为。这项设置不改变上游端点，也不会静默忽略 Schema；本地校验不会读取 Schema 指向的外部文件或 URL。
+
+参考：[Claude 结构化输出](https://platform.claude.com/docs/en/build-with-claude/structured-outputs)、[DeepSeek JSON 模式](https://api-docs.deepseek.com/guides/json_mode/)、[DeepSeek Responses](https://api-docs.deepseek.com/api/create-response/)。
 
 ### 3. OpenAI SDK / 兼容客户端
 

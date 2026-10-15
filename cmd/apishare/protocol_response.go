@@ -220,7 +220,7 @@ func parseProtocolResponse(format clientFormat, body []byte) (*canonResponse, er
 			}
 			r.Blocks = append(r.Blocks, responseBlock{Kind: "tool", Call: canonCall{str(c["id"]), str(f["name"]), str(f["arguments"])}})
 		}
-		if str(ch["finish_reason"]) != "" {
+		if str(ch["finish_reason"]) != "" && r.Finish != "content_filter" {
 			r.Finish = normalizeFinish(str(ch["finish_reason"]))
 		}
 		r.Usage = readUsage(object(j["usage"]), format)

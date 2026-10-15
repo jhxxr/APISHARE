@@ -431,7 +431,7 @@ async function testUpstream(id, button) {
 
 /* One editor for both creation and updates. */
 function editorValue() {
-  return JSON.stringify(["editName", "editType", "editBase", "editKey", "editProxy", "editHeaderOverrides", "editWeight", "editModels"].map((id) => $(id).value).concat($("editEnabled").checked, $("editModelInput").value, $("modelMapBatch").value, [modelMappingDirtyValue()]));
+  return JSON.stringify(["editName", "editType", "editBase", "editKey", "editProxy", "editHeaderOverrides", "editStructuredOutput", "editWeight", "editModels"].map((id) => $(id).value).concat($("editEnabled").checked, $("editModelInput").value, $("modelMapBatch").value, [modelMappingDirtyValue()]));
 }
 function editorDirty() { return $("editModal").open && editorValue() !== editProbe.initial; }
 function updateEditorDirty() {
@@ -458,7 +458,7 @@ async function openEditor(upstream) {
   const format = upstreamFormat(upstream);
   $("legacyOpenAIFormatOption").hidden = format !== "openai-auto";
   $("legacyOpenAIFormatOption").disabled = format !== "openai-auto";
-  const values = { editName: upstream?.name || "", editType: format, editBase: upstream?.base_url || providerURLs.openai, editKey: "", editHeaderOverrides: upstream?.header_overrides || "", editWeight: upstream ? upstream.weight : 1, editModels: upstream?.models || "", editModelMap: upstream?.model_map || "" };
+  const values = { editName: upstream?.name || "", editType: format, editBase: upstream?.base_url || providerURLs.openai, editKey: "", editHeaderOverrides: upstream?.header_overrides || "", editStructuredOutput: upstream?.structured_output === "json_schema" ? "" : upstream?.structured_output || "", editWeight: upstream ? upstream.weight : 1, editModels: upstream?.models || "", editModelMap: upstream?.model_map || "" };
   Object.entries(values).forEach(([id, value]) => { $(id).value = value; $(id).setCustomValidity(""); $(id).removeAttribute("aria-invalid"); });
   renderProxyOptions(upstream?.proxy_id || 0);
   editProbe.selected = new Set(parseAllowlist($("editModels").value));
@@ -645,7 +645,7 @@ async function saveEditUpstream(event) {
     if (!["http:", "https:"].includes(new URL($("editBase").value).protocol)) throw new Error();
   } catch { $("editBase").setCustomValidity("请输入以 http:// 或 https:// 开头的服务地址"); jumpEditor("editorConnection"); $("editBase").reportValidity(); return false; }
   if (!$("upstreamEditorForm").reportValidity()) return false;
-  const body = { name: $("editName").value.trim(), type: editorUpstreamType(), base_url: $("editBase").value.trim().replace(/\/+$/, ""), proxy_id: Number($("editProxy").value), weight: Number($("editWeight").value), models: parseAllowlist($("editModels").value).join(","), model_map: $("editModelMap").value.trim(), header_overrides: $("editHeaderOverrides").value.trim() };
+  const body = { name: $("editName").value.trim(), type: editorUpstreamType(), base_url: $("editBase").value.trim().replace(/\/+$/, ""), proxy_id: Number($("editProxy").value), weight: Number($("editWeight").value), models: parseAllowlist($("editModels").value).join(","), model_map: $("editModelMap").value.trim(), header_overrides: $("editHeaderOverrides").value.trim(), structured_output: $("editStructuredOutput").value };
   body.openai_protocol = editorOpenAIProtocol();
   if (!creating) body.enabled = $("editEnabled").checked;
   if ($("editKey").value.trim()) body.api_key = $("editKey").value.trim();
