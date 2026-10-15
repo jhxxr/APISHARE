@@ -21,6 +21,8 @@ func collectNativeProtocolSSE(reader io.Reader, format clientFormat, info *relay
 		if err != nil {
 			return false, err
 		}
+		// Buffered for a non-streaming client: nothing is delivered incrementally,
+		// so no first-token time is recorded and TPS uses the full duration.
 		recordNativeEvent(format, payload, info)
 		b.terminal = b.terminal || done
 		if payload == "[DONE]" {

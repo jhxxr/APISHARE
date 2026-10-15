@@ -48,7 +48,28 @@ type relayInfo struct {
 	OutKnown      bool
 	Usage         upstreamUsage
 	OutputText    strings.Builder
-	LatencyMS     int64
+	LatencyMS     int64 // 上游响应头到达耗时
+	FirstTokenMS  int64 // 首字延迟：请求开始到首个输出增量的耗时
+	DurationMS    int64 // 总耗时：请求开始到转发结束的耗时
+	startedAt     time.Time
+	firstTokenSet bool
+}
+
+// markFirstToken 记录首个输出增量的到达时刻，只生效一次。
+func (i *relayInfo) markFirstToken() {
+	if i.firstTokenSet || i.startedAt.IsZero() {
+		return
+	}
+	i.firstTokenSet = true
+	i.FirstTokenMS = time.Since(i.startedAt).Milliseconds()
+}
+
+// elapsedMS 返回本次尝试已消耗的毫秒数；从未发起请求时返回 0。
+func (i *relayInfo) elapsedMS() int64 {
+	if i.startedAt.IsZero() {
+		return 0
+	}
+	return time.Since(i.startedAt).Milliseconds()
 }
 
 func (i *relayInfo) mergeUsage(u upstreamUsage) {
@@ -236,7 +257,7 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 		var conversion *protocolConversionError
 		if errors.As(lastErr, &conversion) {
 			writeFormatError(c, task.format, http.StatusBadRequest, conversion.Error())
-			insertFailureLog(ak, info.UpstreamID, info.UpstreamName, task, http.StatusBadRequest, 0, conversion.Error())
+			insertFailureLog(ak, info, task, http.StatusBadRequest, conversion.Error())
 			return
 		}
 		// 所有上游都失败且未给客户端写出任何内容
@@ -245,7 +266,7 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 			msg += ": " + lastErr.Error()
 		}
 		writeFormatError(c, task.format, http.StatusBadGateway, msg)
-		insertFailureLog(ak, 0, "", task, http.StatusBadGateway, 0, msg)
+		insertFailureLog(ak, relayInfo{}, task, http.StatusBadGateway, msg)
 		return
 	}
 
@@ -285,6 +306,7 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 			Model: task.model, Endpoint: string(task.format),
 			PromptTokens: counts.inputTotal(), CompletionTokens: counts.outputTotal(),
 			CostUSD: cost.Total, Status: logStatus, LatencyMS: info.LatencyMS, Error: logError,
+			FirstTokenMS: info.FirstTokenMS, DurationMS: info.DurationMS,
 			Billing: &billingDetails{Source: usage.Source, Reported: reported, Usage: counts, Cost: cost, Price: price, PriceSource: priceSource, PricingModel: pricingModel, UpstreamModel: info.UpstreamModel, QuotaPool: quotaPool},
 		}
 		if err := dbRecordBilledCall(entry, independent); err != nil {
@@ -302,15 +324,15 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 	if info.OutputText.Len() > 0 {
 		errMsg += ": " + truncate(info.OutputText.String(), 300)
 	}
-	insertFailureLog(ak, info.UpstreamID, info.UpstreamName, task, info.Status, info.LatencyMS, errMsg)
+	insertFailureLog(ak, info, task, info.Status, errMsg)
 }
 
-func insertFailureLog(ak ApiKey, upID int64, upName string, task *relayTask, status int, latency int64, errMsg string) {
+func insertFailureLog(ak ApiKey, info relayInfo, task *relayTask, status int, errMsg string) {
 	dbInsertLog(&CallLog{
 		KeyID: ak.ID, KeyName: ak.Name,
-		UpstreamID: upID, UpstreamName: upName,
+		UpstreamID: info.UpstreamID, UpstreamName: info.UpstreamName,
 		Model: task.model, Endpoint: string(task.format),
-		Status: status, LatencyMS: latency, Error: errMsg,
+		Status: status, LatencyMS: info.LatencyMS, FirstTokenMS: info.FirstTokenMS, DurationMS: info.DurationMS, Error: errMsg,
 	})
 }
 
@@ -391,6 +413,9 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	}
 
 	start := time.Now()
+	info.startedAt = start
+	// 总耗时覆盖整个转发过程（含流式输出），与只计到响应头的 LatencyMS 区分。
+	defer func() { info.DurationMS = time.Since(start).Milliseconds() }()
 	client, err := clientForUpstream(upstreamHTTPClient, up.ProxyID)
 	if err != nil {
 		return info, false, err
@@ -474,6 +499,9 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		}
 		parseNativeNonStream(task.format, b, &info)
 		if task.stream && !task.nativeOnly {
+			// The upstream answered with a single JSON body; the client still gets
+			// SSE, so the first token time is when that delivery starts.
+			info.markFirstToken()
 			err = relayNativeJSONStream(c, task.format, b, task.wantUsageChunk)
 			return info, c.Writer.Written(), err
 		}
@@ -504,6 +532,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	info.mergeUsage(result.Usage)
 	if task.stream {
 		// A JSON-only upstream still returns an SSE envelope to a streaming client.
+		info.markFirstToken()
 		writer := newProtocolStream(c, task.format, task.model, task.wantUsageChunk)
 		writer.responseTools = task.canon.ResponseTools
 		writer.reasoningScope = replayScope
@@ -552,7 +581,9 @@ func relaySSENative(c *gin.Context, resp *http.Response, format clientFormat, in
 		if strings.TrimSpace(payload) == "" {
 			return nil
 		}
-		recordNativeEvent(format, payload, info)
+		if recordNativeEvent(format, payload, info) {
+			info.markFirstToken()
+		}
 		if !verify {
 			return nil
 		}
@@ -610,10 +641,11 @@ func relaySSENative(c *gin.Context, resp *http.Response, format clientFormat, in
 	}
 }
 
-func recordNativeEvent(format clientFormat, payload string, info *relayInfo) {
+// recordNativeEvent 解析原生事件并累积输出与用量，返回是否解析出正文增量。
+func recordNativeEvent(format clientFormat, payload string, info *relayInfo) bool {
 	var j map[string]any
 	if json.Unmarshal([]byte(payload), &j) != nil {
-		return
+		return false
 	}
 	var delta string
 	if format == FormatOpenAIResponse {
@@ -640,6 +672,7 @@ func recordNativeEvent(format clientFormat, payload string, info *relayInfo) {
 		usage = object(response["usage"])
 	}
 	info.mergeUsage(readUsage(usage, format))
+	return delta != ""
 }
 
 func intFromAny(v any) int {

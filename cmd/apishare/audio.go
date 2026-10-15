@@ -186,6 +186,7 @@ func audioHTTPHandler(c *gin.Context) {
 			continue
 		}
 		start := time.Now()
+		info.startedAt = start
 		resp, err := client.Do(req)
 		info.LatencyMS = time.Since(start).Milliseconds()
 		if err != nil {
@@ -212,6 +213,7 @@ func audioHTTPHandler(c *gin.Context) {
 			healthMarkSuccess(up.ID)
 		}
 		err = copyAudioResponse(c, resp, &info)
+		info.DurationMS = time.Since(start).Milliseconds()
 		resp.Body.Close()
 		if err != nil && !c.Writer.Written() {
 			errJSON(c, http.StatusBadGateway, "audio upstream response interrupted")
@@ -223,14 +225,14 @@ func audioHTTPHandler(c *gin.Context) {
 			if err != nil {
 				status, message = 502, "WebRTC signaling response interrupted"
 			}
-			dbInsertLog(&CallLog{KeyID: ak.ID, KeyName: ak.Name, UpstreamID: up.ID, UpstreamName: up.Name, Model: task.model, Endpoint: string(format), Status: status, LatencyMS: info.LatencyMS, Error: message})
+			dbInsertLog(&CallLog{KeyID: ak.ID, KeyName: ak.Name, UpstreamID: up.ID, UpstreamName: up.Name, Model: task.model, Endpoint: string(format), Status: status, LatencyMS: info.LatencyMS, DurationMS: info.DurationMS, Error: message})
 		} else {
 			finalizeCall(c, ak, task, info, true, err, 0)
 		}
 		return
 	}
 	errJSON(c, http.StatusBadGateway, "no available audio upstream or upstream request failed")
-	insertFailureLog(ak, info.UpstreamID, info.UpstreamName, task, 502, info.LatencyMS, "audio upstream request failed")
+	insertFailureLog(ak, info, task, 502, "audio upstream request failed")
 }
 
 func copyAudioResponse(c *gin.Context, resp *http.Response, info *relayInfo) error {
@@ -258,6 +260,7 @@ func copyAudioResponse(c *gin.Context, resp *http.Response, info *relayInfo) err
 				if _, writeErr := c.Writer.Write(event.Bytes()); writeErr != nil {
 					return errDownstreamWrite
 				}
+				info.markFirstToken()
 				c.Writer.Flush()
 				event.Reset()
 			}

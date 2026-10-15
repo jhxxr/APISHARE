@@ -97,6 +97,8 @@ CREATE TABLE IF NOT EXISTS call_logs (
   cost_usd REAL NOT NULL DEFAULT 0,
   status INTEGER NOT NULL DEFAULT 0,
   latency_ms INTEGER NOT NULL DEFAULT 0,
+  first_token_ms INTEGER NOT NULL DEFAULT 0,
+  duration_ms INTEGER NOT NULL DEFAULT 0,
   error TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT ''
 );
@@ -248,6 +250,9 @@ CREATE TABLE IF NOT EXISTS session_affinity (
 	if err := migrateBillingLogSchema(); err != nil {
 		return err
 	}
+	if err := migrateSpeedLogSchema(); err != nil {
+		return err
+	}
 	return migrateTimestampsToBeijing()
 }
 
@@ -301,6 +306,8 @@ type CallLog struct {
 	Billing          *billingDetails `json:"billing,omitempty"`
 	Status           int             `json:"status"`
 	LatencyMS        int64           `json:"latency_ms"`
+	FirstTokenMS     int64           `json:"first_token_ms"`
+	DurationMS       int64           `json:"duration_ms"`
 	Error            string          `json:"error"`
 	CreatedAt        string          `json:"created_at"`
 }
@@ -585,16 +592,16 @@ func insertCallLog(executor logExecutor, l *CallLog) error {
 		billingJSON = string(encoded)
 	}
 	_, err := executor.Exec(`INSERT INTO call_logs(key_id,key_name,upstream_id,upstream_name,model,endpoint,
-		prompt_tokens,completion_tokens,cost_usd,status,latency_ms,error,created_at,billing_json)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		prompt_tokens,completion_tokens,cost_usd,status,latency_ms,first_token_ms,duration_ms,error,created_at,billing_json)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		l.KeyID, l.KeyName, l.UpstreamID, l.UpstreamName, l.Model, l.Endpoint,
-		l.PromptTokens, l.CompletionTokens, l.CostUSD, l.Status, l.LatencyMS, l.Error, nowStr(), billingJSON)
+		l.PromptTokens, l.CompletionTokens, l.CostUSD, l.Status, l.LatencyMS, l.FirstTokenMS, l.DurationMS, l.Error, nowStr(), billingJSON)
 	return err
 }
 
 func dbListLogs(limit, offset int) ([]CallLog, error) {
 	rows, err := db.Query(`SELECT id,key_id,key_name,upstream_id,upstream_name,model,endpoint,
-		prompt_tokens,completion_tokens,cost_usd,status,latency_ms,error,created_at,billing_json
+		prompt_tokens,completion_tokens,cost_usd,status,latency_ms,first_token_ms,duration_ms,error,created_at,billing_json
 		FROM call_logs ORDER BY id DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, err
@@ -605,7 +612,7 @@ func dbListLogs(limit, offset int) ([]CallLog, error) {
 		var l CallLog
 		var billingJSON string
 		if err := rows.Scan(&l.ID, &l.KeyID, &l.KeyName, &l.UpstreamID, &l.UpstreamName, &l.Model, &l.Endpoint,
-			&l.PromptTokens, &l.CompletionTokens, &l.CostUSD, &l.Status, &l.LatencyMS, &l.Error, &l.CreatedAt, &billingJSON); err != nil {
+			&l.PromptTokens, &l.CompletionTokens, &l.CostUSD, &l.Status, &l.LatencyMS, &l.FirstTokenMS, &l.DurationMS, &l.Error, &l.CreatedAt, &billingJSON); err != nil {
 			return nil, err
 		}
 		if billingJSON != "" {

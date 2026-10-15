@@ -959,6 +959,9 @@ func relayProtocolSSE(c *gin.Context, resp *http.Response, format clientFormat, 
 			return false, err
 		}
 		for _, delta := range deltas {
+			if delta.Block.Text != "" {
+				info.markFirstToken()
+			}
 			info.OutputText.WriteString(delta.Block.Text)
 			info.OutputText.WriteString(delta.Block.Call.Arguments)
 			if err := w.push(c, delta, info.protocolUsage()); err != nil {

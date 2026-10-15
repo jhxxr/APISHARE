@@ -702,7 +702,26 @@ async function loadLogs(page = 1) {
 function renderLogs() {
   const query = $("logSearch").value.trim().toLowerCase();
   const logs = logsCache.filter((log) => [log.model, log.key_name, log.upstream_name, log.error].join(" ").toLowerCase().includes(query));
-  $("logsTable").querySelector("tbody").innerHTML = logs.map((log) => '<tr><td class="timestamp">' + esc(fmtTime(log.created_at)) + '</td><td class="cell-stack"><strong>' + esc(log.key_name) + '</strong><small>' + esc(log.upstream_name || "未分配") + '</small></td><td><code>' + esc(log.model) + '</code></td><td>' + statusBadge(log.status) + '</td><td><code>' + number(log.prompt_tokens) + " / " + number(log.completion_tokens) + '</code>' + logUsageDetails(log) + '</td><td><code>' + fmtUSD(log.cost_usd) + '</code>' + logCostDetails(log) + '</td><td><code>' + number(log.latency_ms) + ' ms</code></td><td class="log-error">' + (log.error ? '<details><summary>查看错误</summary><p>' + esc(log.error) + '</p></details>' : '<span class="muted">—</span>') + '</td></tr>').join("") || emptyRow(8, query ? "本页没有匹配的日志" : "还没有调用记录", query ? "搜索仅作用于当前页，可以翻页继续查找。" : "网关接收到请求后，会在这里记录状态与用量。", "", "", "activity");
+  $("logsTable").querySelector("tbody").innerHTML = logs.map((log) => '<tr><td class="timestamp">' + esc(fmtTime(log.created_at)) + '</td><td class="cell-stack"><strong>' + esc(log.key_name) + '</strong><small>' + esc(log.upstream_name || "未分配") + '</small></td><td><code>' + esc(log.model) + '</code></td><td>' + statusBadge(log.status) + '</td><td><code>' + number(log.prompt_tokens) + " / " + number(log.completion_tokens) + '</code>' + logUsageDetails(log) + '</td><td><code>' + fmtUSD(log.cost_usd) + '</code>' + logCostDetails(log) + '</td>' + logSpeedCell(log) + '<td class="log-error">' + (log.error ? '<details><summary>查看错误</summary><p>' + esc(log.error) + '</p></details>' : '<span class="muted">—</span>') + '</td></tr>').join("") || emptyRow(8, query ? "本页没有匹配的日志" : "还没有调用记录", query ? "搜索仅作用于当前页，可以翻页继续查找。" : "网关接收到请求后，会在这里记录状态与用量。", "", "", "activity");
+}
+
+const fmtDuration = (ms) => ms >= 1000 ? (ms / 1000).toFixed(2) + "s" : Math.round(ms) + "ms";
+function logSpeedCell(log) {
+  const first = Number(log.first_token_ms) || 0;
+  const total = Number(log.duration_ms) || Number(log.latency_ms) || 0;
+  const completion = Number(log.completion_tokens) || 0;
+  const lines = [];
+  if (first > 0) lines.push("首字 " + fmtDuration(first));
+  if (total > 0) lines.push("总耗时 " + fmtDuration(total));
+  // 单帧应答或 JSON 上游在首字处就开始下发时，首字几乎等于总耗时，
+  // 此时相减只剩几毫秒，会算出荒谬的 TPS；这种情况下改用总耗时。
+  const generating = first > 0 && total - first >= total / 10 ? total - first : total;
+  if (total > 0 && completion > 0 && generating > 0) {
+    lines.push("输出 TPS " + (completion / (generating / 1000)).toFixed(1) + " tok/s");
+  }
+  if (!lines.length) return '<td><span class="muted">—</span></td>';
+  const failed = !(log.status >= 200 && log.status < 300);
+  return '<td><span class="speed-list' + (failed ? " failed" : "") + '">' + lines.map((line) => "<span>" + esc(line) + "</span>").join("") + '</span></td>';
 }
 
 function logUsageDetails(log) {

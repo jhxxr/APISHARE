@@ -108,6 +108,8 @@ func collectNativeResponsesSSE(reader io.Reader, info *relayInfo) ([]byte, error
 		if err != nil {
 			return false, err
 		}
+		// Buffered for a non-streaming client: nothing is delivered incrementally,
+		// so no first-token time is recorded and TPS uses the full duration.
 		recordNativeEvent(FormatOpenAIResponse, payload, info)
 		event, err := decodeProtocolObject([]byte(payload))
 		if err != nil {

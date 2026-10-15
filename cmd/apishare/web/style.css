@@ -294,6 +294,9 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline
 .pager #logPage { font: 11px var(--mono); }
 .tbl.small td { font-size: 11px; padding: 14px; }
 .tbl.small th { padding: 12px 14px; }
+.speed-list { display: block; padding-left: 9px; border-left: 2px solid var(--green); font: 10px/1.9 var(--mono); color: var(--green); white-space: nowrap; }
+.speed-list > span { display: block; }
+.speed-list.failed { border-left-color: #d6dfeb; color: var(--muted); }
 .log-error { max-width: 200px; min-width: 90px; overflow-wrap: anywhere; color: var(--red); font-size: 10px; }
 .timestamp { white-space: nowrap; color: var(--muted); font: 10px var(--mono); }
 .provider-icon { display: grid; place-items: center; width: 35px; height: 35px; flex: 0 0 auto; border-radius: 8px; background: var(--panel-soft); border: 1px solid var(--border-strong); font: 500 16px var(--mono); }

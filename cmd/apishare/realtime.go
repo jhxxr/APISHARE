@@ -160,10 +160,12 @@ func realtimeWebSocket(c *gin.Context) {
 		endpoint := upstreamURL(up.BaseURL, task.endpoint) + "?" + audioQuery(c.Request.URL.RawQuery, info.UpstreamModel)
 		dialCtx, cancel := context.WithTimeout(c.Request.Context(), relayNetwork.DialTimeout)
 		start := time.Now()
+		info.startedAt = start
 		var resp *http.Response
 		upstream, resp, err = websocket.Dial(dialCtx, endpoint, &websocket.DialOptions{HTTPClient: client, HTTPHeader: headers})
 		cancel()
 		info.LatencyMS = time.Since(start).Milliseconds()
+		info.DurationMS = info.LatencyMS
 		if err == nil {
 			healthMarkSuccess(up.ID)
 			affinitySet(skey, up.ID)
@@ -181,7 +183,7 @@ func realtimeWebSocket(c *gin.Context) {
 					resp.Body.Close()
 				}
 				c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), body)
-				insertFailureLog(ak, up.ID, up.Name, task, info.Status, info.LatencyMS, "upstream rejected Realtime handshake")
+				insertFailureLog(ak, info, task, info.Status, "upstream rejected Realtime handshake")
 				return
 			}
 			if resp.Body != nil {
@@ -192,7 +194,7 @@ func realtimeWebSocket(c *gin.Context) {
 	}
 	if upstream == nil {
 		errJSON(c, http.StatusBadGateway, "no available Realtime upstream or WebSocket handshake failed")
-		insertFailureLog(ak, info.UpstreamID, info.UpstreamName, task, 502, info.LatencyMS, "Realtime handshake failed")
+		insertFailureLog(ak, info, task, 502, "Realtime handshake failed")
 		return
 	}
 	defer upstream.CloseNow()
@@ -266,6 +268,11 @@ func bridgeRealtime(ctx context.Context, c *gin.Context, ak ApiKey, task *relayT
 	}()
 	go func() {
 		seen := map[string]bool{}
+		// 每轮 response.done 记一次日志，耗时按上一轮结束到本轮结束计算。
+		turnStart := info.startedAt
+		if turnStart.IsZero() {
+			turnStart = time.Now()
+		}
 		for {
 			kind, body, err := realtimeRead(ctx, upstream)
 			var permissionErr error
@@ -276,7 +283,8 @@ func bridgeRealtime(ctx context.Context, c *gin.Context, ak ApiKey, task *relayT
 						return
 					}
 					seen[id] = true
-					turn := relayInfo{UpstreamID: info.UpstreamID, UpstreamName: info.UpstreamName, UpstreamModel: info.UpstreamModel, Status: 200, LatencyMS: info.LatencyMS}
+					turn := relayInfo{UpstreamID: info.UpstreamID, UpstreamName: info.UpstreamName, UpstreamModel: info.UpstreamModel, Status: 200, LatencyMS: info.LatencyMS, DurationMS: time.Since(turnStart).Milliseconds()}
+					turnStart = time.Now()
 					turn.mergeUsage(usage)
 					// Bill terminal provider usage before delivering it, even when the
 					// client has already disconnected. Never estimate audio as text.
@@ -313,7 +321,8 @@ func bridgeRealtime(ctx context.Context, c *gin.Context, ak ApiKey, task *relayT
 	_ = downstream.CloseNow()
 	<-exits
 	if code != websocket.StatusNormalClosure && code != websocket.StatusGoingAway && code != websocket.StatusPolicyViolation {
-		insertFailureLog(ak, info.UpstreamID, info.UpstreamName, task, 502, info.LatencyMS, "Realtime connection interrupted")
+		info.DurationMS = info.elapsedMS()
+		insertFailureLog(ak, info, task, 502, "Realtime connection interrupted")
 	}
 }
 

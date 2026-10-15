@@ -22,6 +22,29 @@ func migrateBillingLogSchema() error {
 	return err
 }
 
+// Speed columns stay zero for historical rows, which is rendered as "—".
+func migrateSpeedLogSchema() error {
+	for _, column := range []string{"first_token_ms", "duration_ms"} {
+		rows, err := db.Query(`SELECT name FROM pragma_table_info('call_logs') WHERE name=?`, column)
+		if err != nil {
+			return err
+		}
+		exists := rows.Next()
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE call_logs ADD COLUMN ` + column + ` INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // The receipt and quota deduction commit together. A failed log insert cannot
 // leave an unexplained debit in either the shared or model-specific pool.
 func dbRecordBilledCall(entry *CallLog, independent bool) error {
