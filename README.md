@@ -347,6 +347,8 @@ Anthropic 规范 SSE 增量推送 (message_start -> content_block_delta -> messa
 5. **SSE 流式断流保护与首包回滚**
    - 上游流式请求默认携带 `Accept-Encoding: identity`，消除代理压缩器导致的推理 SSE 积压延迟；
    - 在首次向客户端输出实质性文本、推理思考或工具增量前，若遭遇上游断流或错误，**不消耗客户端重试预算，静默无缝切换到备用上游**；一旦产生实质输出后遇错则返回标准失败事件，严格避免工具重复执行。
+   - Messages 流式请求默认每 10 秒向客户端保活，覆盖等待响应头、原生转发和跨协议转换。Claude Code `2.1.193` 及以上版本在已打开的正文、思考或工具块内收到空增量，其他情况发送标准 `ping`。保活不计入输出或用量，也不延长上游空闲超时；只有心跳时仍可切换上游，实际消息开始后禁止重放。HTTP 状态已由心跳提交后，最终错误以 SSE `error` 事件返回，并在调用日志中记录失败状态。
+   - 转换为 Messages 时，首个工具调用的参数逐片发送；其他交错内容按顺序暂存，直到活动工具关闭后发送。参数不完整时返回失败，不发送成功结束事件。
 6. **深度思考 / Reasoning 隔离与档位自适应**
    - 支持 Chat `reasoning_effort`、Responses `reasoning.effort` 与 Claude `output_config.effort` 的双向自适应映射（如 DeepSeek `xhigh -> max`, `medium -> high`）。
    - 思维链明文缓存机制：针对返回的推理内容按 `Key + 客户端模型 + 上游 ID + 映射模型` 独立空间缓存（LRU 1024 项 / 8 MiB，TTL 7天），多轮对话精准回放，杜绝密文伪装与跨租户泄露。
@@ -409,6 +411,7 @@ Anthropic 规范 SSE 增量推送 (message_start -> content_block_delta -> messa
 | `UPSTREAM_DIAL_TIMEOUT_SEC` | `15` | TCP 建连与 TLS 握手超时时间（秒） |
 | `UPSTREAM_HEADER_TIMEOUT_SEC` | `180` | 等待上游响应首包头部的最长超时（秒，0 为不限） |
 | `UPSTREAM_IDLE_TIMEOUT_SEC` | `300` | 等待上游数据包的空闲超时（秒，不限制流式持续总长，0 为不限） |
+| `STREAM_KEEPALIVE_INTERVAL_SEC` | `10` | Messages 流式请求向客户端发送保活事件的间隔（秒，0 为关闭，最大 300）；不影响上游空闲超时，其他协议和非流式请求不注入保活 |
 | `REALTIME_MAX_DURATION_SEC` | `3600` | Realtime WebSocket 单连接最长存活时间（秒，1～86400）；空闲读取另受 `UPSTREAM_IDLE_TIMEOUT_SEC` 限制 |
 | `TIKTOKEN_CACHE_DIR` | 临时目录/`data-gym-cache` | 本地 Token 分词词表缓存路径 |
 

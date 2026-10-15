@@ -57,18 +57,19 @@ func TestUpstreamIdleDeadlineAllowsLongActiveStreamsAndSlowClients(t *testing.T)
 }
 
 func TestRelayNetworkConfigurationAndConnectionReuse(t *testing.T) {
-	for _, name := range []string{"UPSTREAM_MAX_IDLE_CONNS", "UPSTREAM_MAX_IDLE_CONNS_PER_HOST", "UPSTREAM_DIAL_TIMEOUT_SEC", "UPSTREAM_HEADER_TIMEOUT_SEC", "UPSTREAM_IDLE_TIMEOUT_SEC"} {
+	for _, name := range []string{"UPSTREAM_MAX_IDLE_CONNS", "UPSTREAM_MAX_IDLE_CONNS_PER_HOST", "UPSTREAM_DIAL_TIMEOUT_SEC", "UPSTREAM_HEADER_TIMEOUT_SEC", "UPSTREAM_IDLE_TIMEOUT_SEC", "STREAM_KEEPALIVE_INTERVAL_SEC"} {
 		t.Setenv(name, "")
 	}
 	config := loadRelayNetworkConfig()
-	if config.MaxIdleConns != 256 || config.MaxIdleConnsPerHost != 64 || config.BodyIdleTimeout != 300*time.Second {
+	if config.MaxIdleConns != 256 || config.MaxIdleConnsPerHost != 64 || config.BodyIdleTimeout != 300*time.Second || config.StreamKeepaliveInterval != 10*time.Second {
 		t.Fatalf("wrong defaults: %+v", config)
 	}
 	t.Setenv("UPSTREAM_HEADER_TIMEOUT_SEC", "0")
 	t.Setenv("UPSTREAM_IDLE_TIMEOUT_SEC", "0")
+	t.Setenv("STREAM_KEEPALIVE_INTERVAL_SEC", "0")
 	t.Setenv("UPSTREAM_DIAL_TIMEOUT_SEC", "999999999999999999999999999")
 	config = loadRelayNetworkConfig()
-	if config.HeaderTimeout != 0 || config.BodyIdleTimeout != 0 || config.DialTimeout != 15*time.Second {
+	if config.HeaderTimeout != 0 || config.BodyIdleTimeout != 0 || config.DialTimeout != 15*time.Second || config.StreamKeepaliveInterval != 0 {
 		t.Fatal("disable/overflow handling failed")
 	}
 	var connections atomic.Int32

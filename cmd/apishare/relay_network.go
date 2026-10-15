@@ -16,6 +16,7 @@ type relayNetworkConfig struct {
 	MaxIdleConns, MaxIdleConnsPerHost int
 	DialTimeout, HeaderTimeout        time.Duration
 	BodyIdleTimeout                   time.Duration
+	StreamKeepaliveInterval           time.Duration
 }
 
 func networkEnvInt(name string, fallback, minimum, maximum int) int {
@@ -33,11 +34,12 @@ func networkEnvInt(name string, fallback, minimum, maximum int) int {
 
 func loadRelayNetworkConfig() relayNetworkConfig {
 	return relayNetworkConfig{
-		MaxIdleConns:        networkEnvInt("UPSTREAM_MAX_IDLE_CONNS", 256, 1, 65536),
-		MaxIdleConnsPerHost: networkEnvInt("UPSTREAM_MAX_IDLE_CONNS_PER_HOST", 64, 1, 65536),
-		DialTimeout:         time.Duration(networkEnvInt("UPSTREAM_DIAL_TIMEOUT_SEC", 15, 1, 86400)) * time.Second,
-		HeaderTimeout:       time.Duration(networkEnvInt("UPSTREAM_HEADER_TIMEOUT_SEC", 180, 0, 86400)) * time.Second,
-		BodyIdleTimeout:     time.Duration(networkEnvInt("UPSTREAM_IDLE_TIMEOUT_SEC", 300, 0, 86400)) * time.Second,
+		MaxIdleConns:            networkEnvInt("UPSTREAM_MAX_IDLE_CONNS", 256, 1, 65536),
+		MaxIdleConnsPerHost:     networkEnvInt("UPSTREAM_MAX_IDLE_CONNS_PER_HOST", 64, 1, 65536),
+		DialTimeout:             time.Duration(networkEnvInt("UPSTREAM_DIAL_TIMEOUT_SEC", 15, 1, 86400)) * time.Second,
+		HeaderTimeout:           time.Duration(networkEnvInt("UPSTREAM_HEADER_TIMEOUT_SEC", 180, 0, 86400)) * time.Second,
+		BodyIdleTimeout:         time.Duration(networkEnvInt("UPSTREAM_IDLE_TIMEOUT_SEC", 300, 0, 86400)) * time.Second,
+		StreamKeepaliveInterval: time.Duration(networkEnvInt("STREAM_KEEPALIVE_INTERVAL_SEC", 10, 0, 300)) * time.Second,
 	}
 }
 

@@ -219,7 +219,8 @@ func TestClientUserAgentTemplatesOnRelayAndProbes(t *testing.T) {
 					return
 				}
 				w.Header().Set("Content-Type", "text/event-stream")
-				fmt.Fprint(w, "data: {}\n\n")
+				// Header checks still relay a complete protocol-valid stream.
+				fmt.Fprint(w, fixtureSSE(FormatOpenAIChat))
 			}))
 			defer server.Close()
 			u := &Upstream{Type: "openai", BaseURL: server.URL, APIKey: "key", HeaderOverrides: `{"*":true,"X-Keep":"kept","User-Agent":"{` + id + `_user_agent}"}`}

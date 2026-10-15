@@ -251,6 +251,7 @@ func relayNativeJSONStream(c *gin.Context, format clientFormat, body []byte, wan
 	c.Header("Cache-Control", "no-cache")
 	c.Header("X-Accel-Buffering", "no")
 	c.Status(http.StatusOK)
+	commitRelayResponse(c)
 	for _, event := range events {
 		if c.Request != nil && c.Request.Context().Err() != nil {
 			return c.Request.Context().Err()

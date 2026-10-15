@@ -8,6 +8,93 @@ import (
 	"strings"
 )
 
+// Recognize only known initialization events. Unknown events, opaque output and
+// tool activity commit the native stream conservatively to avoid replaying work.
+func nativeSSEPrelude(format clientFormat, payload string) bool {
+	var event map[string]any
+	if json.Unmarshal([]byte(payload), &event) != nil {
+		return false
+	}
+	emptyFields := func(value map[string]any, ignored ...string) bool {
+		for field, v := range value {
+			skip := false
+			for _, name := range ignored {
+				if field == name {
+					skip = true
+					break
+				}
+			}
+			if !skip {
+				switch value := v.(type) {
+				case nil:
+				case string:
+					if value != "" {
+						return false
+					}
+				case []any:
+					if len(value) != 0 {
+						return false
+					}
+				case map[string]any:
+					if len(value) != 0 {
+						return false
+					}
+				default:
+					return false
+				}
+			}
+		}
+		return true
+	}
+	switch format {
+	case FormatOpenAIChat:
+		for _, raw := range array(event["choices"]) {
+			choice := object(raw)
+			if choice["message"] != nil || !emptyFields(object(choice["delta"]), "role") {
+				return false
+			}
+		}
+		return true
+	case FormatAnthropic:
+		switch str(event["type"]) {
+		case "ping":
+			return true
+		case "message_start":
+			return len(array(object(event["message"])["content"])) == 0
+		case "content_block_start":
+			block := object(event["content_block"])
+			return (str(block["type"]) == "text" || str(block["type"]) == "thinking") && emptyFields(block, "type")
+		}
+	case FormatOpenAIResponse:
+		switch str(event["type"]) {
+		case "ping":
+			return true
+		case "response.created", "response.queued", "response.in_progress":
+			return len(array(object(event["response"])["output"])) == 0
+		case "response.output_item.added":
+			item := object(event["item"])
+			switch str(item["type"]) {
+			case "message":
+				return len(array(item["content"])) == 0
+			case "reasoning":
+				return len(array(item["summary"])) == 0 && str(item["encrypted_content"]) == ""
+			}
+		case "response.content_part.added", "response.reasoning_summary_part.added":
+			part := object(event["part"])
+			return (str(part["type"]) == "output_text" || str(part["type"]) == "summary_text") && emptyFields(part, "type")
+		}
+	case FormatGemini:
+		for _, raw := range array(event["candidates"]) {
+			candidate := object(raw)
+			if len(array(object(candidate["content"])["parts"])) != 0 || str(candidate["finishReason"]) != "" {
+				return false
+			}
+		}
+		return event["promptFeedback"] == nil
+	}
+	return false
+}
+
 func nativeSSETerminal(format clientFormat, payload string) (bool, error) {
 	if payload == "[DONE]" {
 		return format == FormatOpenAIChat, nil

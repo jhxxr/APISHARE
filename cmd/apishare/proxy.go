@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -201,9 +202,12 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 				var err error
 				up, err = pickUpstream(format, cr.Model, tried, task.nativeOnly)
 				if err != nil {
-					attemptErr = err
-					if conversionErr != nil && !upstreamAttempted {
+					if attemptErr != nil && upstreamAttempted {
+						attemptErr = fmt.Errorf("%w; failover unavailable: %v", attemptErr, err)
+					} else if conversionErr != nil && !upstreamAttempted {
 						attemptErr = conversionErr
+					} else {
+						attemptErr = err
 					}
 					break // Finalize once so unavailable models also contribute a failed request.
 				}
@@ -221,7 +225,7 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 				continue
 			}
 			upstreamAttempted = true
-			if wrote {
+			if wrote || errors.Is(attemptErr, errDownstreamWrite) {
 				break
 			}
 			if attemptErr != nil {
@@ -254,9 +258,13 @@ func nativeEndpoint(format clientFormat, cr *canonReq) string {
 
 func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wrote bool, lastErr error, inputTokensEst int) {
 	if !wrote {
+		if (c.Request != nil && c.Request.Context().Err() != nil) || errors.Is(lastErr, errDownstreamWrite) {
+			insertFailureLog(ak, info, task, http.StatusBadGateway, "client disconnected")
+			return
+		}
 		var conversion *protocolConversionError
 		if errors.As(lastErr, &conversion) {
-			writeFormatError(c, task.format, http.StatusBadRequest, conversion.Error())
+			writeRelayError(c, task.format, http.StatusBadRequest, conversion.Error())
 			insertFailureLog(ak, info, task, http.StatusBadRequest, conversion.Error())
 			return
 		}
@@ -265,8 +273,8 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 		if lastErr != nil {
 			msg += ": " + lastErr.Error()
 		}
-		writeFormatError(c, task.format, http.StatusBadGateway, msg)
-		insertFailureLog(ak, relayInfo{}, task, http.StatusBadGateway, msg)
+		writeRelayError(c, task.format, http.StatusBadGateway, msg)
+		insertFailureLog(ak, info, task, http.StatusBadGateway, msg)
 		return
 	}
 
@@ -384,7 +392,9 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		url = upstreamURL(up.BaseURL, nativeEndpoint(wireFormat, &canonReq{Model: upModel, Stream: task.stream}))
 	}
 
-	req, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, url, bytes.NewReader(reqBody))
+	requestCtx, cancel := context.WithCancel(c.Request.Context())
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestCtx, c.Request.Method, url, bytes.NewReader(reqBody))
 	if err != nil {
 		return info, false, err
 	}
@@ -432,10 +442,11 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 			healthMarkSuccess(up.ID)
 		}
 	}()
-	resp, err := client.Do(req)
+	keepalive := beginMessagesKeepalive(c, task)
+	resp, err := messagesHTTPDo(client, req, keepalive, cancel)
 	info.LatencyMS = time.Since(start).Milliseconds()
 	if err != nil {
-		if up.ProxyID != 0 {
+		if up.ProxyID != 0 && !errors.Is(err, errDownstreamWrite) && c.Request.Context().Err() == nil {
 			// Transport errors may contain proxy URLs or credentials.
 			return info, false, fmt.Errorf("通过代理连接上游失败，请检查代理地址、认证和网络")
 		}
@@ -444,6 +455,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	if relayNetwork.BodyIdleTimeout > 0 {
 		resp.Body = newActivityDeadlineBody(resp.Body, relayNetwork.BodyIdleTimeout)
 	}
+	resp.Body = newMessagesKeepaliveBody(resp.Body, req.Context(), keepalive)
 	defer resp.Body.Close()
 	info.Status = resp.StatusCode
 	if up.ProxyID != 0 && info.Status == http.StatusProxyAuthRequired {
@@ -457,10 +469,10 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 			return info, false, fmt.Errorf("upstream %s returned %d", up.Name, info.Status)
 		}
 		// 客户端错误（400/404/413/422 等）：不重试。原生透传原始错误体，转换路径包装成本格式错误
-		if native {
+		if native && !(task.format == FormatAnthropic && keepalive != nil && c.Writer.Written()) {
 			c.Data(info.Status, resp.Header.Get("Content-Type"), b)
 		} else {
-			writeFormatError(c, task.format, info.Status, truncate(string(b), 300))
+			writeRelayError(c, task.format, info.Status, truncate(string(b), 300))
 		}
 		return info, true, nil
 	}
@@ -486,7 +498,10 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		}
 		if task.stream && isSSE {
 			err = relaySSENative(c, resp, task.format, &info, !task.nativeOnly)
-			return info, c.Writer.Written(), err
+			if err != nil && keepalive != nil && keepalive.committed && !keepalive.upstreamError && !errors.Is(err, errDownstreamWrite) && c.Request.Context().Err() == nil {
+				writeMessagesStreamError(c, "upstream stream interrupted")
+			}
+			return info, relayResponseCommitted(c), err
 		}
 		b, err := readProtocolBody(resp.Body, 64<<20)
 		if err != nil {
@@ -503,7 +518,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 			// SSE, so the first token time is when that delivery starts.
 			info.markFirstToken()
 			err = relayNativeJSONStream(c, task.format, b, task.wantUsageChunk)
-			return info, c.Writer.Written(), err
+			return info, relayResponseCommitted(c), err
 		}
 		c.Data(info.Status, ct, b)
 		return info, true, nil
@@ -511,7 +526,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 
 	if task.stream && isSSE {
 		err = relayProtocolSSE(c, resp, wireFormat, task, &info)
-		return info, c.Writer.Written(), err
+		return info, relayResponseCommitted(c), err
 	}
 	var result *canonResponse
 	if isSSE {
@@ -564,46 +579,39 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	return info, true, nil
 }
 
-// relaySSENative 原生透传：逐行转发 SSE，同时按客户端格式解析用量与输出文本。
+// relaySSENative preserves native frames, but holds initialization events until
+// output starts so an early failure can still fail over without mixing streams.
 func relaySSENative(c *gin.Context, resp *http.Response, format clientFormat, info *relayInfo, checkTerminal ...bool) error {
 	verify := len(checkTerminal) == 0 || checkTerminal[0]
-	flusher, _ := c.Writer.(http.Flusher)
 	reader := bufio.NewReaderSize(resp.Body, 1<<16)
 	terminal := false
+	committed := false
+	keepalive := messagesState(c)
 	var data []string
-	frameSize := 0
-	consume := func() error {
-		if len(data) == 0 {
-			return nil
-		}
+	var pending, frame strings.Builder
+	consume := func() (bool, error) {
 		payload := strings.Join(data, "\n")
-		data, frameSize = nil, 0
-		if strings.TrimSpace(payload) == "" {
-			return nil
-		}
-		if recordNativeEvent(format, payload, info) {
-			info.markFirstToken()
-		}
-		if !verify {
-			return nil
-		}
-		done, err := nativeSSETerminal(format, payload)
-		terminal = terminal || done
-		return err
-	}
-
-	for {
-		line, rerr := reader.ReadString('\n')
-		if line != "" {
-			if strings.HasPrefix(line, "data:") {
-				payload := strings.TrimPrefix(strings.TrimRight(line, "\r\n"), "data:")
-				payload = strings.TrimPrefix(payload, " ")
-				frameSize += len(payload)
-				if frameSize > maxBodyBytes {
-					return fmt.Errorf("upstream SSE frame too large")
-				}
-				data = append(data, payload)
+		data = nil
+		var done, output bool
+		var eventErr error
+		if strings.TrimSpace(payload) != "" {
+			if verify {
+				done, eventErr = nativeSSETerminal(format, payload)
+				terminal = terminal || done
 			}
+			// An error before output must leave both headers and body untouched.
+			if eventErr != nil && !committed {
+				return false, eventErr
+			}
+			output = !committed && !nativeSSEPrelude(format, payload)
+			if keepalive != nil {
+				var event map[string]any
+				if json.Unmarshal([]byte(payload), &event) == nil {
+					keepalive.observe(event)
+				}
+			}
+		}
+		if committed || !verify || output || done {
 			if !c.Writer.Written() {
 				h := c.Writer.Header()
 				h.Set("Content-Type", "text/event-stream; charset=utf-8")
@@ -611,28 +619,62 @@ func relaySSENative(c *gin.Context, resp *http.Response, format clientFormat, in
 				h.Set("X-Accel-Buffering", "no")
 				c.Writer.WriteHeader(http.StatusOK)
 			}
-			if _, err := c.Writer.WriteString(line); err != nil {
-				return fmt.Errorf("%w: %w", errDownstreamWrite, err)
+			committed = true
+			commitRelayResponse(c)
+			if pending.Len() > 0 {
+				if _, err := c.Writer.WriteString(pending.String()); err != nil {
+					return false, fmt.Errorf("%w: %w", errDownstreamWrite, err)
+				}
+				pending.Reset()
+			}
+			if _, err := c.Writer.WriteString(frame.String()); err != nil {
+				return false, fmt.Errorf("%w: %w", errDownstreamWrite, err)
+			}
+			c.Writer.Flush()
+			if keepalive != nil {
+				keepalive.lastWrite = time.Now()
+			}
+		} else {
+			if pending.Len()+frame.Len() > maxBodyBytes {
+				return false, fmt.Errorf("upstream SSE prelude too large")
+			}
+			pending.WriteString(frame.String())
+		}
+		frame.Reset()
+		if recordNativeEvent(format, payload, info) {
+			info.markFirstToken()
+		}
+		// Chat/Gemini finish reasons may precede usage. Only explicit closing
+		// events end the read; waiting for TCP EOF can turn success into timeout.
+		stop := verify && (payload == "[DONE]" || (done && (format == FormatOpenAIResponse || format == FormatAnthropic)))
+		return stop, eventErr
+	}
+
+	for {
+		line, rerr := reader.ReadString('\n')
+		if line != "" {
+			if frame.Len()+len(line) > maxBodyBytes {
+				return fmt.Errorf("upstream SSE frame too large")
+			}
+			frame.WriteString(line)
+			if strings.HasPrefix(line, "data:") {
+				payload := strings.TrimPrefix(strings.TrimRight(line, "\r\n"), "data:")
+				payload = strings.TrimPrefix(payload, " ")
+				data = append(data, payload)
 			}
 			if line == "\n" || line == "\r\n" {
-				if flusher != nil {
-					flusher.Flush()
-				}
-				if err := consume(); err != nil {
+				if done, err := consume(); err != nil || done {
 					return err
 				}
 			}
 		}
 		if rerr != nil {
 			if rerr == io.EOF {
-				if err := consume(); err != nil {
+				if _, err := consume(); err != nil {
 					return err
 				}
 				if verify && !terminal {
 					return io.ErrUnexpectedEOF
-				}
-				if flusher != nil && c.Writer.Written() {
-					flusher.Flush()
 				}
 				return nil
 			}

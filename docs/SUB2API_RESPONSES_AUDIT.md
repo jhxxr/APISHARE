@@ -71,15 +71,15 @@ APISHARE 的常规 Codex 工具调用可以通过 Responses 转入 Chat、Anthro
 | 35 | 空 role 或空 content 起始 chunk | 代码覆盖。转换路径不因空前导事件提交 SSE；真实文本、思考和可下发工具内容才启动输出。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/7222) |
 | 36 | 工具名分片、迟发、参数增量没有 name | 代码覆盖。延迟宣布缺名工具，保留原名；参数增量不重新发送空 name。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/5631) |
 | 37 | Anthropic 初始 input 与后续 delta 重复 | 代码覆盖。初始非空 input 作为 seed，出现实际参数 delta 时采用 delta，避免生成两个 JSON 对象拼接的参数。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/6336) |
-| 38 | 并行工具产生错误块索引或交错生命周期 | 代码覆盖。向 Anthropic 输出时逐项收齐、校验工具参数，再发送完整、顺序关闭的内容块；正文和思考按块切换关闭。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/4193)、[事件契约](https://platform.claude.com/docs/en/build-with-claude/streaming) |
-| 39 | Read 工具参数等待特定 done 事件 | 代码覆盖。没有按工具名字设置特殊过滤；Anthropic 参数缓冲统一收尾，不依赖 Read 特例。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/4114) |
+| 38 | 并行工具产生错误块索引或交错生命周期 | 代码覆盖。向 Anthropic 输出时首个工具的参数逐片发送，其他交错工具、正文和思考暂存后顺序发送；全部参数校验通过才关闭工具并成功结束，错误时不重放。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/4193)、[事件契约](https://platform.claude.com/docs/en/build-with-claude/streaming) |
+| 39 | Read 工具参数等待特定 done 事件 | 代码覆盖。没有按工具名字设置特殊过滤；首个 Anthropic 工具参数即时转发，不依赖 Read 特例。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/4114) |
 | 40 | 新生成的参数 JSON 非法或自由文本输入截断 | 代码覆盖。校验后才完成工具项；发生错误不下发可执行的 custom 完成项，不补成功结束。[实现](../cmd/apishare/protocol_stream.go) |
 | 41 | max_tokens 耗尽或内容拒绝 | 代码覆盖。保留 length/content_filter/incomplete；不把推理文字伪装成最终回答，不把额度耗尽一律判为网关故障。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/4141) |
 | 42 | Gemini 明示生成了非法调用或缺签名 | 代码覆盖。MALFORMED_FUNCTION_CALL、UNEXPECTED_TOOL_CALL、MISSING_THOUGHT_SIGNATURE 等明示失败不会被映射成成功 STOP。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/7081)、[官方状态定义](https://ai.google.dev/api/generate-content?hl=en) |
 | 43 | SSE 压缩积压推理事件 | 代码覆盖。流式请求默认 identity 编码，可由上游自定义请求头覆盖；网关静态资源 gzip 不作用于 SSE。[报告更正](https://github.com/Wei-Shaw/sub2api/issues/3603) |
 | 44 | 上游返回 JSON，客户端要求 SSE | 代码覆盖。将完整结果包装成目标客户端事件流。[实现](../cmd/apishare/proxy.go) |
 | 45 | 客户端非流式，上游仍返回 SSE | 代码覆盖。转换路径聚合后再提交 JSON；原生 Responses 也聚合，并保留原生 ID、加密字段、hosted 项和 compaction 项。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/7978) |
-| 46 | 上游只给前导事件后断流或报错 | 代码覆盖。未提交转换输出时进入现有有界重试；Anthropic 缓冲工具校验失败前也不提前提交。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/5800) |
+| 46 | 上游只给前导事件后断流或报错 | 代码覆盖。原生与转换路径均保留未输出实际消息时的有界重试；Messages 控制心跳不锁定上游，工具流一旦开始下发则禁止重放。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/5800) |
 | 47 | 流已开始后断开，或原生流内 response.failed | 代码覆盖。停止透明重放，记录失败并计入健康状态；原生 SSE 保持字节内容，不把缺终止事件算成成功。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/3043)、[健康线索](https://github.com/Wei-Shaw/sub2api/issues/3084) |
 | 48 | 大响应或大量小帧绕过限制 | 代码覆盖。请求入口为 32 MiB，JSON 响应和非流式 SSE 聚合上限为 64 MiB，SSE 单帧为 32 MiB；累计转换参数和 Responses 输出也有边界。原生已提交的长流不是全响应缓冲。[实现](../cmd/apishare/protocol_stream.go) |
 

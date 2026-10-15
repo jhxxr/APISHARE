@@ -62,7 +62,7 @@ APISHARE 的兼容能力需要分两层看：原生请求保留供应商字段�
 |---|---|
 | system 字符串/文本块、相邻同角色消息 | 已有处理；转换时合并系统文本和相邻消息。中途系统指令、cache_control 的原生语义不能完整转换。 |
 | tool_use / tool_result / is_error | 已有 ID 配对和错误文本提示；本次扩大批次清理范围。跨入 Chat 时结果中的图片放到整批回复之后的 user 图片消息。 |
-| content_block_start/delta/stop 生命周期 | 已有转换处理；向 Messages 发送并行工具时逐个发完整块，避免幽灵索引和交错参数。[sub2api 问题 #4193](https://github.com/Wei-Shaw/sub2api/issues/4193) |
+| content_block_start/delta/stop 生命周期 | 已有转换处理；首个 Messages 工具参数逐片发送，其他交错内容暂存后顺序发送，参数校验通过才关闭工具。[sub2api 问题 #4193](https://github.com/Wei-Shaw/sub2api/issues/4193) |
 | 初始 input={} 后收到 partial_json | 已有转换修正，本次原生聚合同样采用“增量替换种子”，避免 `{}{...}`。[sub2api 问题 #6336](https://github.com/Wei-Shaw/sub2api/issues/6336) |
 | message_start 与 message_delta 用量 | 保留字段并按累计值覆盖；不累加每次累计的 output_tokens。本次原生聚合保留缓存分项。 |
 | thinking / signature_delta / redacted_thinking | 原生保留。明文 thinking 可以回放到 Chat 的推理字段；跨供应商签名与 redacted 数据不能伪造。[Claude 流协议](https://platform.claude.com/docs/en/build-with-claude/streaming) |
@@ -89,7 +89,7 @@ sub2api 曾出现签名重试时移除 thinking 却遗留 thinking_strategy/cont
 | 签名失效的 dummy 替代值 | sub2api 有可配置清洗重试；不直接移植，替换签名与保持原推理状态是两回事。[签名清洗测试](https://github.com/Wei-Shaw/sub2api/blob/9c2cca9e627291bc719bada3d57de23b625a4180/backend/internal/service/gemini_native_signature_cleaner_test.go) |
 | 无候选 promptFeedback、安全停止、非法函数 | 本次区分主候选与提示阻断；非法函数生成判失败，安全终止保留拒绝/过滤语义。[问题 #7081](https://github.com/Wei-Shaw/sub2api/issues/7081)、[官方响应定义](https://ai.google.dev/api/generate-content?hl=en) |
 | inlineData 图片输出、音频/视频、代码执行、grounding | 原生保留；跨格式输出仍明确拒绝不支持的非文本块。sub2api 有将图片输出转成 Markdown 的方案，APISHARE 尚未实现，不能把 Base64 文本视作等价图片支持。[参考实现测试](https://github.com/Wei-Shaw/sub2api/blob/9c2cca9e627291bc719bada3d57de23b625a4180/backend/internal/service/gemini_chat_completions_compat_service_test.go) |
-| SSE 注释与 SDK | 转换路径不自行插入心跳。sub2api 发现部分 Google SDK 拒绝注释；原生上游已有注释的适配仍未实现，透传不等于所有客户端都能消费。[SDK 兼容处理](https://github.com/Wei-Shaw/sub2api/blob/9c2cca9e627291bc719bada3d57de23b625a4180/backend/internal/service/gemini_sse_comment_compat.go) |
+| SSE 注释与 SDK | 仅 Messages 流式请求主动发送 Anthropic 保活事件，其他客户端协议不注入 Messages ping 或注释。sub2api 发现部分 Google SDK 拒绝注释；原生上游已有注释的适配仍未实现，透传不等于所有客户端都能消费。[SDK 兼容处理](https://github.com/Wei-Shaw/sub2api/blob/9c2cca9e627291bc719bada3d57de23b625a4180/backend/internal/service/gemini_sse_comment_compat.go) |
 | 预算、缓存、安全/模态控制 | 已补已知型号的思考预算/档位映射；不能等价映射的组合拒绝。结构化 JSON、缓存名称和安全/模态控制等仍需原生使用。 |
 
 ## 共用边界与后续顺序
@@ -100,6 +100,6 @@ sub2api 曾出现签名重试时移除 thinking 却遗留 thinking_strategy/cont
 4. **尚未声明的扩展字段需要能力表。** 主要无映射配置已拒绝，但 Chat logprobs/prediction、思考显示策略等仍可能没有等价转换。后续应按源协议、目标协议、目标模型逐项允许/拒绝，而不是笼统删字段。
 5. **辅助接口按各自协议扩展。** Embeddings 仅在 OpenAI 类型上游原生转发，不转换向量、维度、批次顺序或 Base64 编码；模型列表不证明模型可调用。Gemini countTokens、缓存接口，以及图像/音频/Batch/Realtime 不在现有转发路由内。
 
-已开始输出的流发生失败仍停止，不换上游重放；这对带工具执行的客户端尤其重要。sub2api 的等待心跳曾把 Messages ping 插入 OpenAI 流，本项目没有新增这种事件。[问题 #7946](https://github.com/Wei-Shaw/sub2api/issues/7946)
+已开始输出实际消息的流发生失败仍停止，不换上游重放；这对带工具执行的客户端尤其重要。2026-10-15 对照 sub2api `698d142468ab15374bc22bd5247759e5b7352006` 补充 Messages 定时保活，等待响应头和读响应体时均可发送；只有控制心跳时仍允许切换上游，最终失败返回 Messages SSE 错误。上游空闲超时独立计算，心跳不增加用量或首字计数。sub2api 的等待心跳曾把 Messages ping 插入 OpenAI 流，本项目只对 Messages 入站启用此保活。[问题 #7946](https://github.com/Wei-Shaw/sub2api/issues/7946)、[对照实现](https://github.com/Wei-Shaw/sub2api/blob/698d142468ab15374bc22bd5247759e5b7352006/backend/internal/service/gateway_upstream_response.go)
 
 本轮改动保留在工作区；未部署或替换运行中的程序。测试定义覆盖聚合、签名保留、批次、大整数、用量、阻断和 HTTP 200 错误，但尚未运行，不能据静态检查承诺所有型号稳定。

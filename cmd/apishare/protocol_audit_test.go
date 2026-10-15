@@ -239,15 +239,31 @@ func TestAuditAnthropicParallelToolsHaveSequentialBlockLifecycle(t *testing.T) {
 	if err != nil || open != -1 || tools != 2 {
 		t.Fatalf("invalid parallel lifecycle: %v / %s", err, rec.Body.String())
 	}
+	body, err := collectNativeProtocolSSE(strings.NewReader(rec.Body.String()), FormatAnthropic, &relayInfo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var message map[string]any
+	if err := json.Unmarshal(body, &message); err != nil {
+		t.Fatal(err)
+	}
+	content := array(message["content"])
+	if len(content) != 4 || str(object(content[0])["thinking"]) != "plan" || str(object(object(content[1])["input"])["path"]) != "a.go" || str(object(content[2])["text"]) != "reading" || str(object(object(content[3])["input"])["path"]) != "b.go" {
+		t.Fatalf("streaming or deferred blocks lost/duplicated content: %s", body)
+	}
 }
 
-func TestAuditInvalidBufferedAnthropicToolDoesNotCommit(t *testing.T) {
+func TestAuditInvalidStreamedAnthropicToolDoesNotComplete(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	w := newProtocolStream(c, FormatAnthropic, "alias", false)
 	w.push(c, streamDelta{Key: "tool", Block: responseBlock{Kind: "tool", Call: canonCall{"c", "read", `{"path":`}}}, upstreamUsage{})
-	if err := w.finish(c, upstreamUsage{}, "tool_calls", ""); err == nil || c.Writer.Written() || rec.Body.Len() != 0 {
-		t.Fatal("invalid buffered tool committed a successful stream")
+	if err := w.finish(c, upstreamUsage{}, "tool_calls", ""); err == nil {
+		t.Fatal("invalid streamed tool was accepted")
+	}
+	w.fail(c)
+	if !strings.Contains(rec.Body.String(), `"type":"error"`) || strings.Contains(rec.Body.String(), `"type":"message_stop"`) || strings.Contains(rec.Body.String(), `"type":"content_block_stop"`) {
+		t.Fatal("invalid streamed tool was closed successfully or lost its error")
 	}
 }
 
@@ -264,7 +280,11 @@ func TestAuditNativeStreamsTrackTerminalWithoutChangingBytes(t *testing.T) {
 		c, _ := gin.CreateTestContext(rec)
 		info := &relayInfo{}
 		err := relaySSENative(c, &http.Response{Body: io.NopCloser(strings.NewReader(tc.stream))}, FormatOpenAIResponse, info)
-		if (err != nil) != tc.wantError || rec.Body.String() != tc.stream {
+		want := tc.stream
+		if tc.wantError {
+			want = "" // Initialization and early errors must remain retryable.
+		}
+		if (err != nil) != tc.wantError || rec.Body.String() != want {
 			t.Fatalf("native bytes or terminal changed: %v / %q", err, rec.Body.String())
 		}
 		if !tc.wantError && (!info.InKnown || !info.OutKnown) {

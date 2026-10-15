@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -564,6 +565,11 @@ func collectProtocolSSE(reader io.Reader, format clientFormat) (*canonResponse, 
 	return normalizeProtocolResponse(r)
 }
 
+type anthropicDeferredBlock struct {
+	index int
+	text  *strings.Builder // nil for tools, whose arguments live in blocks.
+}
+
 type protocolStream struct {
 	format             clientFormat
 	model, id          string
@@ -582,10 +588,13 @@ type protocolStream struct {
 	anthropicActive    int
 	anthropicNextIndex int
 	anthropicIndexes   map[int]int
+	anthropicTool      int
+	anthropicDeferred  []anthropicDeferredBlock
+	anthropicQueued    map[int]bool
 }
 
 func newProtocolStream(c *gin.Context, f clientFormat, model string, wantUsage bool) *protocolStream {
-	return &protocolStream{format: f, model: model, id: protocolID(protocolIDPrefix(f)), createdAt: time.Now().Unix(), wantUsage: wantUsage, indexes: map[string]int{}, toolIndexes: map[int]int{}, anthropicActive: -1, anthropicIndexes: map[int]int{}}
+	return &protocolStream{format: f, model: model, id: protocolID(protocolIDPrefix(f)), createdAt: time.Now().Unix(), wantUsage: wantUsage, indexes: map[string]int{}, toolIndexes: map[int]int{}, anthropicActive: -1, anthropicIndexes: map[int]int{}, anthropicTool: -1, anthropicQueued: map[int]bool{}}
 }
 
 func (w *protocolStream) closeAnthropicBlock(c *gin.Context) {
@@ -641,6 +650,10 @@ func (w *protocolStream) emit(c *gin.Context, v map[string]any) {
 	}
 	if w.err == nil {
 		c.Writer.Flush()
+		if state := messagesState(c); state != nil {
+			state.observe(v)
+			state.lastWrite = time.Now()
+		}
 	}
 }
 func (w *protocolStream) chunk(c *gin.Context, delta map[string]any, finish any) {
@@ -651,6 +664,7 @@ func (w *protocolStream) start(c *gin.Context, u upstreamUsage) {
 		return
 	}
 	w.started = true
+	commitRelayResponse(c)
 	c.Writer.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
@@ -691,9 +705,56 @@ func (w *protocolStream) item(i int, empty bool) map[string]any {
 func (w *protocolStream) itemID(i int) string {
 	return responseItemID(w.id, i, w.blocks[i])
 }
+
+// Keep the first tool open and stream its arguments immediately. Other blocks
+// wait until it closes, preserving sequential Messages blocks even when an
+// upstream interleaves parallel tool arguments or text with the active tool.
+func (w *protocolStream) pushAnthropic(c *gin.Context, index int, text string) error {
+	block := w.blocks[index]
+	if block.Kind == "tool" && w.anthropicTool < 0 {
+		w.anthropicTool = index
+		w.openAnthropicBlock(c, index)
+	}
+	if w.anthropicTool >= 0 && index != w.anthropicTool {
+		if block.Kind == "tool" {
+			if !w.anthropicQueued[index] {
+				w.anthropicQueued[index] = true
+				w.anthropicDeferred = append(w.anthropicDeferred, anthropicDeferredBlock{index: index})
+			}
+		} else if text != "" {
+			last := len(w.anthropicDeferred) - 1
+			if last < 0 || w.anthropicDeferred[last].index != index || w.anthropicDeferred[last].text == nil {
+				w.anthropicDeferred = append(w.anthropicDeferred, anthropicDeferredBlock{index: index, text: &strings.Builder{}})
+				last++
+			}
+			w.anthropicDeferred[last].text.WriteString(text)
+		}
+		if len(w.anthropicDeferred) > 65536 {
+			return fmt.Errorf("upstream accumulated response too large")
+		}
+		return w.err
+	}
+	if text != "" {
+		w.openAnthropicBlock(c, index)
+		w.emitAnthropicDelta(c, index, text)
+	}
+	return w.err
+}
+
+func (w *protocolStream) emitAnthropicDelta(c *gin.Context, index int, text string) {
+	typ, field := "text_delta", "text"
+	switch w.blocks[index].Kind {
+	case "thinking":
+		typ, field = "thinking_delta", "thinking"
+	case "tool":
+		typ, field = "input_json_delta", "partial_json"
+	}
+	w.emit(c, map[string]any{"type": "content_block_delta", "index": w.anthropicIndexes[index], "delta": map[string]any{"type": typ, field: text}})
+}
+
 func (w *protocolStream) push(c *gin.Context, delta streamDelta, u upstreamUsage) error {
 	buffered := len(delta.Block.Call.Arguments)
-	if w.format == FormatOpenAIResponse {
+	if w.format == FormatOpenAIResponse || w.format == FormatAnthropic {
 		buffered += len(delta.Block.Text)
 	}
 	if w.bufferBytes+buffered > 64<<20 || len(w.blocks) >= 65536 {
@@ -730,9 +791,7 @@ func (w *protocolStream) push(c *gin.Context, delta streamDelta, u upstreamUsage
 		}
 		w.textBuffers = append(w.textBuffers, textBuffer)
 		w.argumentBuffers = append(w.argumentBuffers, argumentBuffer)
-		if w.format != FormatAnthropic || b.Kind != "tool" {
-			w.start(c, u)
-		}
+		w.start(c, u)
 		switch w.format {
 		case FormatOpenAIResponse:
 			w.emit(c, map[string]any{"type": "response.output_item.added", "output_index": i, "item": w.item(i, true)})
@@ -761,22 +820,13 @@ func (w *protocolStream) push(c *gin.Context, delta streamDelta, u upstreamUsage
 	if b.Kind == "tool" {
 		text = delta.Block.Call.Arguments
 	}
+	if w.format == FormatAnthropic {
+		return w.pushAnthropic(c, i, text)
+	}
 	if text == "" {
 		return w.err
 	}
 	switch w.format {
-	case FormatAnthropic:
-		// Interleaved parallel tools are buffered until their arguments validate,
-		// then emitted as complete sequential content blocks at finish.
-		if b.Kind == "tool" {
-			return w.err
-		}
-		w.openAnthropicBlock(c, i)
-		typ, field := "text_delta", "text"
-		if b.Kind == "thinking" {
-			typ, field = "thinking_delta", "thinking"
-		}
-		w.emit(c, map[string]any{"type": "content_block_delta", "index": w.anthropicIndexes[i], "delta": map[string]any{"type": typ, field: text}})
 	case FormatOpenAIResponse:
 		// A Chat/Anthropic delta carries JSON fragments, not the custom tool's
 		// raw text. Decode it after the entire argument object has arrived.
@@ -850,12 +900,13 @@ func (w *protocolStream) finish(c *gin.Context, u upstreamUsage, reason, stopSeq
 	switch w.format {
 	case FormatAnthropic:
 		w.closeAnthropicBlock(c)
-		for i, block := range w.blocks {
-			if block.Kind != "tool" {
-				continue
+		for _, pending := range w.anthropicDeferred {
+			w.openAnthropicBlock(c, pending.index)
+			text := w.blocks[pending.index].Call.Arguments
+			if pending.text != nil {
+				text = pending.text.String()
 			}
-			w.openAnthropicBlock(c, i)
-			w.emit(c, map[string]any{"type": "content_block_delta", "index": w.anthropicIndexes[i], "delta": map[string]any{"type": "input_json_delta", "partial_json": block.Call.Arguments}})
+			w.emitAnthropicDelta(c, pending.index, text)
 			w.closeAnthropicBlock(c)
 		}
 		var stop any
@@ -932,7 +983,7 @@ func findStreamKey(indexes map[string]int, index int) string {
 }
 func (w *protocolStream) fail(c *gin.Context) {
 	// Before any client output, leave errors to the bounded upstream retry loop.
-	if !w.started && !c.Writer.Written() {
+	if !w.started && !relayResponseCommitted(c) {
 		return
 	}
 	// Never emit a successful completion after an upstream error or truncated stream.
@@ -976,7 +1027,7 @@ func relayProtocolSSE(c *gin.Context, resp *http.Response, format clientFormat, 
 	if err == nil {
 		err = w.finish(c, info.protocolUsage(), d.finish, d.stopSequence)
 	}
-	if err != nil {
+	if err != nil && !errors.Is(err, errDownstreamWrite) && (c.Request == nil || c.Request.Context().Err() == nil) {
 		w.fail(c)
 	}
 	return err
