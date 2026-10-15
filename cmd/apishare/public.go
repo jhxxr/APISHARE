@@ -42,6 +42,7 @@ type PublicModel struct {
 	Family   string           `json:"family"`
 	Status   string           `json:"status"`
 	Uptime   *float64         `json:"uptime_percent"`
+	AvgTPS   *float64         `json:"avg_tps"`
 	LastCall string           `json:"last_call"`
 	History  []PublicInterval `json:"history"`
 }
@@ -114,6 +115,17 @@ func requestUptime(successes, calls int64) *float64 {
 	}
 	rate := float64(successes) / float64(calls) * 100
 	return &rate
+}
+
+// averageTPS 汇总 24 小时窗口内的输出速度。只有同时具备输出 Token 和生成
+// 时长（总耗时减首字，非流式请求用总耗时）的成功调用参与统计；没有任何
+// 有效样本时返回 nil，页面显示“—”，不会伪造速度。
+func averageTPS(completionTokens, generatingMS int64) *float64 {
+	if completionTokens <= 0 || generatingMS <= 0 {
+		return nil
+	}
+	tps := float64(completionTokens) / (float64(generatingMS) / 1000)
+	return &tps
 }
 func publicFamily(model, fallback string) string {
 	m := strings.ToLower(model)
@@ -331,6 +343,29 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 	if err != nil {
 		return nil, err
 	}
+	// Average output speed uses the same rolling 24 hours as the model uptime.
+	// Only successful calls with measured output tokens and generation time
+	// contribute; first-token time is subtracted when it is a meaningful part
+	// of the total, mirroring the per-log TPS shown in the console.
+	speeds := make(map[string]*float64)
+	err = publicRows(tx, `SELECT l.model,COALESCE(SUM(l.completion_tokens),0),
+ COALESCE(SUM(CASE WHEN l.first_token_ms>0 AND (l.duration_ms-l.first_token_ms)*10>=l.duration_ms
+  THEN l.duration_ms-l.first_token_ms ELSE l.duration_ms END),0)
+ FROM call_logs l
+ WHERE l.status BETWEEN 200 AND 299 AND l.duration_ms>0 AND l.completion_tokens>0
+  AND unixepoch(l.created_at) BETWEEN ? AND ? GROUP BY l.model`,
+		func(rows *sql.Rows) error {
+			var model string
+			var completion, generating int64
+			if err := rows.Scan(&model, &completion, &generating); err != nil {
+				return err
+			}
+			speeds[model] = averageTPS(completion, generating)
+			return nil
+		}, historyStart.Unix(), windowEnd.Unix())
+	if err != nil {
+		return nil, err
+	}
 	type lastCall struct {
 		status int
 		at     string
@@ -379,7 +414,7 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 			}
 		}
 		result.Models = append(result.Models, PublicModel{PublicUsage: u, Family: family, Status: status,
-			Uptime: requestUptime(success, calls), LastCall: last.at, History: history})
+			Uptime: requestUptime(success, calls), AvgTPS: speeds[model], LastCall: last.at, History: history})
 	}
 	sort.Slice(result.Models, func(i, j int) bool {
 		if result.Models[i].Family != result.Models[j].Family {

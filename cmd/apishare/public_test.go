@@ -105,6 +105,52 @@ func TestPublicOverviewSiteWidePrivacyAndUptime(t *testing.T) {
 	}
 }
 
+func TestPublicOverviewAverageSpeed(t *testing.T) {
+	publicTestDB(t)
+	now := time.Now()
+	k := publicTestKey(t, "speed-home", 100, 0, true)
+	if err := dbInsertUpstream(&Upstream{Type: "openai", Weight: 1, Enabled: true, Models: "gpt-speed,gpt-slow,gpt-nospeed"}); err != nil {
+		t.Fatal(err)
+	}
+	insert := func(model string, status int, completion, first, duration int64, at time.Time) {
+		t.Helper()
+		_, err := db.Exec(`INSERT INTO call_logs(key_id,key_name,model,status,completion_tokens,first_token_ms,duration_ms,created_at) VALUES(?,?,?,?,?,?,?,?)`,
+			k.ID, k.Name, model, status, completion, first, duration, at.Format(time.RFC3339))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Two successful streaming calls: generation time excludes the first token,
+	// so the aggregate is (100+300) tokens over (1s+3s) of generation.
+	insert("gpt-speed", 200, 100, 500, 1500, now.Add(-2*time.Hour))
+	insert("gpt-speed", 200, 300, 500, 3500, now.Add(-time.Hour))
+	// A single-frame reply where the first token lands almost at the end falls
+	// back to the total duration, matching the console's per-log rule.
+	insert("gpt-slow", 200, 60, 1990, 2000, now.Add(-time.Hour))
+	// Failed calls, unmeasured durations and rows outside the 24-hour window
+	// never contribute to the average.
+	insert("gpt-nospeed", 503, 90, 400, 2000, now.Add(-time.Hour))
+	insert("gpt-nospeed", 200, 90, 0, 0, now.Add(-time.Hour))
+	insert("gpt-speed", 200, 9000, 500, 1500, now.AddDate(0, 0, -2))
+	got, err := buildPublicOverview(now, "hour")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byModel := make(map[string]PublicModel)
+	for _, model := range got.Models {
+		byModel[model.Model] = model
+	}
+	if speed := byModel["gpt-speed"].AvgTPS; speed == nil || math.Abs(*speed-100) > 1e-9 {
+		t.Fatalf("weighted average speed: %+v", byModel["gpt-speed"].AvgTPS)
+	}
+	if speed := byModel["gpt-slow"].AvgTPS; speed == nil || math.Abs(*speed-30) > 1e-9 {
+		t.Fatalf("single-frame fallback speed: %+v", byModel["gpt-slow"].AvgTPS)
+	}
+	if speed := byModel["gpt-nospeed"].AvgTPS; speed != nil {
+		t.Fatalf("unmeasured calls invented a speed: %+v", *speed)
+	}
+}
+
 func TestPublicOverviewEmptyNeverExposesBalances(t *testing.T) {
 	publicTestDB(t)
 	publicTestKey(t, "finite", 10, 2, false)
