@@ -42,7 +42,7 @@ let token = localStorage.getItem(TOKEN_KEY) || "";
 let activeTab = "dashboard";
 let logsPage = 1;
 let keysCache = [], upsCache = [], logsCache = [];
-let statsCache = null, chartMetric = "calls", actionResolve = null;
+let statsCache = null, chartMetric = "calls", actionResolve = null, actionInputType = null;
 let settingsReady = false;
 const requestVersions = {};
 const editProbe = { id: null, models: [], selected: new Set(), initial: "", generation: 0, controller: null, saving: false, closing: false };
@@ -407,7 +407,7 @@ function renderUpstreams() {
   $("upstreamHealthy").textContent = upsCache.filter((item) => item.enabled && item.healthy).length;
   $("upstreamModelCount").textContent = new Set(upsCache.flatMap((item) => parseAllowlist(item.models))).size;
   $("upstreamListCount").textContent = list.length + (list.length !== upsCache.length ? " / " + upsCache.length : "");
-  $("upsTable").querySelector("tbody").innerHTML = list.map((item) => '<tr><td><div class="provider-cell">' + providerIcon(item.type) + '<span class="cell-stack"><strong>' + esc(item.name || "未命名上游") + '</strong><small>' + esc(upstreamFormatNames[upstreamFormat(item)] || item.type) + ' · #' + item.id + '</small></span></div></td><td class="endpoint-cell"><span>' + esc(item.base_url) + '</span><small>' + esc(item.key_masked) + '</small><small>代理：' + esc(upstreamProxyLabel(item.proxy_id)) + '</small></td><td class="cell-stack"><strong>' + (parseAllowlist(item.models).length ? parseAllowlist(item.models).length + " 个模型" : "全部模型") + '</strong><small>权重 ' + item.weight + '</small></td><td><span class="badge ' + (item.healthy ? "on" : "warn") + '">' + (item.healthy ? "健康" : "冷却中") + '</span>' + (item.fails ? '<span class="cell-stack"><small>连续失败 ' + item.fails + ' 次</small></span>' : "") + '</td><td><button class="toggle-btn" role="switch" aria-checked="' + !!item.enabled + '" aria-label="' + (item.enabled ? "停用 " : "启用 ") + esc(item.name) + '" onclick="toggleUpstream(' + item.id + ", " + !item.enabled + ', this)"><span></span></button></td><td><div class="row-actions"><button class="text-btn" onclick="openEditUpstream(' + item.id + ')" aria-label="编辑 ' + esc(item.name) + '">' + icon("edit") + '编辑</button><button class="text-btn" onclick="openModelTest(' + item.id + ')" aria-label="测试模型 ' + esc(item.name) + '">测试模型</button><button class="icon-btn" onclick="testUpstream(' + item.id + ', this)" aria-label="测试 ' + esc(item.name) + '" title="测试连接">' + icon("activity") + '</button><button class="icon-btn danger" onclick="deleteUpstream(' + item.id + ')" aria-label="删除 ' + esc(item.name) + '" title="删除上游">' + icon("trash") + '</button></div></td></tr>').join("") || emptyRow(6, query || type ? "没有匹配的上游" : "连接你的第一个上游", query || type ? "调整搜索条件或接口类型。" : "支持 OpenAI Chat Completions、Responses、OpenCode Zen / Go、Anthropic 与 Gemini 接口。", query || type ? "" : "openCreateUpstream()", "添加上游");
+  $("upsTable").querySelector("tbody").innerHTML = list.map((item) => '<tr><td><div class="provider-cell">' + providerIcon(item.type) + '<span class="cell-stack"><strong>' + esc(item.name || "未命名上游") + '</strong><small>' + esc(upstreamFormatNames[upstreamFormat(item)] || item.type) + ' · #' + item.id + '</small></span></div></td><td class="endpoint-cell"><span>' + esc(item.base_url) + '</span><small>' + esc(item.key_masked) + '</small><small>代理：' + esc(upstreamProxyLabel(item.proxy_id)) + '</small></td><td class="cell-stack"><strong>' + (parseAllowlist(item.models).length ? parseAllowlist(item.models).length + " 个模型" : "全部模型") + '</strong><small>权重 ' + item.weight + '</small></td><td><span class="badge ' + (item.healthy ? "on" : "warn") + '">' + (item.healthy ? "健康" : "冷却中") + '</span>' + (item.fails ? '<span class="cell-stack"><small>连续失败 ' + item.fails + ' 次</small></span>' : "") + '</td><td><button class="toggle-btn" role="switch" aria-checked="' + !!item.enabled + '" aria-label="' + (item.enabled ? "停用 " : "启用 ") + esc(item.name) + '" onclick="toggleUpstream(' + item.id + ", " + !item.enabled + ', this)"><span></span></button></td><td><div class="row-actions"><button class="text-btn" onclick="openEditUpstream(' + item.id + ')" aria-label="编辑 ' + esc(item.name) + '">' + icon("edit") + '编辑</button><button class="text-btn" onclick="duplicateUpstream(' + item.id + ')" aria-label="复制 ' + esc(item.name) + '">' + icon("copy") + '复制</button><button class="text-btn" onclick="openModelTest(' + item.id + ')" aria-label="测试模型 ' + esc(item.name) + '">测试模型</button><button class="icon-btn" onclick="testUpstream(' + item.id + ', this)" aria-label="测试 ' + esc(item.name) + '" title="测试连接">' + icon("activity") + '</button><button class="icon-btn danger" onclick="deleteUpstream(' + item.id + ')" aria-label="删除 ' + esc(item.name) + '" title="删除上游">' + icon("trash") + '</button></div></td></tr>').join("") || emptyRow(6, query || type ? "没有匹配的上游" : "连接你的第一个上游", query || type ? "调整搜索条件或接口类型。" : "支持 OpenAI Chat Completions、Responses、OpenCode Zen / Go、Anthropic 与 Gemini 接口。", query || type ? "" : "openCreateUpstream()", "添加上游");
   labelTableCells("upsTable");
 }
 async function toggleUpstream(id, enabled, button) {
@@ -420,6 +420,24 @@ async function deleteUpstream(id) {
   if (!await askAction({ title: "删除上游服务？", description: (item ? "“" + item.name + "”" : "此上游") + "将不再接收请求。删除后无法恢复，请确认其他连接可以承接调用。", confirm: "删除上游", danger: true })) return;
   try { await api("api/upstreams/" + id, { method: "DELETE" }); await loadUpstreams(); toast("上游已删除"); }
   catch (error) { reportError(error); }
+}
+async function duplicateUpstream(id) {
+  const item = upsCache.find((upstream) => upstream.id === id);
+  if (!item) { toast("未找到该上游，请刷新列表后重试", "error"); return; }
+  const name = await askAction({
+    title: "复制上游服务？",
+    description: "将“" + (item.name || "未命名上游") + "”的类型、地址、密钥、模型配置、请求头、代理与权重完整复制为一条新的上游，并沿用原启用状态。可以修改新上游的名称，创建后再按需调整其他配置。",
+    input: (item.name || "未命名上游") + " 副本",
+    inputType: "text",
+    inputLabel: "新上游名称",
+    confirm: "复制上游",
+  });
+  if (name === false) return;
+  try {
+    const result = await api("api/upstreams/" + id + "/duplicate", { method: "POST", body: JSON.stringify({ name: String(name).trim() }) });
+    await loadUpstreams();
+    toast("已复制为“" + (result.name || name) + "”");
+  } catch (error) { reportError(error, "复制失败"); }
 }
 async function testUpstream(id, button) {
   setBusy(button, true, "");
@@ -845,19 +863,27 @@ function askAction(options) {
   $("actionDescription").textContent = options.description;
   $("actionConfirm").textContent = options.confirm || "确认";
   $("actionConfirm").className = "btn" + (options.danger ? " danger" : "");
-  const hasInput = options.input !== undefined;
-  $("actionInputField").classList.toggle("hidden", !hasInput);
-  $("actionInput").disabled = !hasInput;
-  if (hasInput) $("actionInput").value = options.input;
+  const inputType = options.input === undefined ? null : options.inputType === "text" ? "text" : "number";
+  actionInputType = inputType;
+  $("actionInputField").classList.toggle("hidden", inputType === null);
+  $("actionInput").disabled = inputType === null;
+  if (inputType) {
+    $("actionInput").type = inputType;
+    $("actionInput").required = inputType !== "text";
+    $("actionInputLabel").textContent = options.inputLabel || "共享额度 · USD";
+    $("actionInput").value = options.input;
+  }
   $("actionDialog").showModal(); syncModalLock();
-  if (hasInput) { $("actionInput").focus(); $("actionInput").select(); }
+  if (inputType) { $("actionInput").focus(); $("actionInput").select(); }
   else $("actionForm").querySelector('.form-actions [type="button"]').focus();
   return new Promise((resolve) => { actionResolve = resolve; });
 }
 function resolveAction(confirmed) {
   const resolve = actionResolve; actionResolve = null;
-  const result = confirmed && !$("actionInput").disabled ? Number($("actionInput").value) : confirmed;
+  const hasInput = !$("actionInput").disabled;
+  const result = !confirmed ? false : !hasInput ? true : actionInputType === "text" ? $("actionInput").value : Number($("actionInput").value);
   $("actionDialog").close(); syncModalLock();
+  actionInputType = null;
   if (resolve) resolve(result);
 }
 $("actionForm").addEventListener("submit", (event) => { event.preventDefault(); resolveAction(true); });

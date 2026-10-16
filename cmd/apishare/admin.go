@@ -462,6 +462,43 @@ func registerAdminRoutes(r *gin.Engine) {
 		c.JSON(200, gin.H{"ok": true})
 	})
 
+	// 复制上游：接口类型、地址、密钥、模型配置、请求头、代理、权重与启用状态
+	// 全部沿用，只有名称与创建时间不同。名称留空时自动使用“原名 + 副本”。
+	auth.POST("/upstreams/:id/duplicate", func(c *gin.Context) {
+		proxyConfigMu.Lock()
+		defer proxyConfigMu.Unlock()
+		id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+		src, err := dbGetUpstream(id)
+		if err != nil {
+			c.JSON(404, gin.H{"error": "upstream not found"})
+			return
+		}
+		var req struct {
+			Name string `json:"name"`
+		}
+		if c.BindJSON(&req) != nil {
+			return
+		}
+		name := strings.TrimSpace(req.Name)
+		if name == "" {
+			base := strings.TrimSpace(src.Name)
+			if base == "" {
+				base = "未命名上游"
+			}
+			name = base + " 副本"
+		}
+		dup := *src
+		dup.ID = 0
+		dup.Name = name
+		dup.CreatedAt = ""
+		dup.config = nil
+		if err := dbInsertUpstream(&dup); err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"ok": true, "id": dup.ID, "name": dup.Name})
+	})
+
 	registerModelTestRoutes(auth)
 
 	auth.POST("/upstreams/:id/test", func(c *gin.Context) {
