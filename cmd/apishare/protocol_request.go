@@ -24,13 +24,25 @@ func unsupported(feature string) error {
 }
 
 // OpenAIProtocol fixes the outbound endpoint independently of the client's endpoint.
-// Empty/auto preserves the existing Chat/Responses native behavior.
+// OpenCode auto resolves the model's native format from the tier's catalog.
+// Empty/auto on OpenAI preserves its existing Chat/Responses behavior.
 func (u *Upstream) wireFormat(in clientFormat) clientFormat {
 	switch u.Type {
 	case "anthropic":
 		return FormatAnthropic
 	case "gemini":
 		return FormatGemini
+	case "opencode":
+		switch u.OpenAIProtocol {
+		case "chat":
+			return FormatOpenAIChat
+		case "responses":
+			return FormatOpenAIResponse
+		case "anthropic":
+			return FormatAnthropic
+		default:
+			return "" // Requires resolveWireFormat with the mapped model.
+		}
 	default:
 		switch u.OpenAIProtocol {
 		case "chat":
@@ -50,10 +62,25 @@ func validOpenAIProtocol(p string) bool {
 	return p == "" || p == "auto" || p == "chat" || p == "responses"
 }
 
+func validUpstreamType(t string) bool {
+	return t == "openai" || t == "opencode" || t == "anthropic" || t == "gemini"
+}
+
+func validUpstreamProtocol(upstreamType, protocol string) bool {
+	if upstreamType == "opencode" {
+		return protocol == "" || protocol == "auto" || protocol == "chat" || protocol == "responses" || protocol == "anthropic"
+	}
+	return validOpenAIProtocol(protocol)
+}
+
 func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 	m, decodeErr := decodeProtocolObject(body)
 	if decodeErr != nil {
 		return fmt.Errorf("invalid JSON object")
+	}
+	cr.SessionID = str(object(m["metadata"])["session_id"])
+	if cr.SessionID == "" {
+		cr.SessionID = str(m["conversation_id"])
 	}
 	cr.Messages = nil
 	cr.System = ""

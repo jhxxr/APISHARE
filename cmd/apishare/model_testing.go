@@ -88,22 +88,35 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	model = up.mapModel(model)
-	format := up.wireFormat(FormatOpenAIChat)
+	format, err := up.resolveWireFormat(ctx, FormatOpenAIChat, model)
+	if err != nil {
+		return nil, 0, err
+	}
 	cr := &canonReq{Model: model, Messages: []canonMsg{{Role: "user", Text: message}}, MaxTokens: maxTokens, Stream: stream}
 	body, err := renderProtocolRequest(format, cr, model)
 	if err != nil {
 		return nil, 0, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL(up.BaseURL, nativeEndpoint(format, cr)), bytes.NewReader(body))
+	body, freeShaped, err := up.shapeOpenCodeFreeRequest(body, format, model)
+	if err != nil {
+		return nil, 0, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, up.endpointURL(format, nativeEndpoint(format, cr)), bytes.NewReader(body))
 	if err != nil {
 		return nil, 0, fmt.Errorf("无法创建模型测试请求")
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if stream {
+	if stream || freeShaped {
 		req.Header.Set("Accept", "text/event-stream")
 		req.Header.Set("Accept-Encoding", "identity")
 	}
 	switch up.Type {
+	case "opencode":
+		session, err := newOpenCodeSessionID()
+		if err != nil {
+			return nil, 0, err
+		}
+		setOpenCodeHeaders(req, up.APIKey, format, session, nil)
 	case "anthropic":
 		req.Header.Set("x-api-key", up.APIKey)
 		req.Header.Set("anthropic-version", "2023-06-01")

@@ -97,15 +97,17 @@ func (i *relayInfo) protocolUsage() upstreamUsage {
 
 // relayTask 一次转发所需的全部上下文。
 type relayTask struct {
-	format         clientFormat
-	endpoint       string    // 原生透传时的上游路径
-	body           []byte    // 客户端原始请求体（原生透传用）
-	canon          *canonReq // 规范化请求（转换用）
-	model          string    // 客户端请求的模型
-	stream         bool
-	nativeOnly     bool // 只允许原生类型的上游（如 embeddings），禁止跨格式转换
-	apiKeyID       int64
-	wantUsageChunk bool // openai chat 流式：客户端是否要求 include_usage
+	format                    clientFormat
+	endpoint                  string    // 原生透传时的上游路径
+	body                      []byte    // 客户端原始请求体（原生透传用）
+	canon                     *canonReq // 规范化请求（转换用）
+	model                     string    // 客户端请求的模型
+	stream                    bool
+	nativeOnly                bool // 只允许原生类型的上游（如 embeddings），禁止跨格式转换
+	apiKeyID                  int64
+	wantUsageChunk            bool   // openai chat 流式：客户端是否要求 include_usage
+	openCodeSession           string // Reused across retries, tiers, and protocol conversions.
+	openCodeReasoningRepaired bool
 }
 
 // relayHandler 返回转发处理器（一种客户端格式一个实例）。
@@ -357,7 +359,10 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	upModel := up.mapModel(task.model)
 	info.UpstreamModel = upModel
 	replayScope := responseReplayScope{task.apiKeyID, up.ID, task.model, upModel}
-	wireFormat := up.wireFormat(task.format)
+	wireFormat, err := up.resolveWireFormat(c.Request.Context(), task.format, upModel)
+	if err != nil {
+		return info, false, err
+	}
 	info.Usage.Source = wireFormat
 	native := wireFormat == task.format || task.nativeOnly
 	var effortLevels []string
@@ -370,7 +375,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	var url string
 	var reqBody []byte
 	if native {
-		url = upstreamURL(up.BaseURL, task.endpoint)
+		url = up.endpointURL(wireFormat, task.endpoint)
 		reqBody = task.body
 		if upModel != task.model {
 			if task.format == FormatGemini {
@@ -395,7 +400,13 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 			info.Status = http.StatusBadRequest
 			return info, false, &protocolConversionError{err}
 		}
-		url = upstreamURL(up.BaseURL, nativeEndpoint(wireFormat, &canonReq{Model: upModel, Stream: task.stream}))
+		url = up.endpointURL(wireFormat, nativeEndpoint(wireFormat, &canonReq{Model: upModel, Stream: task.stream}))
+	}
+	var freeShaped bool
+	reqBody, freeShaped, err = up.shapeOpenCodeFreeRequest(reqBody, wireFormat, upModel)
+	if err != nil {
+		info.Status = http.StatusBadRequest
+		return info, false, &protocolConversionError{err}
 	}
 
 	requestCtx, cancel := context.WithCancel(c.Request.Context())
@@ -405,13 +416,19 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		return info, false, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if task.stream {
+	if task.stream || freeShaped {
 		req.Header.Set("Accept", "text/event-stream")
 		// Compressors that do not flush each SSE frame can hide the entire
 		// reasoning phase. An upstream may explicitly override this in headers.
 		req.Header.Set("Accept-Encoding", "identity")
 	}
 	switch up.Type {
+	case "opencode":
+		session, sessionErr := openCodeSessionForTask(task, c.Request.Header)
+		if sessionErr != nil {
+			return info, false, sessionErr
+		}
+		setOpenCodeHeaders(req, up.APIKey, wireFormat, session, c.Request.Header)
 	case "anthropic":
 		req.Header.Set("x-api-key", up.APIKey)
 		if v := c.Request.Header.Get("anthropic-version"); v != "" {
@@ -436,6 +453,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	if err != nil {
 		return info, false, err
 	}
+	var retryAfter time.Time
 	// Count actual attempts, including interrupted streams, but never penalize
 	// an upstream for client cancellation or request/configuration validation.
 	defer func() {
@@ -444,6 +462,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		}
 		if err != nil || isRetryableStatus(info.Status) {
 			healthMarkFailure(up.ID)
+			healthMarkRetryAfter(up.ID, retryAfter)
 		} else if info.Status >= 200 && info.Status < 300 {
 			healthMarkSuccess(up.ID)
 		}
@@ -461,9 +480,24 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	if relayNetwork.BodyIdleTimeout > 0 {
 		resp.Body = newActivityDeadlineBody(resp.Body, relayNetwork.BodyIdleTimeout)
 	}
+	if up.Type == "opencode" && wireFormat == FormatOpenAIResponse && resp.StatusCode == http.StatusBadRequest && !task.openCodeReasoningRepaired {
+		original := resp
+		resp, err = retryOpenCodeReasoning(client, req, resp, reqBody, keepalive, cancel)
+		task.openCodeReasoningRepaired = resp != original
+		if err != nil {
+			original.Body.Close()
+			return info, false, err
+		}
+		if resp != original && relayNetwork.BodyIdleTimeout > 0 {
+			resp.Body = newActivityDeadlineBody(resp.Body, relayNetwork.BodyIdleTimeout)
+		}
+	}
 	resp.Body = newMessagesKeepaliveBody(resp.Body, req.Context(), keepalive)
 	defer resp.Body.Close()
 	info.Status = resp.StatusCode
+	if up.Type == "opencode" && isRetryableStatus(info.Status) {
+		retryAfter = openCodeRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+	}
 	if up.ProxyID != 0 && info.Status == http.StatusProxyAuthRequired {
 		return info, false, fmt.Errorf("代理认证失败，请检查代理用户名和密码")
 	}

@@ -47,6 +47,10 @@ func upstreamModelCacheKeyForProxy(u *Upstream, p *OutboundProxy) modelCacheKey 
 		proxyConnection = proxyFingerprint(p)
 	}
 	connection, _ := json.Marshal([]any{u.Type, u.BaseURL, u.APIKey, proxyConnection, u.HeaderOverrides, clientHeaderVersionFingerprint(u.HeaderOverrides)})
+	if u.Type == "opencode" {
+		connection = append(connection, []byte(openCodeUserAgent())...)
+		connection = append(connection, []byte(u.OpenAIProtocol+":"+u.openCodeTier())...)
+	}
 	return modelCacheKey{u.ID, sha256.Sum256(connection)}
 }
 
@@ -90,7 +94,37 @@ func fetchCachedModelCatalog(up *Upstream, proxyConfig *OutboundProxy, efforts m
 	if err != nil {
 		return nil, err
 	}
-	return probeUpstreamModelListWithClient(ctx, up.Type, up.BaseURL, up.APIKey, client, up.HeaderOverrides, efforts)
+	return probeConfiguredModelList(ctx, up, client, efforts)
+}
+
+func probeConfiguredModels(ctx context.Context, up *Upstream) ([]string, error) {
+	client, err := clientForUpstream(modelsFetchClient, up.ProxyID)
+	if err != nil {
+		return nil, err
+	}
+	return probeConfiguredModelList(ctx, up, client, nil)
+}
+
+func probeConfiguredModelList(ctx context.Context, up *Upstream, client *http.Client, efforts map[string][]string) ([]string, error) {
+	base := up.BaseURL
+	if up.Type == "opencode" {
+		base = strings.TrimSuffix(up.endpointURL(FormatOpenAIChat, "/v1/models"), "/v1/models")
+	}
+	ids, err := probeUpstreamModelListWithClient(ctx, up.Type, base, up.APIKey, client, up.HeaderOverrides, efforts)
+	if err != nil || (!up.openCodeAuto() && !up.openCodePublic()) {
+		return ids, err
+	}
+	catalog, err := up.openCodeCatalog(ctx)
+	if err != nil {
+		return nil, err
+	}
+	supported := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if (!up.openCodeAuto() || catalog.Tiers[up.openCodeTier()][id] != "") && (!up.openCodePublic() || up.openCodeFreeModel(id)) {
+			supported = append(supported, id)
+		}
+	}
+	return supported, nil
 }
 
 // probeUpstreamModels always uses the supplied credentials, including unsaved edits.
@@ -120,8 +154,8 @@ func probeUpstreamModelListWithClient(ctx context.Context, upType, baseURL, apiK
 		return nil, err
 	}
 	upType, baseURL, apiKey = strings.TrimSpace(upType), strings.TrimSpace(baseURL), strings.TrimSpace(apiKey)
-	if upType != "openai" && upType != "anthropic" && upType != "gemini" {
-		return nil, fmt.Errorf("type must be openai, anthropic or gemini")
+	if !validUpstreamType(upType) {
+		return nil, fmt.Errorf("type must be openai, opencode, anthropic or gemini")
 	}
 	base, err := url.Parse(baseURL)
 	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" || base.User != nil || base.RawQuery != "" || base.Fragment != "" {
@@ -157,6 +191,12 @@ func probeUpstreamModelListWithClient(ctx context.Context, upType, baseURL, apiK
 		}
 		req.Header.Set("Accept", "application/json")
 		switch upType {
+		case "opencode":
+			session, err := newOpenCodeSessionID()
+			if err != nil {
+				return nil, err
+			}
+			setOpenCodeHeaders(req, apiKey, FormatOpenAIChat, session, nil)
 		case "anthropic":
 			req.Header.Set("x-api-key", apiKey)
 			req.Header.Set("anthropic-version", "2023-06-01")
@@ -165,7 +205,8 @@ func probeUpstreamModelListWithClient(ctx context.Context, upType, baseURL, apiK
 		default:
 			req.Header.Set("Authorization", "Bearer "+apiKey)
 		}
-		if err := applyHeaderOverrides(req, headers, apiKey, nil); err != nil {
+		up := &Upstream{Type: upType, APIKey: apiKey, HeaderOverrides: headers}
+		if err := up.applyHeaders(req, nil); err != nil {
 			return nil, err
 		}
 		resp, err := client.Do(req)
@@ -348,13 +389,17 @@ func availableModels(ctx context.Context) ([]catalogModel, error) {
 		go func() {
 			defer workers.Done()
 			for index := range jobs {
-				ids[index], fetchErrors[index] = cachedUpstreamModels(ctx, &ups[index])
+				if (ups[index].openCodeAuto() || ups[index].openCodePublic()) && strings.TrimSpace(ups[index].Models) != "" {
+					_, fetchErrors[index] = ups[index].openCodeCatalog(ctx)
+				} else {
+					ids[index], fetchErrors[index] = cachedUpstreamModels(ctx, &ups[index])
+				}
 			}
 		}()
 	}
 enqueue:
 	for i, up := range ups {
-		if !up.Enabled || up.Weight <= 0 || strings.TrimSpace(up.Models) != "" {
+		if !up.Enabled || up.Weight <= 0 || (strings.TrimSpace(up.Models) != "" && !up.openCodeAuto() && !up.openCodePublic()) {
 			continue
 		}
 		select {
@@ -374,10 +419,19 @@ enqueue:
 		}
 		add := func(id string) {
 			id = strings.TrimSpace(id)
+			if u.openCodeAuto() && u.routingWireFormat(FormatOpenAIChat, id) == "" {
+				return
+			}
+			if u.openCodePublic() && !u.openCodeFreeModel(u.mapModel(id)) {
+				return
+			}
 			if id != "" && !seen[id] {
 				seen[id] = true
 				data = append(data, catalogModel{id, u.Type})
 			}
+		}
+		if fetchErrors[i] != nil {
+			failed = true
 		}
 		if list := strings.TrimSpace(u.Models); list != "" {
 			for _, id := range strings.Split(list, ",") {

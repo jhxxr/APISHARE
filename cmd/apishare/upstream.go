@@ -28,7 +28,9 @@ func healthMarkFailure(id int64) {
 		if n < 8 {
 			backoff = 30 * time.Second << uint(n-3)
 		}
-		upHealth.until[id] = time.Now().Add(backoff)
+		if until := time.Now().Add(backoff); until.After(upHealth.until[id]) {
+			upHealth.until[id] = until
+		}
 	}
 }
 
@@ -146,7 +148,7 @@ func pickUpstream(format clientFormat, model string, exclude map[int64]bool, nat
 			}
 			tier = 0
 		} else {
-			native := u.wireFormat(format) == format
+			native := u.routingWireFormat(format, model) == format
 			switch {
 			case native && explicit:
 				tier = 1

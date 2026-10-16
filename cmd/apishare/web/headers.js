@@ -48,7 +48,7 @@ function syncClientHeaderTemplate() {
     const key = Object.keys(headers || {}).find((name) => name.toLowerCase() === "user-agent");
     value = key ? headers[key] : "";
   } catch { /* Keep JSON validation beside the editor. */ }
-  const id = value === "{codex_user_agent}" ? "codex" : value === "{claude_code_user_agent}" ? "claude_code" : "";
+  const id = value === "{codex_user_agent}" ? "codex" : value === "{claude_code_user_agent}" ? "claude_code" : value === "{opencode_user_agent}" ? "opencode" : "";
   $("clientHeaderTemplate").value = id;
   const client = clientVersionState.clients.find((item) => item.id === id);
   $("clientHeaderPreview").classList.toggle("hidden", !id);
@@ -56,10 +56,10 @@ function syncClientHeaderTemplate() {
 }
 
 function renderClientHeaderVersions() {
-  for (const id of ["codex", "claude_code"]) {
+  for (const id of ["codex", "claude_code", "opencode"]) {
     const option = $("clientHeaderTemplate").querySelector('option[value="' + id + '"]');
     const client = clientVersionState.clients.find((item) => item.id === id);
-    const name = id === "codex" ? "Codex" : "Claude Code";
+    const name = { codex: "Codex", claude_code: "Claude Code", opencode: "OpenCode" }[id];
     option.disabled = !client?.version;
     option.textContent = name + " 模板" + (client?.version ? " · " + client.version + (client.error ? "（缓存）" : "") : " · 尚未获取版本");
   }
@@ -74,7 +74,7 @@ async function loadClientHeaderVersions(force = false) {
   if (clientVersionState.promise) return clientVersionState.promise;
   clientVersionState.error = "";
   renderClientHeaderVersions();
-  $("clientVersionStatus").textContent = "正在检测 Codex 和 Claude Code 最新稳定版…";
+  $("clientVersionStatus").textContent = "正在检测 Codex、Claude Code 和 OpenCode 最新稳定版…";
   setBusy($("refreshClientVersionsButton"), true, "检测中…");
   clientVersionState.promise = (async () => {
     try {
@@ -112,7 +112,9 @@ function setHeaderTemplate(kind) {
   if (kind === "example") {
     headers = { "*": true, "re:^X-Trace-.*$": true, "X-Foo": "{client_header:X-Foo}" };
     const type = editorUpstreamType();
-    headers[type === "anthropic" ? "x-api-key" : type === "gemini" ? "x-goog-api-key" : "Authorization"] = type === "openai" ? "Bearer {api_key}" : "{api_key}";
+    if (type !== "opencode") {
+      headers[type === "anthropic" ? "x-api-key" : type === "gemini" ? "x-goog-api-key" : "Authorization"] = type === "openai" ? "Bearer {api_key}" : "{api_key}";
+    }
   }
   $("editHeaderOverrides").value = headers ? JSON.stringify(headers, null, 2) : "";
   validateHeaderOverrides(); clearProbeResults(); updateEditorDirty();

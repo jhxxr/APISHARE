@@ -20,8 +20,9 @@ const fmtTime = (value) => {
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
 };
 const number = (value) => Number(value || 0).toLocaleString("zh-CN");
-const upstreamFormatNames = { "openai-chat": "OpenAI Chat Completions", "openai-responses": "OpenAI Responses", "openai-auto": "OpenAI · 旧配置（跟随客户端）", anthropic: "Anthropic Messages", gemini: "Gemini generateContent" };
-const providerURLs = { openai: "https://api.openai.com", anthropic: "https://api.anthropic.com", gemini: "https://generativelanguage.googleapis.com" };
+const upstreamFormatNames = { "openai-chat": "OpenAI Chat Completions", "openai-responses": "OpenAI Responses", "openai-auto": "OpenAI · 旧配置（跟随客户端）", opencode: "OpenCode Zen / Go", anthropic: "Anthropic Messages", gemini: "Gemini generateContent" };
+const providerURLs = { openai: "https://api.openai.com", opencode: "https://opencode.ai/inference", anthropic: "https://api.anthropic.com", gemini: "https://generativelanguage.googleapis.com" };
+const openCodeURLs = { zen: providerURLs.opencode, go: "https://opencode.ai/inference/go" };
 function upstreamFormat(upstream) {
   if (!upstream) return "openai-chat";
   if (upstream.type !== "openai") return upstream.type;
@@ -32,6 +33,7 @@ function editorUpstreamType() {
   return format.startsWith("openai-") ? "openai" : format;
 }
 function editorOpenAIProtocol() {
+  if ($("editType").value === "opencode") return $("editOpenCodeProtocol").value || "auto";
   return { "openai-chat": "chat", "openai-responses": "responses" }[$("editType").value] || "auto";
 }
 const tabNames = { dashboard: "概览", keys: "API 密钥", upstreams: "上游服务", proxies: "代理配置", logs: "调用日志", announcements: "公告管理", settings: "工作空间设置", deployment: "部署配置" };
@@ -386,7 +388,7 @@ async function deleteKey(id) {
 
 /* Upstream list */
 function parseAllowlist(value) { return [...new Set((value || "").split(/[,，\r\n]/).map((model) => model.trim()).filter(Boolean))]; }
-function providerIcon(type) { return '<span class="provider-icon ' + esc(type) + '" aria-hidden="true">' + ({ openai: "O", anthropic: "A", gemini: "G" }[type] || "API") + '</span>'; }
+function providerIcon(type) { return '<span class="provider-icon ' + esc(type) + '" aria-hidden="true">' + ({ openai: "O", opencode: "OC", anthropic: "A", gemini: "G" }[type] || "API") + '</span>'; }
 async function loadUpstreams(quiet = false) {
   const version = requestVersions.upstreams = (requestVersions.upstreams || 0) + 1;
   try {
@@ -405,7 +407,7 @@ function renderUpstreams() {
   $("upstreamHealthy").textContent = upsCache.filter((item) => item.enabled && item.healthy).length;
   $("upstreamModelCount").textContent = new Set(upsCache.flatMap((item) => parseAllowlist(item.models))).size;
   $("upstreamListCount").textContent = list.length + (list.length !== upsCache.length ? " / " + upsCache.length : "");
-  $("upsTable").querySelector("tbody").innerHTML = list.map((item) => '<tr><td><div class="provider-cell">' + providerIcon(item.type) + '<span class="cell-stack"><strong>' + esc(item.name || "未命名上游") + '</strong><small>' + esc(upstreamFormatNames[upstreamFormat(item)] || item.type) + ' · #' + item.id + '</small></span></div></td><td class="endpoint-cell"><span>' + esc(item.base_url) + '</span><small>' + esc(item.key_masked) + '</small><small>代理：' + esc(upstreamProxyLabel(item.proxy_id)) + '</small></td><td class="cell-stack"><strong>' + (parseAllowlist(item.models).length ? parseAllowlist(item.models).length + " 个模型" : "全部模型") + '</strong><small>权重 ' + item.weight + '</small></td><td><span class="badge ' + (item.healthy ? "on" : "warn") + '">' + (item.healthy ? "健康" : "冷却中") + '</span>' + (item.fails ? '<span class="cell-stack"><small>连续失败 ' + item.fails + ' 次</small></span>' : "") + '</td><td><button class="toggle-btn" role="switch" aria-checked="' + !!item.enabled + '" aria-label="' + (item.enabled ? "停用 " : "启用 ") + esc(item.name) + '" onclick="toggleUpstream(' + item.id + ", " + !item.enabled + ', this)"><span></span></button></td><td><div class="row-actions"><button class="text-btn" onclick="openEditUpstream(' + item.id + ')" aria-label="编辑 ' + esc(item.name) + '">' + icon("edit") + '编辑</button><button class="text-btn" onclick="openModelTest(' + item.id + ')" aria-label="测试模型 ' + esc(item.name) + '">测试模型</button><button class="icon-btn" onclick="testUpstream(' + item.id + ', this)" aria-label="测试 ' + esc(item.name) + '" title="测试连接">' + icon("activity") + '</button><button class="icon-btn danger" onclick="deleteUpstream(' + item.id + ')" aria-label="删除 ' + esc(item.name) + '" title="删除上游">' + icon("trash") + '</button></div></td></tr>').join("") || emptyRow(6, query || type ? "没有匹配的上游" : "连接你的第一个上游", query || type ? "调整搜索条件或接口类型。" : "支持 OpenAI Chat Completions、Responses、Anthropic 与 Gemini 接口。", query || type ? "" : "openCreateUpstream()", "添加上游");
+  $("upsTable").querySelector("tbody").innerHTML = list.map((item) => '<tr><td><div class="provider-cell">' + providerIcon(item.type) + '<span class="cell-stack"><strong>' + esc(item.name || "未命名上游") + '</strong><small>' + esc(upstreamFormatNames[upstreamFormat(item)] || item.type) + ' · #' + item.id + '</small></span></div></td><td class="endpoint-cell"><span>' + esc(item.base_url) + '</span><small>' + esc(item.key_masked) + '</small><small>代理：' + esc(upstreamProxyLabel(item.proxy_id)) + '</small></td><td class="cell-stack"><strong>' + (parseAllowlist(item.models).length ? parseAllowlist(item.models).length + " 个模型" : "全部模型") + '</strong><small>权重 ' + item.weight + '</small></td><td><span class="badge ' + (item.healthy ? "on" : "warn") + '">' + (item.healthy ? "健康" : "冷却中") + '</span>' + (item.fails ? '<span class="cell-stack"><small>连续失败 ' + item.fails + ' 次</small></span>' : "") + '</td><td><button class="toggle-btn" role="switch" aria-checked="' + !!item.enabled + '" aria-label="' + (item.enabled ? "停用 " : "启用 ") + esc(item.name) + '" onclick="toggleUpstream(' + item.id + ", " + !item.enabled + ', this)"><span></span></button></td><td><div class="row-actions"><button class="text-btn" onclick="openEditUpstream(' + item.id + ')" aria-label="编辑 ' + esc(item.name) + '">' + icon("edit") + '编辑</button><button class="text-btn" onclick="openModelTest(' + item.id + ')" aria-label="测试模型 ' + esc(item.name) + '">测试模型</button><button class="icon-btn" onclick="testUpstream(' + item.id + ', this)" aria-label="测试 ' + esc(item.name) + '" title="测试连接">' + icon("activity") + '</button><button class="icon-btn danger" onclick="deleteUpstream(' + item.id + ')" aria-label="删除 ' + esc(item.name) + '" title="删除上游">' + icon("trash") + '</button></div></td></tr>').join("") || emptyRow(6, query || type ? "没有匹配的上游" : "连接你的第一个上游", query || type ? "调整搜索条件或接口类型。" : "支持 OpenAI Chat Completions、Responses、OpenCode Zen / Go、Anthropic 与 Gemini 接口。", query || type ? "" : "openCreateUpstream()", "添加上游");
   labelTableCells("upsTable");
 }
 async function toggleUpstream(id, enabled, button) {
@@ -431,7 +433,7 @@ async function testUpstream(id, button) {
 
 /* One editor for both creation and updates. */
 function editorValue() {
-  return JSON.stringify(["editName", "editType", "editBase", "editKey", "editProxy", "editHeaderOverrides", "editStructuredOutput", "editWeight", "editModels"].map((id) => $(id).value).concat($("editEnabled").checked, $("editModelInput").value, $("modelMapBatch").value, [modelMappingDirtyValue()]));
+  return JSON.stringify(["editName", "editType", "editOpenCodeTier", "editOpenCodeProtocol", "editBase", "editKey", "editProxy", "editHeaderOverrides", "editStructuredOutput", "editWeight", "editModels"].map((id) => $(id).value).concat($("editEnabled").checked, $("editModelInput").value, $("modelMapBatch").value, [modelMappingDirtyValue()]));
 }
 function editorDirty() { return $("editModal").open && editorValue() !== editProbe.initial; }
 function updateEditorDirty() {
@@ -458,8 +460,9 @@ async function openEditor(upstream) {
   const format = upstreamFormat(upstream);
   $("legacyOpenAIFormatOption").hidden = format !== "openai-auto";
   $("legacyOpenAIFormatOption").disabled = format !== "openai-auto";
-  const values = { editName: upstream?.name || "", editType: format, editBase: upstream?.base_url || providerURLs.openai, editKey: "", editHeaderOverrides: upstream?.header_overrides || "", editStructuredOutput: upstream?.structured_output === "json_schema" ? "" : upstream?.structured_output || "", editWeight: upstream ? upstream.weight : 1, editModels: upstream?.models || "", editModelMap: upstream?.model_map || "" };
+  const values = { editName: upstream?.name || "", editType: format, editOpenCodeProtocol: upstream?.type === "opencode" ? upstream.openai_protocol || "auto" : "auto", editBase: upstream?.base_url || providerURLs.openai, editKey: "", editHeaderOverrides: upstream?.header_overrides || "", editStructuredOutput: upstream?.structured_output === "json_schema" ? "" : upstream?.structured_output || "", editWeight: upstream ? upstream.weight : 1, editModels: upstream?.models || "", editModelMap: upstream?.model_map || "" };
   Object.entries(values).forEach(([id, value]) => { $(id).value = value; $(id).setCustomValidity(""); $(id).removeAttribute("aria-invalid"); });
+  $("editOpenCodeTier").value = upstream?.opencode_tier || ((upstream?.base_url || "").match(/\/go(?:\/|$)/) ? "go" : "zen");
   renderProxyOptions(upstream?.proxy_id || 0);
   editProbe.selected = new Set(parseAllowlist($("editModels").value));
   $("editEnabled").checked = creating || !!upstream.enabled;
@@ -493,19 +496,27 @@ async function openEditor(upstream) {
 }
 function updateEditorProvider(changed = true) {
   const format = $("editType").value, type = editorUpstreamType();
-  if (changed && editProbe.id === null && Object.values(providerURLs).includes($("editBase").value)) $("editBase").value = providerURLs[type];
+  if (changed && editProbe.id === null && [...Object.values(providerURLs), ...Object.values(openCodeURLs)].includes($("editBase").value)) $("editBase").value = type === "opencode" ? openCodeURLs[$("editOpenCodeTier").value] : providerURLs[type];
   $("editorProviderIcon").className = "provider-icon " + type;
-  $("editorProviderIcon").textContent = { openai: "O", anthropic: "A", gemini: "G" }[type];
+  $("editorProviderIcon").textContent = { openai: "O", opencode: "OC", anthropic: "A", gemini: "G" }[type];
   $("editorProviderIcon").setAttribute("aria-hidden", "true");
+  $("opencodeProtocolField").classList.toggle("hidden", type !== "opencode");
+  $("opencodeTierField").classList.toggle("hidden", type !== "opencode");
   $("providerHint").textContent = {
     "openai-chat": "上游固定使用 /v1/chat/completions。适用于支持 Chat Completions 的 OpenAI 兼容服务。",
     "openai-responses": "上游固定使用 /v1/responses。请确认上游支持 Responses 接口。",
     "openai-auto": "旧连接沿用原有行为：跟随 OpenAI 客户端接口，其他格式转换为 Chat。可改选上游实际支持的固定格式。",
+    opencode: "选择 Zen 或 Go 并填入对应 API Key；匿名免费 Zen 可填 public。免费模型自动启用官方工具兼容，同名官方工具的描述和参数会更新。网关按套餐和模型自动选择接口、认证与会话标识。",
     anthropic: "上游使用 Anthropic 原生 /v1/messages 接口。",
     gemini: "上游使用 Gemini 原生 generateContent / streamGenerateContent 接口。"
   }[format];
-  $("editBase").placeholder = providerURLs[type];
+  $("editBase").placeholder = type === "opencode" ? openCodeURLs[$("editOpenCodeTier").value] : providerURLs[type];
   if (changed) { clearProbeResults(); updateEditorDirty(); }
+}
+function updateOpenCodeTier() {
+  const known = [...Object.values(openCodeURLs), "https://opencode.ai/zen", "https://opencode.ai/zen/go"];
+  if (known.includes($("editBase").value.replace(/\/+$/, ""))) $("editBase").value = openCodeURLs[$("editOpenCodeTier").value];
+  clearProbeResults(); updateEditorDirty();
 }
 function clearProbeResults() {
   editProbe.generation++;
@@ -602,8 +613,9 @@ async function probeEditUpstream() {
   clearProbeResults();
   const generation = editProbe.generation;
   editProbe.controller = new AbortController();
-  const signature = [$("editType").value, base.value, key.value, $("editProxy").value, $("editHeaderOverrides").value].join("\n");
-  const body = { type: editorUpstreamType(), base_url: base.value.trim(), proxy_id: Number($("editProxy").value), header_overrides: $("editHeaderOverrides").value.trim() };
+  const probeSignature = () => [$("editType").value, $("editOpenCodeTier").value, editorOpenAIProtocol(), base.value, key.value, $("editProxy").value, $("editHeaderOverrides").value].join("\n");
+  const signature = probeSignature();
+  const body = { type: editorUpstreamType(), openai_protocol: editorOpenAIProtocol(), opencode_tier: $("editOpenCodeTier").value, base_url: base.value.trim(), proxy_id: Number($("editProxy").value), header_overrides: $("editHeaderOverrides").value.trim() };
   if (key.value.trim()) body.api_key = key.value.trim();
   $("editProbeInfo").className = "probe-info";
   $("editProbeInfo").textContent = key.value.trim() ? "正在使用当前填写的 Key 获取模型…" : "正在使用已保存的 Key 获取模型…";
@@ -611,7 +623,7 @@ async function probeEditUpstream() {
   try {
     const path = editProbe.id === null ? "api/upstream-probe" : "api/upstreams/" + editProbe.id + "/probe";
     const result = await api(path, { method: "POST", body: JSON.stringify(body), signal: editProbe.controller.signal });
-    if (generation !== editProbe.generation || signature !== [$("editType").value, base.value, key.value, $("editProxy").value, $("editHeaderOverrides").value].join("\n")) return;
+    if (generation !== editProbe.generation || signature !== probeSignature()) return;
     if (!result.ok) throw new Error(result.error || "上游未返回模型");
     editProbe.models = [...new Set(result.models || [])];
     editProbe.selected = new Set(parseAllowlist($("editModels").value));
@@ -620,7 +632,7 @@ async function probeEditUpstream() {
     $("editProbeArea").classList.toggle("hidden", editProbe.models.length === 0);
     renderEditProbeList();
   } catch (error) {
-    if (generation !== editProbe.generation || error.name === "AbortError" || error.message === "unauthorized" || signature !== [$("editType").value, base.value, key.value, $("editProxy").value, $("editHeaderOverrides").value].join("\n")) return;
+    if (generation !== editProbe.generation || error.name === "AbortError" || error.message === "unauthorized" || signature !== probeSignature()) return;
     $("editProbeInfo").className = "probe-info error";
     const status = error.message.match(/HTTP (\d{3})/);
     const hint = status && ({ 401: "当前 Key 认证失败，请检查密钥", 403: "当前 Key 没有模型列表访问权限", 404: "未找到模型接口，请检查 Base URL 和接口类型", 407: "代理认证失败，请检查代理用户名和密码", 429: "上游请求过于频繁，请稍后重试" })[status[1]];
@@ -647,6 +659,7 @@ async function saveEditUpstream(event) {
   if (!$("upstreamEditorForm").reportValidity()) return false;
   const body = { name: $("editName").value.trim(), type: editorUpstreamType(), base_url: $("editBase").value.trim().replace(/\/+$/, ""), proxy_id: Number($("editProxy").value), weight: Number($("editWeight").value), models: parseAllowlist($("editModels").value).join(","), model_map: $("editModelMap").value.trim(), header_overrides: $("editHeaderOverrides").value.trim(), structured_output: $("editStructuredOutput").value };
   body.openai_protocol = editorOpenAIProtocol();
+  body.opencode_tier = editorUpstreamType() === "opencode" ? $("editOpenCodeTier").value : "";
   if (!creating) body.enabled = $("editEnabled").checked;
   if ($("editKey").value.trim()) body.api_key = $("editKey").value.trim();
   editProbe.saving = true; updateEditorDirty();

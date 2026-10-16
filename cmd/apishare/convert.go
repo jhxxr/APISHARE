@@ -78,6 +78,7 @@ type canonReq struct {
 	OutputFormat    *canonOutputFormat
 	ResponseTools   map[string]responseTool
 	InputText       string // system + 首条 user 消息，用于会话指纹与 token 估算
+	SessionID       string // Client conversation_id / metadata.session_id; never rendered into converted bodies.
 }
 
 // ---------- 通用 JSON 小工具 ----------

@@ -34,7 +34,7 @@
 
 ## 📖 项目简介
 
-**API Share** 是一个用 Go 语言编写的高性能、轻量级 AI 分发网关。它统一接入 **OpenAI Chat Completions**、**OpenAI Responses (Codex)**、**Anthropic Claude**、**Google Gemini** 以及各类 **OpenAI 兼容协议** 上游。客户端通过网关签发的统一 API Key 发起调用，由网关在毫秒级内完成请求鉴权、智能计费、限流控频、会话粘性路由、故障转移与全协议双向动态转换。
+**API Share** 是一个用 Go 语言编写的高性能、轻量级 AI 分发网关。它统一接入 **OpenAI Chat Completions**、**OpenAI Responses (Codex)**、**OpenCode Zen / Go**、**Anthropic Claude**、**Google Gemini** 以及各类 **OpenAI 兼容协议** 上游。客户端通过网关签发的统一 API Key 发起调用，由网关在毫秒级内完成请求鉴权、智能计费、限流控频、会话粘性路由、故障转移与全协议双向动态转换。
 
 > [!NOTE]
 > **官方规范与合规定位**：本项目只对接**官方 API 上游**（OpenAI、Anthropic、Gemini、xAI Grok、DeepSeek、GLM、Qwen 或私有部署的 vLLM / Ollama 等标准端点），不包含任何“网页订阅逆向转 API”、TLS 浏览器指纹伪装或高危轮换代理逻辑，专注为生产级开发与自动化提供纯粹、稳定、合规的转发底座。
@@ -120,8 +120,25 @@ flowchart TD
 |---|---|---|---|
 | **OpenAI Chat Completions** | `type: "openai"`<br>`openai_protocol: "chat"` | `/v1/chat/completions` | OpenAI 官方、xAI Grok、DeepSeek、GLM、通义千问、vLLM、Ollama |
 | **OpenAI Responses** | `type: "openai"`<br>`openai_protocol: "responses"` | `/v1/responses` | OpenAI 官方 Responses 端点或支持 Responses 协议的兼容商 |
+| **OpenCode Zen / Go** | `type: "opencode"`<br>`opencode_tier: "zen" / "go"`<br>`openai_protocol: "auto" / "chat" / "responses" / "anthropic"` | 按套餐与模型选择 Chat、Responses 或 Messages 端点 | OpenCode Zen、OpenCode Go |
 | **Anthropic Messages** | `type: "anthropic"` | `/v1/messages` | Anthropic 官方 Claude 端点 |
 | **Gemini generateContent** | `type: "gemini"` | `:generateContent`<br>`:streamGenerateContent` | Google AI Studio 官方端点 |
+
+新增 OpenCode 上游时，选择 Zen 或 Go，填入对应 API Key，保持“按套餐和模型自动识别”即可。默认根地址分别是 `https://opencode.ai/inference` 和 `https://opencode.ai/inference/go`，网关自动为推理选择 `openai` / `anthropic` 地址族。已有 `/zen`、`/zen/go` 连接及自建代理前缀继续按所填地址转发；可修改 Base URL。
+
+OpenCode 渠道会自动设置 `User-Agent: opencode/latest/<版本>/cli`、`x-opencode-client: cli`、`x-opencode-project: global`，并设置 `x-opencode-session`、`x-opencode-session-id`、`x-session-affinity` 和 `X-Session-Id`。OpenCode 版本由官方 npm 包 `@opencode/cli` 每小时刷新；首次检测成功前使用内置兼容版本。模型列表、模型测试和正式调用使用相同的客户端头适配。Messages 设置 `x-api-key`、`anthropic-version` 和默认 Anthropic beta 头；当前官方 inference 地址还设置 Console Bearer 认证。Chat / Responses 及模型列表使用 Bearer 认证。
+
+会话标识优先取客户端提供的 OpenCode 会话头、`X-Session-Id`、`X-Conversation-Id`、`conversation-id` 或请求体的 `metadata.session_id` / `conversation_id`；缺失时取模型与对话开头的指纹。非 OpenCode 格式的标识会映射为官方格式的会话 ID，按网关 API Key 隔离，保存到 SQLite 并滑动保留 30 天；重试、切换上游与多轮请求沿用这个映射。提供显式会话标识可区分开头内容相同的独立对话。OpenCode 会话头由渠道管理，不使用静态请求头覆盖；批量透传也不会破坏会话映射或默认客户端标识。旧版 `x-opencode-request` 会从出站请求移除。
+
+OpenCode 的 `auto` 从官方模型目录和端点文档识别原生协议，按 Zen / Go 分别记录，同名模型可使用不同协议。识别使用映射后的模型 ID，正式调用与模型测试共用该结果；未知或不支持的协议不会猜成 Chat，模型列表也会过滤这些条目。自建代理或未收录模型可手动选择固定协议并配置模型白名单。目录请求使用渠道所选代理，不携带渠道密钥或自定义请求头；成功结果在内存缓存 5 分钟并持久化到 SQLite，刷新失败保留上次结果并退避重试。
+
+OpenCode 限流响应的 `Retry-After` 会用于渠道冷却；Responses 明确返回推理引用过期错误时，会保留会话、工具调用与消息内容，移除失效推理引用并仅修复重试一次。普通 400 错误不触发此重试，模型诊断也不触发自动修复。流式输出开始后沿用网关现有的禁止重放机制。
+
+免费 OpenCode 模型自动使用官方 CLI 工具兼容：补齐 `shell`、`edit`、`glob`、`grep`、`read` 五个工具；客户端声明的官方同名工具（包含其他已收录官方工具）会替换为完整官方描述和参数 Schema，自定义工具保留。此行为同时用于匿名和持 Key 的免费请求，以及后台模型测试。识别依据是映射后的模型 ID 含 `free`，或官方目录明确标明输入、输出成本均为零且未弃用；固定协议渠道沿用已缓存的目录信息，自动协议渠道会先加载目录。声明只随请求转发，网关不执行这些工具。
+
+免费请求会强制使用上游流式响应，Chat 同时启用 `stream_options.include_usage`，保留其他流式选项；客户端请求普通 JSON 时，网关聚合流式内容和用量后返回普通 JSON。原始客户端请求和会话映射保持独立，跨渠道重试不会把这些工具注入到其他渠道。匿名免费 Zen 配置可选择 Zen、API Key 填 `public`、协议保持自动；模型列表仅展示已识别的免费模型。持有实际 Key 时仍使用该 Key，不自动替换为 `public`。
+
+工具声明快照来自 OpenCode CLI，随程序内置，来源和 MIT 许可见 `cmd/apishare/third_party/opencode/`。上游更新校验规则后，可能需要更新此快照；免费服务的账号、区域和限流策略仍由上游决定。具体实现对照了 [opencode2api 协议发现](https://github.com/jasonxu114514/opencode2api/blob/a6601da673c03832bf78ce04b100dee8c8a92385/internal/models/discovery.go)、[请求构造](https://github.com/jasonxu114514/opencode2api/blob/a6601da673c03832bf78ce04b100dee8c8a92385/internal/gateway/upstream.go) 和 [OpenCode 官方请求头](https://github.com/anomalyco/opencode/blob/00e7472faa2ef15b30db6110440117e4e7e1a72a/packages/core/src/session/model-request.ts)。
 
 > [!TIP]
 > **路由匹配优先级规则（`pickUpstream`）**：
@@ -183,7 +200,7 @@ $env:PORT = "8080"; $env:API_DB = "apishare.db"; .\apishare.exe
 ### 首次初始化步骤 (首次引导)
 
 1. **设置管理员密码与后台路径**：浏览器打开 `http://127.0.0.1:8080/`，系统检测到空数据库将自动进入独立的 `/setup/` 初始化向导。设置高强度管理员密码（至少 12 位）及自定义管理后台路径（默认 `/admin`，支持随时热更名），保存后配置即刻写入 SQLite。
-2. **添加上游服务**：进入后台「上游服务」页面，选择上游实际支持的接口类型（OpenAI Chat、OpenAI Responses、Anthropic 或 Gemini），填入 Base URL（如 `https://api.deepseek.com`）、上游 API Key、权重与**模型白名单**。
+2. **添加上游服务**：进入后台「上游服务」页面，选择上游实际支持的接口类型（OpenAI Chat、OpenAI Responses、OpenCode Zen / Go、Anthropic 或 Gemini），填入 Base URL、上游 API Key、权重与**模型白名单**。选择 OpenCode 后，选 Zen 或 Go 套餐并填入对应密钥，保留默认地址和自动协议，即可按模型选择原生接口；点击“获取模型”可探测当前 Key 可用且受支持的模型。自建代理可修改地址，未收录模型可指定固定协议并设置相应白名单。
 3. **签发访问密钥 (API Key)**：进入「API 密钥」页面创建访问令牌，绑定允许调用的模型列表，分配共享额度或各模型独立专属额度（USD，0 为无限额）。
 4. **价格与定价检查**：进入「设置」页面检查 LiteLLM 官方价格库同步状态（支持手动立即刷新），亦可根据需要手动配置单模型自定义价格覆盖。
 
@@ -405,7 +422,7 @@ Anthropic 规范 SSE 增量推送 (message_start -> content_block_delta -> messa
 }
 ```
 
-网关后台内置自动化守护器，定期从 npm 官方仓库同步获取 `@openai/codex` 和 `@anthropic-ai/claude-code` 的最新稳定版本，通过 `{codex_user_agent}` 与 `{claude_code_user_agent}` 占位符自动注入规范 User-Agent，防止因客户端版本过旧被上游拒绝。
+网关后台内置自动化守护器，定期从 npm 官方仓库同步获取 `@openai/codex`、`@anthropic-ai/claude-code` 和 `@opencode/cli` 的最新稳定版本，通过 `{codex_user_agent}`、`{claude_code_user_agent}` 与 `{opencode_user_agent}` 占位符自动注入对应格式的 User-Agent。OpenCode 专用渠道默认自动使用其版本，无需额外配置模板。
 
 ### 5. 模型标签与模型映射
 在上游编辑器的「模型访问」中输入模型名，按回车、逗号或粘贴多行即可生成可移除的标签，重复名称自动去重；也可以获取当前 Key 的模型后勾选。白名单留空允许全部模型。

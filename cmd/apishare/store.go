@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS upstreams (
   proxy_id INTEGER NOT NULL DEFAULT 0,
   header_overrides TEXT NOT NULL DEFAULT '',
   openai_protocol TEXT NOT NULL DEFAULT '',
+  opencode_tier TEXT NOT NULL DEFAULT '',
   structured_output TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT ''
 );
@@ -140,6 +141,12 @@ CREATE TABLE IF NOT EXISTS session_affinity (
   upstream_id INTEGER NOT NULL,
   expires_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS opencode_sessions (
+  scope TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_opencode_sessions_expiry ON opencode_sessions(expires_at);
 -- call_log_daily 汇总已被清理的调用明细（按北京日期 + 模型），累计用量
 -- （调用次数、Token）只增不减；其中 cost_usd 仅统计成功调用的费用，
 -- 与后台用量图表的口径一致。
@@ -279,6 +286,15 @@ CREATE INDEX IF NOT EXISTS idx_log_daily_day ON call_log_daily(day);
 			return err
 		}
 	}
+	var hasOpenCodeTier int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('upstreams') WHERE name='opencode_tier'`).Scan(&hasOpenCodeTier); err != nil {
+		return err
+	}
+	if hasOpenCodeTier == 0 {
+		if _, err := db.Exec(`ALTER TABLE upstreams ADD COLUMN opencode_tier TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
 	if err := migrateBillingLogSchema(); err != nil {
 		return err
 	}
@@ -311,7 +327,7 @@ type Upstream struct {
 	config           *upstreamConfig // Immutable parsed runtime configuration; never exposed by APIs.
 	ID               int64           `json:"id"`
 	Name             string          `json:"name"`
-	Type             string          `json:"type"` // provider: openai | anthropic | gemini; OpenAIProtocol selects its wire format
+	Type             string          `json:"type"` // provider: openai | opencode | anthropic | gemini; OpenAIProtocol selects the outbound protocol
 	BaseURL          string          `json:"base_url"`
 	APIKey           string          `json:"api_key"`
 	Weight           int             `json:"weight"`
@@ -320,7 +336,8 @@ type Upstream struct {
 	Enabled          bool            `json:"enabled"`
 	ProxyID          int64           `json:"proxy_id"`
 	HeaderOverrides  string          `json:"header_overrides"`
-	OpenAIProtocol   string          `json:"openai_protocol"`   // auto (legacy), chat, responses
+	OpenAIProtocol   string          `json:"openai_protocol"`   // OpenAI: auto/chat/responses; OpenCode: auto/chat/responses/anthropic
+	OpenCodeTier     string          `json:"opencode_tier"`     // zen/go; empty infers the tier from BaseURL for older channels
 	StructuredOutput string          `json:"structured_output"` // empty/json_schema, json_object compatibility, disabled; converted requests only
 	CreatedAt        string          `json:"created_at"`
 }
@@ -541,12 +558,12 @@ func dbAddUsedUSD(keyID int64, cost float64) error {
 // ---------- upstreams ----------
 
 func dbGetUpstream(id int64) (*Upstream, error) {
-	row := db.QueryRow(`SELECT id,name,type,base_url,api_key,weight,models,model_map,enabled,created_at,proxy_id,header_overrides,openai_protocol,structured_output
+	row := db.QueryRow(`SELECT id,name,type,base_url,api_key,weight,models,model_map,enabled,created_at,proxy_id,header_overrides,openai_protocol,structured_output,opencode_tier
 		FROM upstreams WHERE id=?`, id)
 	u := &Upstream{}
 	var enabled int
 	if err := row.Scan(&u.ID, &u.Name, &u.Type, &u.BaseURL, &u.APIKey, &u.Weight,
-		&u.Models, &u.ModelMap, &enabled, &u.CreatedAt, &u.ProxyID, &u.HeaderOverrides, &u.OpenAIProtocol, &u.StructuredOutput); err != nil {
+		&u.Models, &u.ModelMap, &enabled, &u.CreatedAt, &u.ProxyID, &u.HeaderOverrides, &u.OpenAIProtocol, &u.StructuredOutput, &u.OpenCodeTier); err != nil {
 		return nil, err
 	}
 	u.Enabled = enabled == 1
@@ -554,7 +571,7 @@ func dbGetUpstream(id int64) (*Upstream, error) {
 }
 
 func dbListUpstreams() ([]Upstream, error) {
-	rows, err := db.Query(`SELECT id,name,type,base_url,api_key,weight,models,model_map,enabled,created_at,proxy_id,header_overrides,openai_protocol,structured_output
+	rows, err := db.Query(`SELECT id,name,type,base_url,api_key,weight,models,model_map,enabled,created_at,proxy_id,header_overrides,openai_protocol,structured_output,opencode_tier
 		FROM upstreams ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -565,7 +582,7 @@ func dbListUpstreams() ([]Upstream, error) {
 		var u Upstream
 		var enabled int
 		if err := rows.Scan(&u.ID, &u.Name, &u.Type, &u.BaseURL, &u.APIKey, &u.Weight,
-			&u.Models, &u.ModelMap, &enabled, &u.CreatedAt, &u.ProxyID, &u.HeaderOverrides, &u.OpenAIProtocol, &u.StructuredOutput); err != nil {
+			&u.Models, &u.ModelMap, &enabled, &u.CreatedAt, &u.ProxyID, &u.HeaderOverrides, &u.OpenAIProtocol, &u.StructuredOutput, &u.OpenCodeTier); err != nil {
 			return nil, err
 		}
 		u.Enabled = enabled == 1
@@ -575,9 +592,9 @@ func dbListUpstreams() ([]Upstream, error) {
 }
 
 func dbInsertUpstream(u *Upstream) error {
-	res, err := db.Exec(`INSERT INTO upstreams(name,type,base_url,api_key,weight,models,model_map,enabled,created_at,proxy_id,header_overrides,openai_protocol,structured_output)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		u.Name, u.Type, u.BaseURL, u.APIKey, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), nowStr(), u.ProxyID, u.HeaderOverrides, u.OpenAIProtocol, u.StructuredOutput)
+	res, err := db.Exec(`INSERT INTO upstreams(name,type,base_url,api_key,weight,models,model_map,enabled,created_at,proxy_id,header_overrides,openai_protocol,structured_output,opencode_tier)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		u.Name, u.Type, u.BaseURL, u.APIKey, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), nowStr(), u.ProxyID, u.HeaderOverrides, u.OpenAIProtocol, u.StructuredOutput, u.OpenCodeTier)
 	if err == nil {
 		u.ID, _ = res.LastInsertId()
 		invalidateRoutingSnapshot()
@@ -587,8 +604,8 @@ func dbInsertUpstream(u *Upstream) error {
 }
 
 func dbUpdateUpstream(u *Upstream) error {
-	_, err := db.Exec(`UPDATE upstreams SET name=?,type=?,base_url=?,api_key=?,weight=?,models=?,model_map=?,enabled=?,proxy_id=?,header_overrides=?,openai_protocol=?,structured_output=? WHERE id=?`,
-		u.Name, u.Type, u.BaseURL, u.APIKey, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), u.ProxyID, u.HeaderOverrides, u.OpenAIProtocol, u.StructuredOutput, u.ID)
+	_, err := db.Exec(`UPDATE upstreams SET name=?,type=?,base_url=?,api_key=?,weight=?,models=?,model_map=?,enabled=?,proxy_id=?,header_overrides=?,openai_protocol=?,structured_output=?,opencode_tier=? WHERE id=?`,
+		u.Name, u.Type, u.BaseURL, u.APIKey, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), u.ProxyID, u.HeaderOverrides, u.OpenAIProtocol, u.StructuredOutput, u.OpenCodeTier, u.ID)
 	if err == nil {
 		invalidateRoutingSnapshot()
 		invalidatePublicOverviews()
@@ -717,9 +734,9 @@ func (price *Price) UnmarshalJSON(data []byte) error {
 }
 
 type AppSettings struct {
-	AffinityTTLMin     int              `json:"affinity_ttl_min"`
-	Retry              int              `json:"retry"`
-	InjectStreamUsage  bool             `json:"inject_stream_usage"`
+	AffinityTTLMin    int  `json:"affinity_ttl_min"`
+	Retry             int  `json:"retry"`
+	InjectStreamUsage bool `json:"inject_stream_usage"`
 	// 调用明细保留天数：仅接受预设值 0（永久保留）/7（默认）/30/90/180/365，
 	// 超期的调用详情会先汇总进 call_log_daily 再删除，累计 Token、调用次数与费用不受影响。
 	LogRetentionDays   int              `json:"log_retention_days"`
@@ -736,7 +753,7 @@ var (
 	settingsMu    sync.RWMutex
 	settingsCache = AppSettings{
 		AffinityTTLMin: 30, Retry: 2, InjectStreamUsage: true,
-		LogRetentionDays: defaultLogRetentionDays,
+		LogRetentionDays:   defaultLogRetentionDays,
 		Pricing:            defaultManualPricing,
 		AutoPricingEnabled: true, AutoPricingURL: defaultAutoPricingURL,
 	}

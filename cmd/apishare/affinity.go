@@ -3,7 +3,7 @@ package main
 // 会话粘性：同一对话的所有请求固定路由到同一上游，保证上游 prompt cache 命中。
 //
 // 会话标识优先级：
-//  1. 客户端显式头 X-Session-Id / X-Conversation-Id
+//  1. 客户端显式会话头（含 OpenCode）或请求体会话标识
 //  2. 对话前缀指纹：hash(endpoint + model + system + 首条 user 消息)
 //     —— 同一对话的多轮请求共享相同前缀，因此指纹稳定。
 //
@@ -15,7 +15,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -56,6 +55,7 @@ func affinityCleanupLoop() {
 	for {
 		time.Sleep(affinityCleanupInterval)
 		db.Exec(`DELETE FROM session_affinity WHERE expires_at < ?`, time.Now().Unix())
+		db.Exec(`DELETE FROM opencode_sessions WHERE expires_at < ?`, time.Now().Unix())
 	}
 }
 
@@ -68,11 +68,8 @@ func sessionFingerprint(endpoint, model, inputText string) string {
 
 // sessionKeyFromCanon 决定本次请求的会话键。
 func sessionKeyFromCanon(endpoint string, header http.Header, cr *canonReq) string {
-	if sid := strings.TrimSpace(header.Get("X-Session-Id")); sid != "" {
+	if sid := explicitSessionID(header, cr.SessionID); sid != "" {
 		return "sid:" + sid
-	}
-	if cid := strings.TrimSpace(header.Get("X-Conversation-Id")); cid != "" {
-		return "sid:" + cid
 	}
 	return "fp:" + sessionFingerprint(endpoint, cr.Model, cr.InputText)
 }

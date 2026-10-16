@@ -33,13 +33,23 @@ func compileUpstreamConfig(up *Upstream) {
 
 func (up *Upstream) applyHeaders(req *http.Request, incoming http.Header) error {
 	config := up.config
+	var rules []headerRule
 	if config == nil || config.headersRaw != up.HeaderOverrides {
-		return applyHeaderOverrides(req, up.HeaderOverrides, up.APIKey, incoming)
+		var err error
+		rules, err = parseHeaderOverrides(up.HeaderOverrides)
+		if err != nil {
+			return err
+		}
+	} else {
+		if config.headerError != nil {
+			return config.headerError
+		}
+		rules = config.headerRules
 	}
-	if config.headerError != nil {
-		return config.headerError
+	if up.Type == "opencode" {
+		return applyOpenCodeHeaderRules(req, rules, up.APIKey, incoming)
 	}
-	return applyHeaderRules(req, config.headerRules, up.APIKey, incoming)
+	return applyHeaderRules(req, rules, up.APIKey, incoming)
 }
 
 type routingSnapshot struct {

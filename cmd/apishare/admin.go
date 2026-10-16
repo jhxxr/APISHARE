@@ -311,8 +311,8 @@ func registerAdminRoutes(r *gin.Engine) {
 		if c.BindJSON(&u) != nil {
 			return
 		}
-		if u.Type != "openai" && u.Type != "anthropic" && u.Type != "gemini" {
-			c.JSON(400, gin.H{"error": "type must be openai, anthropic or gemini"})
+		if !validUpstreamType(u.Type) {
+			c.JSON(400, gin.H{"error": "type must be openai, opencode, anthropic or gemini"})
 			return
 		}
 		if u.BaseURL == "" || u.APIKey == "" {
@@ -323,8 +323,12 @@ func registerAdminRoutes(r *gin.Engine) {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		if !validOpenAIProtocol(u.OpenAIProtocol) {
-			c.JSON(400, gin.H{"error": "openai_protocol must be auto, chat or responses"})
+		if !validUpstreamProtocol(u.Type, u.OpenAIProtocol) {
+			c.JSON(400, gin.H{"error": "invalid openai_protocol for upstream type"})
+			return
+		}
+		if !validOpenCodeTier(u.OpenCodeTier) {
+			c.JSON(400, gin.H{"error": "opencode_tier must be empty, zen or go"})
 			return
 		}
 		if !validStructuredOutputMode(u.StructuredOutput) {
@@ -371,6 +375,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			ProxyID          *int64  `json:"proxy_id"`
 			HeaderOverrides  *string `json:"header_overrides"`
 			OpenAIProtocol   *string `json:"openai_protocol"`
+			OpenCodeTier     *string `json:"opencode_tier"`
 			StructuredOutput *string `json:"structured_output"`
 		}
 		if c.BindJSON(&req) != nil {
@@ -385,6 +390,13 @@ func registerAdminRoutes(r *gin.Engine) {
 		if req.OpenAIProtocol != nil {
 			u.OpenAIProtocol = *req.OpenAIProtocol
 		}
+		if req.OpenCodeTier != nil {
+			u.OpenCodeTier = *req.OpenCodeTier
+		}
+		if !validOpenCodeTier(u.OpenCodeTier) {
+			c.JSON(400, gin.H{"error": "opencode_tier must be empty, zen or go"})
+			return
+		}
 		if req.StructuredOutput != nil {
 			u.StructuredOutput = *req.StructuredOutput
 		}
@@ -392,7 +404,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			c.JSON(400, gin.H{"error": "structured_output must be empty, json_schema, json_object or disabled"})
 			return
 		}
-		if !validOpenAIProtocol(u.OpenAIProtocol) || (u.Type != "openai" && u.Type != "anthropic" && u.Type != "gemini") {
+		if !validUpstreamProtocol(u.Type, u.OpenAIProtocol) || !validUpstreamType(u.Type) {
 			c.JSON(400, gin.H{"error": "invalid upstream type or openai_protocol"})
 			return
 		}
@@ -460,7 +472,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			return
 		}
 		start := time.Now()
-		models, err := probeUpstreamModelsWithProxy(c.Request.Context(), u.Type, u.BaseURL, u.APIKey, u.ProxyID, u.HeaderOverrides)
+		models, err := probeConfiguredModels(c.Request.Context(), u)
 		latency := time.Since(start).Milliseconds()
 		if err != nil {
 			c.JSON(200, gin.H{"ok": false, "latency_ms": latency, "error": err.Error()})
@@ -471,13 +483,17 @@ func registerAdminRoutes(r *gin.Engine) {
 
 	// probeUpstream 处理两种探测：未保存的上游（/upstream-probe，必须显式给全参数）
 	// 与已保存的上游（/upstreams/:id/probe，参数留空则用已存值）。
-	probeResult := func(c *gin.Context, typ, base, key string, proxyID int64, headers string) {
-		if _, err := parseHeaderOverrides(headers); err != nil {
+	probeResult := func(c *gin.Context, up *Upstream) {
+		if !validUpstreamProtocol(up.Type, up.OpenAIProtocol) || !validOpenCodeTier(up.OpenCodeTier) {
+			c.JSON(400, gin.H{"ok": false, "error": "invalid upstream protocol or OpenCode tier"})
+			return
+		}
+		if _, err := parseHeaderOverrides(up.HeaderOverrides); err != nil {
 			c.JSON(400, gin.H{"ok": false, "error": err.Error()})
 			return
 		}
 		start := time.Now()
-		models, err := probeUpstreamModelsWithProxy(c.Request.Context(), typ, base, key, proxyID, headers)
+		models, err := probeConfiguredModels(c.Request.Context(), up)
 		latency := time.Since(start).Milliseconds()
 		if err != nil {
 			c.JSON(200, gin.H{"ok": false, "latency_ms": latency, "error": err.Error()})
@@ -493,16 +509,18 @@ func registerAdminRoutes(r *gin.Engine) {
 			APIKey          string `json:"api_key"`
 			ProxyID         int64  `json:"proxy_id"`
 			HeaderOverrides string `json:"header_overrides"`
+			OpenAIProtocol  string `json:"openai_protocol"`
+			OpenCodeTier    string `json:"opencode_tier"`
 		}
 		if c.ShouldBindJSON(&req) != nil || req.Type == "" || req.BaseURL == "" || req.APIKey == "" {
 			c.JSON(400, gin.H{"ok": false, "error": "type, base_url and api_key are required"})
 			return
 		}
-		if req.Type != "openai" && req.Type != "anthropic" && req.Type != "gemini" {
-			c.JSON(400, gin.H{"ok": false, "error": "type must be openai, anthropic or gemini"})
+		if !validUpstreamType(req.Type) {
+			c.JSON(400, gin.H{"ok": false, "error": "type must be openai, opencode, anthropic or gemini"})
 			return
 		}
-		probeResult(c, req.Type, req.BaseURL, req.APIKey, req.ProxyID, req.HeaderOverrides)
+		probeResult(c, &Upstream{Type: req.Type, BaseURL: req.BaseURL, APIKey: req.APIKey, ProxyID: req.ProxyID, HeaderOverrides: req.HeaderOverrides, OpenAIProtocol: req.OpenAIProtocol, OpenCodeTier: req.OpenCodeTier})
 	})
 
 	auth.POST("/upstreams/:id/probe", func(c *gin.Context) {
@@ -518,6 +536,8 @@ func registerAdminRoutes(r *gin.Engine) {
 			APIKey          string  `json:"api_key"`
 			ProxyID         *int64  `json:"proxy_id"`
 			HeaderOverrides *string `json:"header_overrides"`
+			OpenAIProtocol  *string `json:"openai_protocol"`
+			OpenCodeTier    *string `json:"opencode_tier"`
 		}
 		// An empty body uses saved values; malformed edits must never silently
 		// fall back to the stored key and report a misleading success.
@@ -543,7 +563,14 @@ func registerAdminRoutes(r *gin.Engine) {
 		if req.HeaderOverrides != nil {
 			headers = *req.HeaderOverrides
 		}
-		probeResult(c, typ, base, key, proxyID, headers)
+		u.Type, u.BaseURL, u.APIKey, u.ProxyID, u.HeaderOverrides = typ, base, key, proxyID, headers
+		if req.OpenAIProtocol != nil {
+			u.OpenAIProtocol = *req.OpenAIProtocol
+		}
+		if req.OpenCodeTier != nil {
+			u.OpenCodeTier = *req.OpenCodeTier
+		}
+		probeResult(c, u)
 	})
 
 	// ---------- Logs ----------
