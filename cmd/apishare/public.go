@@ -270,35 +270,52 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 	}
 	defer tx.Rollback()
 	usage := make(map[string]PublicUsage)
+	// 累计用量 = 未删除的明细 + 已汇总到 call_log_daily 的过期明细，
+	// 调用记录保留期过期后明细被删除，累计 Token 与调用次数不受影响。
 	err = publicRows(tx, `SELECT l.model,COUNT(*),SUM(CASE WHEN l.status BETWEEN 200 AND 299 THEN 1 ELSE 0 END),
- COALESCE(SUM(l.prompt_tokens),0),COALESCE(SUM(l.completion_tokens),0)
- FROM call_logs l GROUP BY l.model`,
+	 COALESCE(SUM(l.prompt_tokens),0),COALESCE(SUM(l.completion_tokens),0)
+	 FROM call_logs l GROUP BY l.model
+	 UNION ALL
+	 SELECT d.model,SUM(d.calls),SUM(d.successes),COALESCE(SUM(d.prompt_tokens),0),COALESCE(SUM(d.completion_tokens),0)
+	 FROM call_log_daily d GROUP BY d.model ORDER BY 1`,
 		func(rows *sql.Rows) error {
 			var u PublicUsage
 			if err := rows.Scan(&u.Model, &u.Calls, &u.Successes, &u.PromptTokens, &u.CompletionTokens); err != nil {
 				return err
 			}
-			usage[u.Model] = u
-			result.Usage = append(result.Usage, u)
-			result.Summary.Calls += u.Calls
-			result.Summary.Successes += u.Successes
-			result.Summary.PromptTokens += u.PromptTokens
-			result.Summary.CompletionTokens += u.CompletionTokens
-			if wildcard && u.Successes > 0 {
-				if _, ok := catalog[u.Model]; !ok {
-					catalog[u.Model] = publicFamily(u.Model, "")
-				}
-			}
+			merged := usage[u.Model]
+			merged.Model = u.Model
+			merged.Calls += u.Calls
+			merged.Successes += u.Successes
+			merged.PromptTokens += u.PromptTokens
+			merged.CompletionTokens += u.CompletionTokens
+			usage[u.Model] = merged
 			return nil
 		})
 	if err != nil {
 		return nil, err
 	}
+	for _, u := range usage {
+		result.Usage = append(result.Usage, u)
+		result.Summary.Calls += u.Calls
+		result.Summary.Successes += u.Successes
+		result.Summary.PromptTokens += u.PromptTokens
+		result.Summary.CompletionTokens += u.CompletionTokens
+		if wildcard && u.Successes > 0 {
+			if _, ok := catalog[u.Model]; !ok {
+				catalog[u.Model] = publicFamily(u.Model, "")
+			}
+		}
+	}
+	// 30 天口径同样合并已汇总的过期明细（明细可能只保留最近几天）。
 	err = publicRows(tx, `SELECT date(l.created_at,'+8 hours'),COUNT(*),
- SUM(CASE WHEN l.status BETWEEN 200 AND 299 THEN 1 ELSE 0 END),
- COALESCE(SUM(l.prompt_tokens),0),COALESCE(SUM(l.completion_tokens),0)
- FROM call_logs l
- WHERE unixepoch(l.created_at)>=? AND unixepoch(l.created_at)<? GROUP BY date(l.created_at,'+8 hours')`,
+	 SUM(CASE WHEN l.status BETWEEN 200 AND 299 THEN 1 ELSE 0 END),
+	 COALESCE(SUM(l.prompt_tokens),0),COALESCE(SUM(l.completion_tokens),0)
+	 FROM call_logs l
+	 WHERE unixepoch(l.created_at)>=? AND unixepoch(l.created_at)<? GROUP BY date(l.created_at,'+8 hours')
+	 UNION ALL
+	 SELECT d.day,SUM(d.calls),SUM(d.successes),COALESCE(SUM(d.prompt_tokens),0),COALESCE(SUM(d.completion_tokens),0)
+	 FROM call_log_daily d WHERE d.day>=? AND d.day<? GROUP BY d.day`,
 		func(rows *sql.Rows) error {
 			var day PublicDay
 			if err := rows.Scan(&day.Date, &day.Calls, &day.Successes, &day.PromptTokens, &day.CompletionTokens); err != nil {
@@ -314,7 +331,8 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 			all.PromptTokens += day.PromptTokens
 			all.CompletionTokens += day.CompletionTokens
 			return nil
-		}, today.AddDate(0, 0, -29).Unix(), today.AddDate(0, 0, 1).Unix())
+		}, today.AddDate(0, 0, -29).Unix(), today.AddDate(0, 0, 1).Unix(),
+		today.AddDate(0, 0, -29).Format("2006-01-02"), today.AddDate(0, 0, 1).Format("2006-01-02"))
 	if err != nil {
 		return nil, err
 	}
@@ -378,11 +396,23 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 		err := tx.QueryRow(`SELECT status,created_at FROM call_logs
  WHERE model=? AND unixepoch(created_at)<=?
  ORDER BY unixepoch(created_at) DESC,id DESC LIMIT 1`, model, windowEnd.Unix()).Scan(&last.status, &last.at)
-		if err == sql.ErrNoRows {
-			continue
-		}
-		if err != nil {
+		if err != nil && err != sql.ErrNoRows {
 			return nil, err
+		}
+		if err == sql.ErrNoRows {
+			// 明细已被保留期清理时，用汇总中的最后一次调用兜底。
+			var archived lastCall
+			err := tx.QueryRow(`SELECT COALESCE(last_status,0),COALESCE(last_at,'') FROM call_log_daily
+	 WHERE model=? AND unixepoch(last_at)<=?
+	 ORDER BY unixepoch(last_at) DESC LIMIT 1`, model, windowEnd.Unix()).Scan(&archived.status, &archived.at)
+			if err != nil && err != sql.ErrNoRows {
+				return nil, err
+			}
+			if archived.at == "" {
+				continue
+			}
+			latest[model] = archived
+			continue
 		}
 		latest[model] = last
 	}

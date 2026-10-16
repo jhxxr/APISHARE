@@ -572,12 +572,25 @@ func registerAdminRoutes(r *gin.Engine) {
 	auth.GET("/stats", func(c *gin.Context) {
 		now := beijingNow()
 		todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, beijingLocation)
+		todayKey := todayStart.Format("2006-01-02")
 		var calls int
 		var pt, ct int64
 		var cost float64
+		// 当日明细永远在保留期内（保留期至少 1 天），此处合并汇总只是为了极端
+		// 情况下也不丢失：汇总里只有已被删除的行，与明细天然不重叠。
 		db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0),
 			COALESCE(SUM(cost_usd),0) FROM call_logs WHERE status BETWEEN 200 AND 299 AND unixepoch(created_at) >= ?`,
 			todayStart.Unix()).Scan(&calls, &pt, &ct, &cost)
+		var archivedCalls int
+		var archivedPT, archivedCT int64
+		var archivedCost float64
+		db.QueryRow(`SELECT COALESCE(SUM(successes),0), COALESCE(SUM(prompt_tokens),0),
+			COALESCE(SUM(completion_tokens),0), COALESCE(SUM(cost_usd),0)
+			FROM call_log_daily WHERE day=?`, todayKey).Scan(&archivedCalls, &archivedPT, &archivedCT, &archivedCost)
+		calls += archivedCalls
+		pt += archivedPT
+		ct += archivedCT
+		cost += archivedCost
 
 		var keysCount, upsCount int
 		db.QueryRow(`SELECT COUNT(*) FROM api_keys WHERE enabled=1`).Scan(&keysCount)
@@ -590,15 +603,33 @@ func registerAdminRoutes(r *gin.Engine) {
 		}
 		var daily []dailyRow
 		weekStart := todayStart.AddDate(0, 0, -6)
+		weekStartKey := weekStart.Format("2006-01-02")
+		weekEndKey := todayStart.AddDate(0, 0, 1).Format("2006-01-02")
+		// 7 天图表同样合并汇总（保留期较短时，老日期只有汇总数据）。
 		rows, err := db.Query(`SELECT date(created_at,'+8 hours') d, COUNT(*), COALESCE(SUM(cost_usd),0)
 			FROM call_logs WHERE status BETWEEN 200 AND 299 AND unixepoch(created_at) >= ? AND unixepoch(created_at) < ?
-			GROUP BY d ORDER BY d`, weekStart.Unix(), todayStart.AddDate(0, 0, 1).Unix())
+			GROUP BY d
+			UNION ALL
+			SELECT day, SUM(successes), COALESCE(SUM(cost_usd),0)
+			FROM call_log_daily WHERE day>=? AND day<? GROUP BY day ORDER BY 1`, weekStart.Unix(), todayStart.AddDate(0, 0, 1).Unix(), weekStartKey, weekEndKey)
 		if err == nil {
 			defer rows.Close()
+			merged := map[string]*dailyRow{}
 			for rows.Next() {
 				var d dailyRow
 				rows.Scan(&d.Date, &d.Calls, &d.CostUSD)
-				daily = append(daily, d)
+				if slot, ok := merged[d.Date]; ok {
+					slot.Calls += d.Calls
+					slot.CostUSD += d.CostUSD
+				} else {
+					merged[d.Date] = &dailyRow{Date: d.Date, Calls: d.Calls, CostUSD: d.CostUSD}
+				}
+			}
+			for day := weekStart; !day.After(todayStart); day = day.AddDate(0, 0, 1) {
+				key := day.Format("2006-01-02")
+				if slot, ok := merged[key]; ok {
+					daily = append(daily, *slot)
+				}
 			}
 		}
 		if daily == nil {
@@ -623,10 +654,14 @@ func registerAdminRoutes(r *gin.Engine) {
 			"model_count": len(autoPricing.data),
 		}
 		autoPricing.RUnlock()
+		retention := retentionOption(s.LogRetentionDays)
 		c.JSON(200, gin.H{
 			"affinity_ttl_min":     s.AffinityTTLMin,
 			"retry":                s.Retry,
 			"inject_stream_usage":  s.InjectStreamUsage,
+			"log_retention_days":   s.LogRetentionDays,
+			"log_retention_label":  retention.label,
+			"log_retention_detail": retention.detail,
 			"pricing":              s.Pricing,
 			"auto_pricing_enabled": s.AutoPricingEnabled,
 			"auto_pricing_url":     s.AutoPricingURL,
@@ -639,6 +674,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			AffinityTTLMin     *int              `json:"affinity_ttl_min"`
 			Retry              *int              `json:"retry"`
 			InjectStreamUsage  *bool             `json:"inject_stream_usage"`
+			LogRetentionDays   *int              `json:"log_retention_days"`
 			Pricing            *map[string]Price `json:"pricing"`
 			NewPassword        *string           `json:"new_password"`
 			AutoPricingEnabled *bool             `json:"auto_pricing_enabled"`
@@ -652,6 +688,8 @@ func registerAdminRoutes(r *gin.Engine) {
 			return
 		}
 		s := getSettings()
+		previousRetention := s.LogRetentionDays
+		retentionChanged := false
 		if req.AffinityTTLMin != nil && *req.AffinityTTLMin > 0 {
 			s.AffinityTTLMin = *req.AffinityTTLMin
 		}
@@ -660,6 +698,15 @@ func registerAdminRoutes(r *gin.Engine) {
 		}
 		if req.InjectStreamUsage != nil {
 			s.InjectStreamUsage = *req.InjectStreamUsage
+		}
+		if req.LogRetentionDays != nil {
+			option, ok := retentionOptionFor(*req.LogRetentionDays)
+			if !ok {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "调用记录保留时长仅支持 7 天（默认）、30 天等预设选项"})
+				return
+			}
+			s.LogRetentionDays = option.days
+			retentionChanged = s.LogRetentionDays != previousRetention
 		}
 		if req.Pricing != nil && len(*req.Pricing) > 0 {
 			for model, price := range *req.Pricing {
@@ -679,6 +726,10 @@ func registerAdminRoutes(r *gin.Engine) {
 		if err := persistSettings(s); err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
+		}
+		// 保留期变更后立即触发一次清理（后台循环未运行时发送会被丢弃）。
+		if retentionChanged {
+			kickLogRetentionSweep()
 		}
 		if s.AutoPricingEnabled {
 			go func() {

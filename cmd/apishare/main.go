@@ -45,6 +45,7 @@ func main() {
 	go limiterJanitorLoop()
 	go pricingRefresherLoop()
 	go clientVersionRefreshLoop()
+	go logRetentionLoop()
 	warmTokenEncodings()
 
 	gin.SetMode(gin.ReleaseMode)

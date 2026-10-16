@@ -755,6 +755,8 @@ async function loadSettings() {
     const settings = await api("api/settings");
     $("setTtl").value = settings.affinity_ttl_min; $("setRetry").value = settings.retry;
     $("setInject").checked = !!settings.inject_stream_usage;
+    $("setLogRetention").value = String(settings.log_retention_days ?? 7);
+    if (settings.log_retention_detail) $("logRetentionHint").textContent = settings.log_retention_detail;
     $("setAutoPricing").checked = !!settings.auto_pricing_enabled;
     $("setPricingURL").value = settings.auto_pricing_url || "";
     $("setPricing").value = JSON.stringify(settings.pricing, null, 2);
@@ -810,7 +812,7 @@ async function saveSettings(event) {
   const button = event.currentTarget.querySelector('[type="submit"]');
   setBusy(button, true, "正在保存…");
   try {
-    await api("api/settings", { method: "PUT", body: JSON.stringify({ affinity_ttl_min: Number($("setTtl").value), retry: Number($("setRetry").value), inject_stream_usage: $("setInject").checked, auto_pricing_enabled: $("setAutoPricing").checked, auto_pricing_url: $("setPricingURL").value.trim(), pricing }) });
+    await api("api/settings", { method: "PUT", body: JSON.stringify({ affinity_ttl_min: Number($("setTtl").value), retry: Number($("setRetry").value), inject_stream_usage: $("setInject").checked, log_retention_days: Number($("setLogRetention").value), auto_pricing_enabled: $("setAutoPricing").checked, auto_pricing_url: $("setPricingURL").value.trim(), pricing }) });
     await loadSettings(); toast("工作空间设置已保存");
   } catch (error) { reportError(error, "保存失败"); } finally { setBusy(button, false); }
   return false;

@@ -140,6 +140,22 @@ CREATE TABLE IF NOT EXISTS session_affinity (
   upstream_id INTEGER NOT NULL,
   expires_at INTEGER NOT NULL
 );
+-- call_log_daily 汇总已被清理的调用明细（按北京日期 + 模型），累计用量
+-- （调用次数、Token）只增不减；其中 cost_usd 仅统计成功调用的费用，
+-- 与后台用量图表的口径一致。
+CREATE TABLE IF NOT EXISTS call_log_daily (
+  day TEXT NOT NULL,
+  model TEXT NOT NULL,
+  calls INTEGER NOT NULL DEFAULT 0,
+  successes INTEGER NOT NULL DEFAULT 0,
+  prompt_tokens INTEGER NOT NULL DEFAULT 0,
+  completion_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL NOT NULL DEFAULT 0,
+  last_at TEXT NOT NULL DEFAULT '',
+  last_status INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(day, model)
+);
+CREATE INDEX IF NOT EXISTS idx_log_daily_day ON call_log_daily(day);
 `)
 	if err != nil {
 		return err
@@ -704,6 +720,9 @@ type AppSettings struct {
 	AffinityTTLMin     int              `json:"affinity_ttl_min"`
 	Retry              int              `json:"retry"`
 	InjectStreamUsage  bool             `json:"inject_stream_usage"`
+	// 调用明细保留天数：仅接受预设值 0（永久保留）/7（默认）/30/90/180/365，
+	// 超期的调用详情会先汇总进 call_log_daily 再删除，累计 Token、调用次数与费用不受影响。
+	LogRetentionDays   int              `json:"log_retention_days"`
 	Pricing            map[string]Price `json:"pricing"` // 手动覆盖 + default；其余模型走官方定价
 	AutoPricingEnabled bool             `json:"auto_pricing_enabled"`
 	AutoPricingURL     string           `json:"auto_pricing_url"`
@@ -717,6 +736,7 @@ var (
 	settingsMu    sync.RWMutex
 	settingsCache = AppSettings{
 		AffinityTTLMin: 30, Retry: 2, InjectStreamUsage: true,
+		LogRetentionDays: defaultLogRetentionDays,
 		Pricing:            defaultManualPricing,
 		AutoPricingEnabled: true, AutoPricingURL: defaultAutoPricingURL,
 	}
@@ -750,6 +770,12 @@ func loadSettingsCache() error {
 	if v, err := settingsGet("auto_pricing_url"); err == nil && v != "" {
 		settingsCache.AutoPricingURL = v
 	}
+	if v, err := settingsGet("log_retention_days"); err == nil && v != "" {
+		var n int
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && validLogRetentionDays(n) {
+			settingsCache.LogRetentionDays = n
+		}
+	}
 	return nil
 }
 
@@ -778,6 +804,9 @@ func persistSettings(s AppSettings) error {
 		return err
 	}
 	if err := settingsSet("auto_pricing_url", s.AutoPricingURL); err != nil {
+		return err
+	}
+	if err := settingsSet("log_retention_days", fmt.Sprintf("%d", s.LogRetentionDays)); err != nil {
 		return err
 	}
 	b, _ := json.Marshal(s.Pricing)
