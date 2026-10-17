@@ -125,17 +125,19 @@ flowchart TD
 | **Anthropic Messages** | `type: "anthropic"` | `/v1/messages` | Anthropic 官方 Claude 端点 |
 | **Gemini generateContent** | `type: "gemini"` | `:generateContent`<br>`:streamGenerateContent` | Google AI Studio 官方端点 |
 
-新增 OpenCode 上游时，选择 Zen 或 Go，填入对应 API Key，保持“按套餐和模型自动识别”即可。默认根地址分别是 `https://opencode.ai/inference` 和 `https://opencode.ai/inference/go`，网关自动为推理选择 `openai` / `anthropic` 地址族。已有 `/zen`、`/zen/go` 连接及自建代理前缀继续按所填地址转发；可修改 Base URL。
+新增 OpenCode 上游时，选择 Zen 或 Go，填入对应 API Key，保持“按套餐和模型自动识别”即可。默认根地址分别是 `https://opencode.ai/zen` 和 `https://opencode.ai/zen/go`，与参考项目 2026-10-17 的持 Key 配置一致。也可手动填写 `https://opencode.ai/inference` 或 `https://opencode.ai/inference/go`，此时网关自动选择 `openai` / `anthropic` 地址族和对应的 2.x 请求格式。自建代理可填写自己的 Base URL。
 
-OpenCode 渠道会自动设置 `User-Agent: opencode/latest/<版本>/cli`、`x-opencode-client: cli`、`x-opencode-project: global`，并设置 `x-opencode-session`、`x-opencode-session-id`、`x-session-affinity` 和 `X-Session-Id`。OpenCode 版本由官方 npm 包 `@opencode/cli` 每小时刷新；首次检测成功前使用内置兼容版本。模型列表、模型测试和正式调用使用相同的客户端头适配。Messages 设置 `x-api-key`、`anthropic-version` 和默认 Anthropic beta 头；当前官方 inference 地址还设置 Console Bearer 认证。Chat / Responses 及模型列表使用 Bearer 认证。
+OpenCode 渠道按所填地址选择客户端头：inference 使用 `User-Agent: opencode/latest/<版本>/cli`、`x-opencode-client: cli`、40 位小写十六进制项目 ID，以及 `x-opencode-session`、`x-opencode-session-id`、`x-session-affinity` 和 `X-Session-Id`；旧 `/zen` 使用 `opencode/1.18.31 (<系统> <架构>; <运行时>)`、`prj_` 项目 ID 和每次请求的 `x-opencode-request`，不发送 `x-opencode-session-id`。2.x 版本由官方 npm 包 `@opencode/cli` 每小时刷新；首次检测成功前使用内置兼容版本。模型列表、模型测试和正式调用使用相同的客户端头适配。Messages 设置 `x-api-key`、`anthropic-version` 和默认 Anthropic beta 头；当前官方 inference 地址还设置 Console Bearer 认证。Chat / Responses 及模型列表使用 Bearer 认证。
 
-会话标识优先取客户端提供的 OpenCode 会话头、`X-Session-Id`、`X-Conversation-Id`、`conversation-id` 或请求体的 `metadata.session_id` / `conversation_id`；缺失时取模型与对话开头的指纹。非 OpenCode 格式的标识会映射为官方格式的会话 ID，按网关 API Key 隔离，保存到 SQLite 并滑动保留 30 天；重试、切换上游与多轮请求沿用这个映射。提供显式会话标识可区分开头内容相同的独立对话。OpenCode 会话头由渠道管理，不使用静态请求头覆盖；批量透传也不会破坏会话映射或默认客户端标识。旧版 `x-opencode-request` 会从出站请求移除。
+会话标识优先取客户端提供的 OpenCode 会话头、`X-Session-Id`、`X-Conversation-Id`、`conversation-id` 或请求体的 `metadata.session_id` / `conversation_id`；缺失时取模型与对话开头的指纹。非 OpenCode 格式、以及外形正确但时间位编码不符合官方降序规则的标识，会映射为官方格式的会话 ID，按网关 API Key 隔离，保存到 SQLite 并滑动保留 30 天；重试、切换上游与多轮请求沿用这个映射。提供显式会话标识可区分开头内容相同的独立对话。OpenCode 会话头和项目 ID 由渠道按对应入口管理；批量透传不会破坏映射。inference 禁止发送 `x-opencode-request`，旧 `/zen` 的请求 ID 在同次转发的重试间保持一致。
 
 OpenCode 的 `auto` 从官方模型目录和端点文档识别原生协议，按 Zen / Go 分别记录，同名模型可使用不同协议。识别使用映射后的模型 ID，正式调用与模型测试共用该结果；未知或不支持的协议不会猜成 Chat，模型列表也会过滤这些条目。自建代理或未收录模型可手动选择固定协议并配置模型白名单。目录请求使用渠道所选代理，不携带渠道密钥或自定义请求头；成功结果在内存缓存 5 分钟并持久化到 SQLite，刷新失败保留上次结果并退避重试。
 
-OpenCode 限流响应的 `Retry-After` 会用于渠道冷却；Responses 明确返回推理引用过期错误时，会保留会话、工具调用与消息内容，移除失效推理引用并仅修复重试一次。普通 400 错误不触发此重试，模型诊断也不触发自动修复。流式输出开始后沿用网关现有的禁止重放机制。
+OpenCode 正式转发收到首个 429 即冷却 15 秒，连续限流按 15、30、60、120 秒退避，并完整遵守更长的 `Retry-After`。实际 Key 的冷却在同一服务、套餐下跨模型及复制渠道共享；匿名 `public` 的冷却按配置的代理出口共享。同一 Key 被限流时，不会通过复制渠道再次请求它；可继续选择其他有效 Key。较早发起的并发成功请求不会清除较晚收到的 429 冷却。诊断请求不更新生产冷却状态。所有候选均限流且尚未输出响应时，返回 HTTP 429 和剩余等待秒数，不包装成 502。响应头 `X-APISHARE-RateLimit-Source` 区分 `upstream`、`gateway-qps` 和 `gateway-concurrency`；后两者来自本地 API Key 的 QPS / 并发限制。账户或出口的真实额度仍由上游决定。冷却和入口请求格式对照了 [2026-10-17 参考版本](https://github.com/jasonxu114514/opencode2api/tree/a9470df4fca93a47d7ec58febcbc63100af88644/internal/gateway)。
 
-免费 OpenCode 模型自动使用官方 CLI 工具兼容：补齐 `shell`、`edit`、`glob`、`grep`、`read` 五个工具；客户端声明的官方同名工具（包含其他已收录官方工具）会替换为完整官方描述和参数 Schema，自定义工具保留。此行为同时用于匿名和持 Key 的免费请求，以及后台模型测试。识别依据是映射后的模型 ID 含 `free`，或官方目录明确标明输入、输出成本均为零且未弃用；固定协议渠道沿用已缓存的目录信息，自动协议渠道会先加载目录。声明只随请求转发，网关不执行这些工具。
+Responses 明确返回推理引用过期错误时，会保留会话、工具调用与消息内容，移除失效推理引用并仅修复重试一次。普通 400 错误不触发此重试，模型诊断也不触发自动修复。流式输出开始后沿用网关现有的禁止重放机制。
+
+免费 OpenCode 模型按入口适配工具：inference 补齐 `shell`、`edit`、`glob`、`grep`、`read` 五个工具，同名官方工具替换为完整官方定义；旧 `/zen` 只满足一个 `read` 工具要求，保留客户端现有定义，必要时将 `ReadFile` 等读文件工具临时别名为 `read`，同步改写请求内的工具选择与历史调用，并在 JSON / SSE 响应中还原原名。没有读文件工具时，旧入口仅附加一个声明为禁用的兼容工具。此行为同时用于匿名和持 Key 的免费请求，以及后台模型测试。识别依据是映射后的模型 ID 含 `free`，或官方目录明确标明输入、输出成本均为零且未弃用；固定协议渠道沿用已缓存的目录信息，自动协议渠道会先加载目录。声明只随请求转发，网关不执行这些工具。
 
 免费请求会强制使用上游流式响应，Chat 同时启用 `stream_options.include_usage`，保留其他流式选项；客户端请求普通 JSON 时，网关聚合流式内容和用量后返回普通 JSON。原始客户端请求和会话映射保持独立，跨渠道重试不会把这些工具注入到其他渠道。匿名免费 Zen 配置可选择 Zen、API Key 填 `public`、协议保持自动；模型列表仅展示已识别的免费模型。持有实际 Key 时仍使用该 Key，不自动替换为 `public`。
 

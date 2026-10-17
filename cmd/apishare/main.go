@@ -106,7 +106,7 @@ func corsV1() gin.HandlerFunc {
 		h.Set("Access-Control-Allow-Origin", "*")
 		h.Set("Access-Control-Allow-Headers",
 			"Authorization, Content-Type, OpenAI-Beta, x-api-key, x-goog-api-key, anthropic-version, anthropic-beta, X-Session-Id, X-Conversation-Id")
-		h.Set("Access-Control-Expose-Headers", "Location, X-Request-Id")
+		h.Set("Access-Control-Expose-Headers", "Location, X-Request-Id, Retry-After, X-APISHARE-RateLimit-Source")
 		h.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		if c.Request.Method == http.MethodOptions {
 			if requested := c.GetHeader("Access-Control-Request-Headers"); requested != "" {

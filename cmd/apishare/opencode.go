@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -16,6 +17,7 @@ import (
 // once so subsequent turns and retries keep the same upstream conversation.
 var openCodeSessionPattern = regexp.MustCompile(`^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$`)
 var openCodeProjectPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+var openCodeDescendingPattern = regexp.MustCompile(`^ses_[0-9a-f]{9}f[c-f][0-9a-f][0-9A-Za-z]{14}$`)
 
 const openCodeSessionTTL = 30 * 24 * time.Hour
 const openCodeFallbackVersion = "2.0.29"
@@ -58,7 +60,7 @@ func openCodeSessionForTask(task *relayTask, incoming http.Header) (string, erro
 		cr = &canonReq{Model: task.model}
 	}
 	signal := explicitSessionID(incoming, cr.SessionID)
-	if openCodeSessionPattern.MatchString(signal) {
+	if openCodeDescendingPattern.MatchString(signal) {
 		task.openCodeSession = signal
 		return signal, nil
 	}
@@ -94,23 +96,33 @@ func setOpenCodeHeaders(req *http.Request, apiKey string, format clientFormat, s
 		req.Header.Set("Accept", "application/json, text/event-stream")
 	}
 	req.Header.Set("x-opencode-client", "cli")
-	req.Header.Set("x-opencode-project", "global")
+	req.Header.Set("x-opencode-project", openCodeProjectID("global", false))
 	if project := strings.TrimSpace(incoming.Get("x-opencode-project")); project != "" && validHeaderValue(project) {
-		if project != "global" && !openCodeProjectPattern.MatchString(project) {
-			sum := sha256.Sum256([]byte(project))
-			project = hex.EncodeToString(sum[:20])
-		}
+		project = openCodeProjectID(project, false)
 		req.Header.Set("x-opencode-project", project)
 	}
 	if session != "" {
 		setOpenCodeSessionHeaders(req, session)
-		if child := incoming.Get("x-opencode-session-id"); openCodeSessionPattern.MatchString(child) {
+		if child := incoming.Get("x-opencode-session-id"); openCodeDescendingPattern.MatchString(child) {
 			req.Header.Set("x-opencode-session-id", child)
 		}
 	}
 	for _, name := range []string{"x-parent-session-id", "x-opencode-parent-session-id"} {
-		if parent := incoming.Get(name); openCodeSessionPattern.MatchString(parent) {
+		if parent := incoming.Get(name); openCodeDescendingPattern.MatchString(parent) {
 			req.Header.Set(name, parent)
+		}
+	}
+	if openCodeLegacyRequest(req) {
+		req.Header.Set("User-Agent", fmt.Sprintf("opencode/1.18.31 (%s %s; %s)", runtime.GOOS, runtime.GOARCH, runtime.Version()))
+		req.Header.Del("x-opencode-session-id")
+		project := incoming.Get("x-opencode-project")
+		if project == "" {
+			project = "global"
+		}
+		req.Header.Set("x-opencode-project", openCodeProjectID(project, true))
+		var requestNonce [12]byte
+		if _, requestErr := rand.Read(requestNonce[:]); requestErr == nil {
+			req.Header.Set("x-opencode-request", "req_"+hex.EncodeToString(requestNonce[:]))
 		}
 	}
 	if format == FormatAnthropic {
@@ -145,6 +157,7 @@ func setOpenCodeSessionHeaders(req *http.Request, session string) {
 func applyOpenCodeHeaderRules(req *http.Request, rules []headerRule, apiKey string, incoming http.Header) error {
 	session, userAgent := req.Header.Get("x-opencode-session"), req.Header.Get("User-Agent")
 	actualSession := req.Header.Get("x-opencode-session-id")
+	requestID := req.Header.Get("x-opencode-request")
 	client, project := req.Header.Get("x-opencode-client"), req.Header.Get("x-opencode-project")
 	parents := map[string]string{}
 	for _, name := range []string{"x-parent-session-id", "x-opencode-parent-session-id"} {
@@ -191,6 +204,44 @@ func applyOpenCodeHeaderRules(req *http.Request, rules []headerRule, apiKey stri
 	if !explicitProject && project != "" {
 		req.Header.Set("x-opencode-project", project)
 	}
-	req.Header.Del("x-opencode-request")
+	legacy := openCodeLegacyRequest(req)
+	req.Header.Set("x-opencode-project", openCodeProjectID(req.Header.Get("x-opencode-project"), legacy))
+	if legacy {
+		req.Header.Del("x-opencode-session-id")
+		if requestID != "" {
+			req.Header.Set("x-opencode-request", requestID)
+		}
+	} else {
+		req.Header.Del("x-opencode-request")
+	}
 	return nil
+}
+
+func openCodeProjectID(project string, legacy bool) string {
+	if project == "" {
+		project = "global"
+	}
+	if !legacy && openCodeProjectPattern.MatchString(project) {
+		return project
+	}
+	if legacy && strings.HasPrefix(project, "prj_") && len(project) == 28 {
+		return project
+	}
+	sum := sha256.Sum256([]byte("opencode-project\x00" + project))
+	if legacy {
+		return "prj_" + hex.EncodeToString(sum[:12])
+	}
+	return hex.EncodeToString(sum[:20])
+}
+
+func openCodeLegacyRequest(req *http.Request) bool {
+	return strings.Contains(strings.ToLower(req.URL.Path), "/zen/v1/")
+}
+
+func (u *Upstream) openCodeLegacy() bool {
+	if u.Type != "opencode" {
+		return false
+	}
+	probe, err := http.NewRequest(http.MethodPost, upstreamURL(u.BaseURL, "/v1/messages"), nil)
+	return err == nil && openCodeLegacyRequest(probe)
 }

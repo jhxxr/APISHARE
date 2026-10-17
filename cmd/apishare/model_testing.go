@@ -97,7 +97,8 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 	if err != nil {
 		return nil, 0, err
 	}
-	body, freeShaped, err := up.shapeOpenCodeFreeRequest(body, format, model)
+	var freeToolAlias string
+	body, freeShaped, err := up.shapeOpenCodeFreeRequest(body, format, model, &freeToolAlias)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -145,6 +146,9 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
 		detail := redactModelTestError(string(body), up.APIKey)
 		return nil, resp.StatusCode, fmt.Errorf("上游返回 HTTP %d：%s", resp.StatusCode, truncate(detail, 2000))
+	}
+	if freeToolAlias != "" {
+		resp.Body = newOpenCodeAliasBody(resp.Body, format, freeToolAlias, strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream"))
 	}
 	result, err := readModelTestResponse(resp.Body, resp.Header.Get("Content-Type"), format)
 	if err != nil {

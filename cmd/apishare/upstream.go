@@ -132,20 +132,30 @@ func pickUpstream(format clientFormat, model string, exclude map[int64]bool, nat
 		return nil, err
 	}
 	var best []Upstream
+	var limited *openCodeRateLimitError
 	bestTier := 99
 	for _, u := range snapshot.upstreams {
-		if !u.Enabled || exclude[u.ID] || !healthAvailable(u.ID) || u.Weight <= 0 {
+		if !u.Enabled || exclude[u.ID] || u.Weight <= 0 {
 			continue
 		}
 		serves, explicit := u.servesModelExplicit(model)
 		if !serves {
 			continue
 		}
+		if nativeOnly && !supportsNativeEndpoint(&u, format) {
+			continue
+		}
+		if limit := u.openCodeRateLimit(); limit != nil {
+			if limited == nil || limit.until.Before(limited.until) {
+				limited = limit
+			}
+			continue
+		}
+		if !healthAvailable(u.ID) {
+			continue
+		}
 		var tier int
 		if nativeOnly {
-			if !supportsNativeEndpoint(&u, format) {
-				continue
-			}
 			tier = 0
 		} else {
 			native := u.routingWireFormat(format, model) == format
@@ -182,6 +192,9 @@ func pickUpstream(format clientFormat, model string, exclude map[int64]bool, nat
 		}
 	}
 	if len(best) == 0 {
+		if limited != nil {
+			return nil, limited
+		}
 		return nil, errors.New("no available upstream for model " + model)
 	}
 	total := 0

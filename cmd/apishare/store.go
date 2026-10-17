@@ -607,6 +607,11 @@ func dbUpdateUpstream(u *Upstream) error {
 	_, err := db.Exec(`UPDATE upstreams SET name=?,type=?,base_url=?,api_key=?,weight=?,models=?,model_map=?,enabled=?,proxy_id=?,header_overrides=?,openai_protocol=?,structured_output=?,opencode_tier=? WHERE id=?`,
 		u.Name, u.Type, u.BaseURL, u.APIKey, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), u.ProxyID, u.HeaderOverrides, u.OpenAIProtocol, u.StructuredOutput, u.OpenCodeTier, u.ID)
 	if err == nil {
+		// A replaced OpenCode credential must not inherit the row's previous
+		// connection failure. Its credential-scoped rate cooldown is independent.
+		if u.Type == "opencode" {
+			healthMarkSuccess(u.ID)
+		}
 		invalidateRoutingSnapshot()
 		invalidatePublicOverviews()
 	}

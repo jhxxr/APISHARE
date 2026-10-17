@@ -297,8 +297,8 @@ func registerAdminRoutes(r *gin.Engine) {
 			out = append(out, upView{
 				Upstream:  u,
 				KeyMasked: maskKey(u.APIKey),
-				Fails:     healthFails(u.ID),
-				Healthy:   healthAvailable(u.ID),
+				Fails:     u.relayFailures(),
+				Healthy:   u.availableForRelay(),
 			})
 		}
 		c.JSON(200, out)

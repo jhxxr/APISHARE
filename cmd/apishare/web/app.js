@@ -21,8 +21,8 @@ const fmtTime = (value) => {
 };
 const number = (value) => Number(value || 0).toLocaleString("zh-CN");
 const upstreamFormatNames = { "openai-chat": "OpenAI Chat Completions", "openai-responses": "OpenAI Responses", "openai-auto": "OpenAI · 旧配置（跟随客户端）", opencode: "OpenCode Zen / Go", anthropic: "Anthropic Messages", gemini: "Gemini generateContent" };
-const providerURLs = { openai: "https://api.openai.com", opencode: "https://opencode.ai/inference", anthropic: "https://api.anthropic.com", gemini: "https://generativelanguage.googleapis.com" };
-const openCodeURLs = { zen: providerURLs.opencode, go: "https://opencode.ai/inference/go" };
+const providerURLs = { openai: "https://api.openai.com", opencode: "https://opencode.ai/zen", anthropic: "https://api.anthropic.com", gemini: "https://generativelanguage.googleapis.com" };
+const openCodeURLs = { zen: providerURLs.opencode, go: "https://opencode.ai/zen/go" };
 function upstreamFormat(upstream) {
   if (!upstream) return "openai-chat";
   if (upstream.type !== "openai") return upstream.type;
@@ -532,7 +532,7 @@ function updateEditorProvider(changed = true) {
   if (changed) { clearProbeResults(); updateEditorDirty(); }
 }
 function updateOpenCodeTier() {
-  const known = [...Object.values(openCodeURLs), "https://opencode.ai/zen", "https://opencode.ai/zen/go"];
+  const known = [...Object.values(openCodeURLs), "https://opencode.ai/inference", "https://opencode.ai/inference/go"];
   if (known.includes($("editBase").value.replace(/\/+$/, ""))) $("editBase").value = openCodeURLs[$("editOpenCodeTier").value];
   clearProbeResults(); updateEditorDirty();
 }

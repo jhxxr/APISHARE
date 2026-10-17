@@ -54,16 +54,12 @@ func (u *Upstream) openCodeFreeModel(model string) bool {
 	return latestOpenCodeCatalogLocked().FreeModels[u.openCodeTier()][model]
 }
 
-func (u *Upstream) shapeOpenCodeFreeRequest(body []byte, format clientFormat, model string) ([]byte, bool, error) {
+func (u *Upstream) shapeOpenCodeFreeRequest(body []byte, format clientFormat, model string, toolAlias ...*string) ([]byte, bool, error) {
 	if u.Type != "opencode" || (!u.openCodePublic() && !u.openCodeFreeModel(model)) {
 		return body, false, nil
 	}
 	if format != FormatOpenAIChat && format != FormatOpenAIResponse && format != FormatAnthropic {
 		return body, false, nil
-	}
-	definitions, err := openCodeToolDefinitions()
-	if err != nil {
-		return nil, false, err
 	}
 	var payload map[string]json.RawMessage
 	if json.Unmarshal(body, &payload) != nil || payload == nil {
@@ -85,6 +81,21 @@ func (u *Upstream) shapeOpenCodeFreeRequest(body []byte, format clientFormat, mo
 	var tools []json.RawMessage
 	if raw := payload["tools"]; len(raw) > 0 && json.Unmarshal(raw, &tools) != nil {
 		return nil, false, fmt.Errorf("OpenCode tools 必须是数组")
+	}
+	if u.openCodeLegacy() {
+		alias, err := shapeLegacyOpenCodeTools(payload, tools, format)
+		if err != nil {
+			return nil, false, err
+		}
+		if len(toolAlias) > 0 && toolAlias[0] != nil {
+			*toolAlias[0] = alias
+		}
+		encoded, err := json.Marshal(payload)
+		return encoded, true, err
+	}
+	definitions, err := openCodeToolDefinitions()
+	if err != nil {
+		return nil, false, err
 	}
 	present := make(map[string]bool, len(tools))
 	for index, tool := range tools {

@@ -127,6 +127,8 @@ func keyRateLimit() gin.HandlerFunc {
 		ak := c.MustGet("apiKey").(ApiKey)
 		kl := getLimit(ak)
 		if !kl.lim.Allow() {
+			c.Header("X-APISHARE-RateLimit-Source", "gateway-qps")
+			c.Header("Retry-After", "1")
 			errJSON(c, http.StatusTooManyRequests, "QPS limit exceeded for this key")
 			c.Abort()
 			return
@@ -138,6 +140,8 @@ func keyRateLimit() gin.HandlerFunc {
 		case <-c.Request.Context().Done():
 			return
 		default:
+			c.Header("X-APISHARE-RateLimit-Source", "gateway-concurrency")
+			c.Header("Retry-After", "1")
 			errJSON(c, http.StatusTooManyRequests, "concurrency limit exceeded for this key")
 			c.Abort()
 			return
