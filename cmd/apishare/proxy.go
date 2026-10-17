@@ -435,6 +435,20 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		return info, false, &protocolConversionError{err}
 	}
 
+	var clineTask string
+	if up.Type == "cline" {
+		session := c.Request.Header.Get("X-Task-ID")
+		if session == "" {
+			session = c.Request.Header.Get("X-Session-Id")
+		}
+		if session == "" && task.canon != nil {
+			session = task.canon.SessionID
+		}
+		reqBody, clineTask, err = shapeClineRequest(reqBody, fmt.Sprintf("%d:%d", task.apiKeyID, up.ID), session)
+		if err != nil {
+			return info, false, &protocolConversionError{err}
+		}
+	}
 	requestCtx, cancel := context.WithCancel(c.Request.Context())
 	defer cancel()
 	req, err := http.NewRequestWithContext(requestCtx, c.Request.Method, url, bytes.NewReader(reqBody))
@@ -442,6 +456,9 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		return info, false, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if clineTask != "" {
+		req.Header.Set("X-Task-ID", clineTask)
+	}
 	if task.stream || freeShaped {
 		req.Header.Set("Accept", "text/event-stream")
 		// Compressors that do not flush each SSE frame can hide the entire
@@ -505,6 +522,11 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	}()
 	keepalive := beginMessagesKeepalive(c, task)
 	resp, err := messagesHTTPDo(client, req, keepalive, cancel)
+	if err == nil && up.Type == "cline" {
+		resp, err = retryClineUnauthorized(client, req, resp, up, func(retry *http.Request) (*http.Response, error) {
+			return messagesHTTPDo(client, retry, keepalive, cancel)
+		})
+	}
 	info.LatencyMS = time.Since(start).Milliseconds()
 	if err != nil {
 		if up.ProxyID != 0 && !errors.Is(err, errDownstreamWrite) && c.Request.Context().Err() == nil {
@@ -531,6 +553,9 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	resp.Body = newMessagesKeepaliveBody(resp.Body, req.Context(), keepalive)
 	defer resp.Body.Close()
 	info.Status = resp.StatusCode
+	if up.Type == "cline" && isRetryableStatus(info.Status) {
+		retryAfter = openCodeRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+	}
 	var rateLimit *openCodeRateLimitError
 	if up.Type == "opencode" && isRetryableStatus(info.Status) {
 		retryAfter = openCodeRetryAfter(resp.Header.Get("Retry-After"), time.Now())
@@ -567,6 +592,9 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	}
 
 	ct := resp.Header.Get("Content-Type")
+	if up.Type == "cline" {
+		normalizeClineResponse(resp)
+	}
 	isSSE := strings.Contains(ct, "text/event-stream")
 	if freeToolAlias != "" {
 		resp.Body = newOpenCodeAliasBody(resp.Body, wireFormat, freeToolAlias, isSSE)

@@ -106,6 +106,9 @@ func probeConfiguredModels(ctx context.Context, up *Upstream) ([]string, error) 
 }
 
 func probeConfiguredModelList(ctx context.Context, up *Upstream, client *http.Client, efforts map[string][]string) ([]string, error) {
+	if up.Type == "cline" {
+		return probeClineModels(ctx, up, client)
+	}
 	base := up.BaseURL
 	if up.Type == "opencode" {
 		base = strings.TrimSuffix(up.endpointURL(FormatOpenAIChat, "/v1/models"), "/v1/models")
@@ -138,6 +141,13 @@ func probeUpstreamModelsWithProxy(ctx context.Context, upType, baseURL, apiKey s
 	if err != nil {
 		return nil, err
 	}
+	if upType == "cline" {
+		headers := ""
+		if len(headerOverrides) > 0 {
+			headers = headerOverrides[0]
+		}
+		return probeClineModels(ctx, &Upstream{Type: upType, BaseURL: baseURL, APIKey: apiKey, ProxyID: proxyID, HeaderOverrides: headers}, client)
+	}
 	return probeUpstreamModelsWithClient(ctx, upType, baseURL, apiKey, client, headerOverrides...)
 }
 
@@ -155,7 +165,7 @@ func probeUpstreamModelListWithClient(ctx context.Context, upType, baseURL, apiK
 	}
 	upType, baseURL, apiKey = strings.TrimSpace(upType), strings.TrimSpace(baseURL), strings.TrimSpace(apiKey)
 	if !validUpstreamType(upType) {
-		return nil, fmt.Errorf("type must be openai, opencode, anthropic or gemini")
+		return nil, fmt.Errorf("type must be openai, opencode, cline, anthropic or gemini")
 	}
 	base, err := url.Parse(baseURL)
 	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" || base.User != nil || base.RawQuery != "" || base.Fragment != "" {
@@ -163,6 +173,9 @@ func probeUpstreamModelListWithClient(ctx context.Context, upType, baseURL, apiK
 	}
 	if apiKey == "" {
 		return nil, fmt.Errorf("api_key is required")
+	}
+	if upType == "cline" {
+		return probeClineModels(ctx, &Upstream{Type: upType, BaseURL: baseURL, APIKey: apiKey, HeaderOverrides: headers}, client)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()

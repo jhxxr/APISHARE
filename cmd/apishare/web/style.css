@@ -301,6 +301,7 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline
 .timestamp { white-space: nowrap; color: var(--muted); font: 10px var(--mono); }
 .provider-icon { display: grid; place-items: center; width: 35px; height: 35px; flex: 0 0 auto; border-radius: 8px; background: var(--panel-soft); border: 1px solid var(--border-strong); font: 500 16px var(--mono); }
 .provider-icon.openai { background: #e7f5ee; color: #047857; border-color: #c1e3d2; }
+.provider-icon.cline { background: #e8f2fa; color: #285f84; border-color: #c5dced; font-size: 12px; }
 .provider-icon.opencode { background: #f1edff; color: #6248a8; border-color: #d9cff6; font-size: 12px; }
 .provider-icon.anthropic { background: #fbefe6; color: #965228; border-color: #ead6c4; }
 .provider-icon.gemini { background: #edf1fc; color: #4263a9; border-color: #d2dcf3; }
@@ -821,3 +822,18 @@ kbd { padding: 2px 4px; border: 1px solid var(--border-strong); border-radius: 3
 /* Public homepage controls in the private workspace. */
 .public-preview-link { display: flex; justify-content: flex-end; margin-bottom: -10px; }
 @media (max-width: 600px) { .public-preview-link { justify-content: flex-start; margin-bottom: 0; } }
+
+/* Cline browser device authorization, within the upstream editor. */
+.cline-login-card { margin-top: 20px; padding: 16px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--panel-soft); }
+.cline-login-card h4 { font-size: 14px; margin: 0 0 8px; }
+.cline-login-card > p:first-of-type { margin: 0 0 12px; color: var(--muted); line-height: 1.6; }
+.cline-login-card .btn, .cline-login-card .text-btn { min-height: 44px; }
+.cline-login-code { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 16px; }
+.cline-login-code output { font: 600 18px var(--mono); letter-spacing: 2px; overflow-wrap: anywhere; user-select: all; }
+.cline-login-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.cline-login-actions a { text-align: center; white-space: normal; }
+
+.cline-login-mode { margin-bottom: 12px; }
+#clineManualFill { margin-top: 16px; }
+#clineManualFill textarea { font: 12px/1.6 var(--mono); overflow-wrap: anywhere; }
+#clineManualSubmit { margin-top: 12px; }

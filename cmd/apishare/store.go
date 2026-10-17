@@ -79,6 +79,12 @@ CREATE TABLE IF NOT EXISTS upstreams (
   structured_output TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS cline_tokens (
+  credential_hash TEXT PRIMARY KEY,
+  access_token TEXT NOT NULL,
+  refresh_token TEXT NOT NULL,
+  expires_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS outbound_proxies (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL DEFAULT '',
@@ -332,7 +338,7 @@ type Upstream struct {
 	config           *upstreamConfig // Immutable parsed runtime configuration; never exposed by APIs.
 	ID               int64           `json:"id"`
 	Name             string          `json:"name"`
-	Type             string          `json:"type"` // provider: openai | opencode | anthropic | gemini; OpenAIProtocol selects the outbound protocol
+	Type             string          `json:"type"` // provider: openai | opencode | cline | anthropic | gemini; OpenAIProtocol selects the outbound protocol
 	BaseURL          string          `json:"base_url"`
 	APIKey           string          `json:"api_key"`
 	Weight           int             `json:"weight"`

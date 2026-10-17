@@ -106,11 +106,21 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 	if err != nil {
 		return nil, 0, err
 	}
+	var clineTask string
+	if up.Type == "cline" {
+		body, clineTask, err = shapeClineRequest(body, fmt.Sprintf("test:%d", up.ID))
+		if err != nil {
+			return nil, 0, err
+		}
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, freeRoute.endpointURL(format, nativeEndpoint(format, cr)), bytes.NewReader(body))
 	if err != nil {
 		return nil, 0, fmt.Errorf("无法创建模型测试请求")
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if clineTask != "" {
+		req.Header.Set("X-Task-ID", clineTask)
+	}
 	if stream || freeShaped {
 		req.Header.Set("Accept", "text/event-stream")
 		req.Header.Set("Accept-Encoding", "identity")
@@ -139,6 +149,9 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 		return nil, 0, err
 	}
 	resp, err := client.Do(req)
+	if err == nil && up.Type == "cline" {
+		resp, err = retryClineUnauthorized(client, req, resp, up)
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, 0, fmt.Errorf("模型测试已取消或超过 90 秒，请重试")
@@ -150,6 +163,9 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
 		detail := redactModelTestError(string(body), up.APIKey)
 		return nil, resp.StatusCode, fmt.Errorf("上游返回 HTTP %d：%s", resp.StatusCode, truncate(detail, 2000))
+	}
+	if up.Type == "cline" {
+		normalizeClineResponse(resp, 4<<20)
 	}
 	if freeToolAlias != "" {
 		resp.Body = newOpenCodeAliasBody(resp.Body, format, freeToolAlias, strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream"))

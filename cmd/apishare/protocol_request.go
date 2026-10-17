@@ -28,6 +28,8 @@ func unsupported(feature string) error {
 // Empty/auto on OpenAI preserves its existing Chat/Responses behavior.
 func (u *Upstream) wireFormat(in clientFormat) clientFormat {
 	switch u.Type {
+	case "cline":
+		return FormatOpenAIChat
 	case "anthropic":
 		return FormatAnthropic
 	case "gemini":
@@ -63,10 +65,13 @@ func validOpenAIProtocol(p string) bool {
 }
 
 func validUpstreamType(t string) bool {
-	return t == "openai" || t == "opencode" || t == "anthropic" || t == "gemini"
+	return t == "openai" || t == "opencode" || t == "cline" || t == "anthropic" || t == "gemini"
 }
 
 func validUpstreamProtocol(upstreamType, protocol string) bool {
+	if upstreamType == "cline" {
+		return protocol == "" || protocol == "auto" || protocol == "chat"
+	}
 	if upstreamType == "opencode" {
 		return protocol == "" || protocol == "auto" || protocol == "chat" || protocol == "responses" || protocol == "anthropic"
 	}

@@ -117,6 +117,7 @@ func registerAdminRoutes(r *gin.Engine) {
 
 	auth := api.Group("", adminAuth())
 	registerClientVersionRoutes(auth)
+	registerClineOAuthRoutes(auth)
 	auth.GET("/me", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": true, "admin_path": currentAdminPath(), "setup_required": adminSetupRequired()})
 	})
@@ -312,7 +313,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			return
 		}
 		if !validUpstreamType(u.Type) {
-			c.JSON(400, gin.H{"error": "type must be openai, opencode, anthropic or gemini"})
+			c.JSON(400, gin.H{"error": "type must be openai, opencode, cline, anthropic or gemini"})
 			return
 		}
 		if u.BaseURL == "" || u.APIKey == "" {
@@ -554,7 +555,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			return
 		}
 		if !validUpstreamType(req.Type) {
-			c.JSON(400, gin.H{"ok": false, "error": "type must be openai, opencode, anthropic or gemini"})
+			c.JSON(400, gin.H{"ok": false, "error": "type must be openai, opencode, cline, anthropic or gemini"})
 			return
 		}
 		probeResult(c, &Upstream{Type: req.Type, BaseURL: req.BaseURL, APIKey: req.APIKey, ProxyID: req.ProxyID, HeaderOverrides: req.HeaderOverrides, OpenAIProtocol: req.OpenAIProtocol, OpenCodeTier: req.OpenCodeTier})
