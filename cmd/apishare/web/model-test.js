@@ -13,7 +13,7 @@ function uniqueModelNames(values) {
 // Probed catalogs belong to the exact connection they were read from, so the
 // cache key covers every field that can change the upstream's model list.
 function modelTestCacheSignature(upstream) {
-  return [upstream.type, upstream.base_url, upstream.key_masked, upstream.proxy_id, upstream.openai_protocol, upstream.opencode_tier, upstream.header_overrides].join("\n");
+  return [upstream.type, upstream.base_url, upstream.key_masked, upstream.proxy_id, upstream.openai_protocol, upstream.header_overrides].join("\n");
 }
 function modelTestCachedCatalog(upstream) {
   const cached = modelTest.cache.get(upstream.id);
@@ -41,7 +41,7 @@ function openModelTest(id) {
   modelTest.options = [];
   modelTest.open = false;
   setBusy($("modelTestFetch"), false);
-  $("modelTestDescription").textContent = "向「" + (upstream.name || "未命名上游") + "」发送真实模型请求，使用已保存的配置" + (upstream.type === "opencode-free" ? "，仅接受 OpenCode 免费模型及其别名，可能消耗免费额度。" : "，可能产生上游费用。");
+  $("modelTestDescription").textContent = "向「" + (upstream.name || "未命名上游") + "」发送真实模型请求，使用已保存的配置" + "，可能产生上游费用。";
   $("modelTestSearch").value = "";
   $("modelTestMessage").value = "hi";
   $("modelTestMaxTokens").value = "4096";

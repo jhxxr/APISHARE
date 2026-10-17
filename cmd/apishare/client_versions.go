@@ -26,7 +26,6 @@ type clientVersionSource struct {
 var officialClientVersionSources = []clientVersionSource{
 	{"codex", "Codex", "@openai/codex", "https://registry.npmjs.org/@openai/codex/latest"},
 	{"claude_code", "Claude Code", "@anthropic-ai/claude-code", "https://registry.npmjs.org/@anthropic-ai/claude-code/latest"},
-	{"opencode", "OpenCode", "@opencode/cli", "https://registry.npmjs.org/@opencode/cli/latest"},
 }
 
 var stableClientVersion = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
@@ -70,8 +69,6 @@ func clientUserAgent(id, version string) string {
 		return "codex_cli_rs/" + version
 	case "claude_code":
 		return "claude-cli/" + version + " (external, cli)"
-	case "opencode":
-		return "opencode/latest/" + version + "/cli"
 	}
 	return ""
 }
@@ -237,7 +234,7 @@ func clientHeaderVersionFingerprint(raw string) string {
 	clientVersions.RLock()
 	defer clientVersions.RUnlock()
 	var parts []string
-	for _, id := range []string{"codex", "claude_code", "opencode"} {
+	for _, id := range []string{"codex", "claude_code"} {
 		if strings.Contains(raw, "{"+id+"_user_agent}") {
 			parts = append(parts, id+":"+clientVersions.entries[id].Version)
 		}

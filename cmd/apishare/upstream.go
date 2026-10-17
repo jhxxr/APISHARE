@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"math/rand"
+	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -41,6 +43,31 @@ func healthMarkSuccess(id int64) {
 	delete(upHealth.until, id)
 }
 
+func healthMarkRetryAfter(id int64, until time.Time) {
+	if until.IsZero() {
+		return
+	}
+	upHealth.Lock()
+	defer upHealth.Unlock()
+	if until.After(upHealth.until[id]) {
+		upHealth.until[id] = until
+	}
+}
+
+func upstreamRetryAfter(value string, now time.Time) time.Time {
+	value = strings.TrimSpace(value)
+	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil {
+		if seconds > 0 && seconds <= int64((1<<63-1)/time.Second) {
+			return now.Add(time.Duration(seconds) * time.Second)
+		}
+		return time.Time{}
+	}
+	if until, err := http.ParseTime(value); err == nil && until.After(now) {
+		return until
+	}
+	return time.Time{}
+}
+
 func healthAvailable(id int64) bool {
 	upHealth.Lock()
 	defer upHealth.Unlock()
@@ -53,6 +80,12 @@ func healthFails(id int64) int {
 	defer upHealth.Unlock()
 	return upHealth.fails[id]
 }
+
+func (up *Upstream) availableForRelay() bool {
+	return validUpstreamType(up.Type) && healthAvailable(up.ID)
+}
+
+func (up *Upstream) relayFailures() int { return healthFails(up.ID) }
 
 // ---------- 上游选择 ----------
 
@@ -132,7 +165,6 @@ func pickUpstream(format clientFormat, model string, exclude map[int64]bool, nat
 		return nil, err
 	}
 	var best []Upstream
-	var limited *openCodeRateLimitError
 	bestTier := 99
 	for _, u := range snapshot.upstreams {
 		if !u.Enabled || exclude[u.ID] || u.Weight <= 0 {
@@ -145,12 +177,6 @@ func pickUpstream(format clientFormat, model string, exclude map[int64]bool, nat
 		if nativeOnly && !supportsNativeEndpoint(&u, format) {
 			continue
 		}
-		if limit := u.openCodeRateLimit(); limit != nil {
-			if limited == nil || limit.until.Before(limited.until) {
-				limited = limit
-			}
-			continue
-		}
 		if !healthAvailable(u.ID) {
 			continue
 		}
@@ -158,7 +184,7 @@ func pickUpstream(format clientFormat, model string, exclude map[int64]bool, nat
 		if nativeOnly {
 			tier = 0
 		} else {
-			native := u.routingWireFormat(format, model) == format
+			native := u.wireFormat(format) == format
 			switch {
 			case native && explicit:
 				tier = 1
@@ -192,9 +218,6 @@ func pickUpstream(format clientFormat, model string, exclude map[int64]bool, nat
 		}
 	}
 	if len(best) == 0 {
-		if limited != nil {
-			return nil, limited
-		}
 		return nil, errors.New("no available upstream for model " + model)
 	}
 	total := 0

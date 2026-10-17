@@ -202,12 +202,12 @@ func TestClientVersionCachedDataValidation(t *testing.T) {
 func TestClientUserAgentTemplatesOnRelayAndProbes(t *testing.T) {
 	modelsTestDB(t)
 	s := newClientVersionService(http.DefaultClient, officialClientVersionSources, nil)
-	raw, _ := json.Marshal([]clientVersion{{ID: "codex", Version: "0.200.1", CheckedAt: time.Now().Add(-time.Minute)}, {ID: "claude_code", Version: "2.10.1", CheckedAt: time.Now().Add(-time.Minute)}, {ID: "opencode", Version: "2.0.30", CheckedAt: time.Now().Add(-time.Minute)}})
+	raw, _ := json.Marshal([]clientVersion{{ID: "codex", Version: "0.200.1", CheckedAt: time.Now().Add(-time.Minute)}, {ID: "claude_code", Version: "2.10.1", CheckedAt: time.Now().Add(-time.Minute)}})
 	if err := s.restore(string(raw)); err != nil {
 		t.Fatal(err)
 	}
 	useTestClientVersions(t, s)
-	for _, id := range []string{"codex", "claude_code", "opencode"} {
+	for _, id := range []string{"codex", "claude_code"} {
 		t.Run(id, func(t *testing.T) {
 			want := clientUserAgent(id, s.entries[id].Version)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

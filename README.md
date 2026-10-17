@@ -77,9 +77,8 @@ API Share 是一个用 Go 编写的 AI 网关。它统一接收 OpenAI Chat Comp
 | Anthropic Messages | `anthropic` | Claude 官方端点 |
 | Google Gemini | `gemini` | AI Studio 官方端点 |
 | Cline 免费模型 | `cline` | 账号登录、令牌刷新与免费模型发现 |
-| OpenCode 免费模型 | `opencode-free` | 自动发现免费模型并按模型选择原生协议 |
 
-渠道配置、Cline / OpenCode 登录流程与路由优先级见 **[上游渠道文档](docs/UPSTREAM_CHANNELS.md)**。
+渠道配置、Cline 登录流程与路由优先级见 **[上游渠道文档](docs/UPSTREAM_CHANNELS.md)**。
 
 ---
 
@@ -221,7 +220,7 @@ Claude Code 结构化输出、Codex 配置说明、Gemini 与 cURL 示例、音�
 
 | 文档 | 内容 |
 |---|---|
-| [上游渠道与协议矩阵](docs/UPSTREAM_CHANNELS.md) | 入站 / 出站协议、路由优先级、Cline 与 OpenCode 渠道 |
+| [上游渠道与协议矩阵](docs/UPSTREAM_CHANNELS.md) | 入站 / 出站协议、路由优先级、Cline 渠道 |
 | [客户端接入指南](docs/CLIENTS.md) | Codex、Claude Code、OpenAI SDK、Gemini、音频与 Realtime |
 | [协议转换引擎](docs/PROTOCOL_CONVERSION.md) | 工具调用、推理内容、流式保活与已知边界 |
 | [会话粘性、计费与配额](docs/BILLING.md) | Prompt Cache、价格同步、Usage 采集、日志清理 |
