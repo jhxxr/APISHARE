@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -298,6 +300,9 @@ CREATE INDEX IF NOT EXISTS idx_log_daily_day ON call_log_daily(day);
 	if err := migrateBillingLogSchema(); err != nil {
 		return err
 	}
+	if err := migrateProxyNames(); err != nil {
+		return err
+	}
 	if err := migrateSpeedLogSchema(); err != nil {
 		return err
 	}
@@ -393,6 +398,66 @@ func migrateTimestampsToBeijing() error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// 早期版本允许保存没有名称的代理，上游里选择时只能看到 IP，无法区分。
+// 为存量记录补一个默认名称，已有的名称保持不变。
+func migrateProxyNames() error {
+	rows, err := db.Query(`SELECT id,trim(name),url FROM outbound_proxies ORDER BY id`)
+	if err != nil {
+		return err
+	}
+	type unnamedProxy struct {
+		id  int64
+		url string
+	}
+	var missing []unnamedProxy
+	taken := make(map[string]bool)
+	for rows.Next() {
+		var item unnamedProxy
+		var name string
+		if err := rows.Scan(&item.id, &name, &item.url); err != nil {
+			rows.Close()
+			return err
+		}
+		if name == "" {
+			missing = append(missing, item)
+		} else {
+			taken[name] = true
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil || len(missing) == 0 {
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, item := range missing {
+		if _, err := tx.Exec(`UPDATE outbound_proxies SET name=? WHERE id=?`, defaultProxyName(item.url, item.id, taken), item.id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// 默认名称取地址中的主机名（不含端口以外的认证信息），重名时追加 ID。
+func defaultProxyName(endpoint string, id int64, taken map[string]bool) string {
+	name := ""
+	if u, err := url.Parse(strings.TrimSpace(endpoint)); err == nil {
+		name = u.Host // 主机:端口，不含用户名和密码
+	}
+	if name == "" {
+		name = fmt.Sprintf("代理 #%d", id)
+	}
+	if taken[name] {
+		name = fmt.Sprintf("%s #%d", name, id)
+	}
+	taken[name] = true
+	return name
 }
 
 func boolToInt(b bool) int {

@@ -15,16 +15,19 @@ async function loadProxies(quiet = false) {
     return false;
   }
 }
+function proxyName(proxy) {
+  return (proxy.name || "").trim() || "代理 #" + proxy.id;
+}
 function upstreamProxyLabel(id) {
   if (!id) return "默认连接";
   const proxy = proxiesCache.find((item) => item.id === id);
-  return proxy ? proxy.name + (proxy.enabled ? "" : "（已停用）") : "代理 #" + id;
+  return proxy ? proxyName(proxy) + (proxy.enabled ? "" : "（已停用）") : "代理 #" + id;
 }
 function renderProxyOptions(selected = Number($("editProxy").value || 0)) {
   const field = $("editProxy");
   field.replaceChildren(new Option("默认连接（跟随系统环境）", "0"));
   proxiesCache.forEach((proxy) => {
-    const option = new Option(proxy.name + " · " + proxy.url.split(":")[0].toUpperCase() + (proxy.enabled ? "" : "（已停用）"), String(proxy.id));
+    const option = new Option(proxyName(proxy) + " · " + proxy.url.split(":")[0].toUpperCase() + (proxy.enabled ? "" : "（已停用）"), String(proxy.id));
     option.disabled = !proxy.enabled;
     field.add(option);
   });
@@ -40,7 +43,7 @@ function renderProxies() {
   const query = $("proxySearch").value.trim().toLowerCase();
   const list = proxiesCache.filter((item) => [item.name, item.url, item.username].join(" ").toLowerCase().includes(query));
   $("proxyListCount").textContent = list.length + (list.length !== proxiesCache.length ? " / " + proxiesCache.length : "");
-  $("proxiesTable").querySelector("tbody").innerHTML = list.map((item) => '<tr><td class="cell-stack"><strong>' + esc(item.name) + '</strong><small>' + esc(item.url.split(":")[0].toUpperCase()) + ' · #' + item.id + '</small></td><td class="endpoint-cell"><span>' + esc(item.url) + '</span></td><td>' + (item.username ? esc(item.username) + (item.has_password ? '<span class="cell-stack"><small>密码已保存</small></span>' : '') : '<span class="muted">无需认证</span>') + '</td><td>' + item.upstream_count + ' 个上游</td><td><button class="toggle-btn" role="switch" aria-checked="' + !!item.enabled + '" aria-label="' + (item.enabled ? "停用 " : "启用 ") + esc(item.name) + '" onclick="toggleProxy(' + item.id + ', ' + !item.enabled + ', this)"><span></span></button></td><td><div class="row-actions"><button class="text-btn" onclick="openProxyComposer(' + item.id + ')" aria-label="编辑 ' + esc(item.name) + '">' + icon("edit") + '编辑</button><button class="icon-btn danger" onclick="deleteProxy(' + item.id + ')" aria-label="删除 ' + esc(item.name) + '" title="删除代理">' + icon("trash") + '</button></div></td></tr>').join("") || emptyRow(6, query ? "没有匹配的代理" : "添加你的第一个代理", query ? "调整搜索条件后重试。" : "支持 HTTP、HTTPS、SOCKS5、SOCKS5h，以及用户名和密码认证。", query ? "" : "openProxyComposer()", "添加代理", "link");
+  $("proxiesTable").querySelector("tbody").innerHTML = list.map((item) => '<tr><td class="cell-stack"><strong>' + esc(proxyName(item)) + '</strong><small>' + esc(item.url.split(":")[0].toUpperCase()) + ' · #' + item.id + '</small></td><td class="endpoint-cell"><span>' + esc(item.url) + '</span></td><td>' + (item.username ? esc(item.username) + (item.has_password ? '<span class="cell-stack"><small>密码已保存</small></span>' : '') : '<span class="muted">无需认证</span>') + '</td><td>' + item.upstream_count + ' 个上游</td><td><button class="toggle-btn" role="switch" aria-checked="' + !!item.enabled + '" aria-label="' + (item.enabled ? "停用 " : "启用 ") + esc(item.name) + '" onclick="toggleProxy(' + item.id + ', ' + !item.enabled + ', this)"><span></span></button></td><td><div class="row-actions"><button class="text-btn" onclick="openProxyComposer(' + item.id + ')" aria-label="编辑 ' + esc(item.name) + '">' + icon("edit") + '编辑</button><button class="icon-btn danger" onclick="deleteProxy(' + item.id + ')" aria-label="删除 ' + esc(item.name) + '" title="删除代理">' + icon("trash") + '</button></div></td></tr>').join("") || emptyRow(6, query ? "没有匹配的代理" : "添加你的第一个代理", query ? "调整搜索条件后重试。" : "支持 HTTP、HTTPS、SOCKS5、SOCKS5h，以及用户名和密码认证。", query ? "" : "openProxyComposer()", "添加代理", "link");
   labelTableCells("proxiesTable");
 }
 function openProxyComposer(id = null) {

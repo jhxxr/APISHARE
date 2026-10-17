@@ -30,10 +30,16 @@ type OutboundProxy struct {
 var proxyConfigMu sync.Mutex
 
 func normalizeOutboundProxy(p *OutboundProxy) error {
-	p.Name, p.URL, p.Username = strings.TrimSpace(p.Name), strings.TrimSpace(p.URL), strings.TrimSpace(p.Username)
+	p.Name = strings.TrimSpace(p.Name)
 	if p.Name == "" || utf8.RuneCountInString(p.Name) > 120 {
 		return errors.New("代理名称必填，最多 120 个字符")
 	}
+	return normalizeProxyEndpoint(p)
+}
+
+// 只校验连接信息，与展示用的名称无关：代理发请求时不应该因为缺少名称而失败。
+func normalizeProxyEndpoint(p *OutboundProxy) error {
+	p.URL, p.Username = strings.TrimSpace(p.URL), strings.TrimSpace(p.Username)
 	u, err := url.Parse(p.URL)
 	if err != nil || u.Hostname() == "" || u.Opaque != "" || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 		return errors.New("代理地址应为 协议://主机:端口，或 协议://用户名:密码@主机:端口")
@@ -142,7 +148,7 @@ func clientForProxyConfig(base *http.Client, p *OutboundProxy) (*http.Client, er
 	if !p.Enabled {
 		return nil, errors.New("所选代理已停用")
 	}
-	if err := normalizeOutboundProxy(p); err != nil {
+	if err := normalizeProxyEndpoint(p); err != nil {
 		return nil, err
 	}
 	fingerprint := proxyFingerprint(p)

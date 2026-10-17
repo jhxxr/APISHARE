@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -86,6 +87,52 @@ func TestProxyMigrationPreservesExistingUpstreams(t *testing.T) {
 	got, err := dbGetUpstream(u.ID)
 	if err != nil || got.ProxyID != 0 || got.APIKey != u.APIKey || got.Name != u.Name {
 		t.Fatalf("migration lost legacy settings: %v %v", got, err)
+	}
+}
+
+func TestProxyMigrationNamesUnnamedProxies(t *testing.T) {
+	modelsTestDB(t)
+	insert := func(name, endpoint string) int64 {
+		res, err := db.Exec(`INSERT INTO outbound_proxies(name,url,enabled,created_at) VALUES(?,?,1,?)`, name, endpoint, nowStr())
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, _ := res.LastInsertId()
+		return id
+	}
+	hostID := insert("", "socks5h://hk.example.com:8388")
+	credentialsID := insert("  ", "http://alice:secret@sg.example.com:3128")
+	duplicateID := insert("", "socks5h://hk.example.com:8388")
+	brokenID := insert("", "not-a-proxy-url")
+	namedID := insert("香港出口", "socks5h://named.example.com:1080")
+	for i := 0; i < 2; i++ {
+		if err := migrate(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for id, want := range map[int64]string{
+		hostID:        "hk.example.com:8388",
+		credentialsID: "sg.example.com:3128", // 名称里不能带认证信息
+		duplicateID:   "hk.example.com:8388 #" + strconv.FormatInt(duplicateID, 10),
+		brokenID:      "代理 #" + strconv.FormatInt(brokenID, 10),
+		namedID:       "香港出口", // 已有名称不覆盖
+	} {
+		got, err := dbGetOutboundProxy(id)
+		if err != nil || got.Name != want {
+			t.Fatalf("proxy %d name = %q, want %q (%v)", id, got.Name, want, err)
+		}
+	}
+	// 名称缺失不应影响已经保存的代理发请求。
+	if _, err := db.Exec(`UPDATE outbound_proxies SET name='' WHERE id=?`, hostID); err != nil {
+		t.Fatal(err)
+	}
+	client, err := clientForUpstream(upstreamHTTPClient, hostID)
+	if err != nil || client == upstreamHTTPClient {
+		t.Fatalf("unnamed proxy lost its transport: %v", err)
+	}
+	closeProxyTransport(hostID)
+	if _, err := clientForUpstream(upstreamHTTPClient, brokenID); err == nil {
+		t.Fatal("invalid endpoint fell back to direct")
 	}
 }
 
