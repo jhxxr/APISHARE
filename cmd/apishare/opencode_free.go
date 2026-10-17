@@ -65,8 +65,10 @@ func (u *Upstream) openCodeFreeModel(model string) bool {
 }
 
 // The inference gate requires CLI schemas, but the gateway cannot execute the
-// tools it declares. Generic clients must use the legacy Zen gate, where their
-// own schemas can be preserved. Only change a known official origin and path;
+// tools it declares. Clients with foreign tools use the legacy Zen gate, where
+// their own schemas can be preserved. A text-only request can declare the CLI
+// tools and reject unexpected tool calls without changing its configured lane.
+// Only change a known official origin and path;
 // custom gateways and Go credentials must never be redirected to another tier.
 func (u *Upstream) openCodeFreeRoute(body []byte, format clientFormat, model string) (*Upstream, error) {
 	if !u.isOpenCode() || (!u.openCodePublic() && !u.openCodeFreeModel(model)) || u.openCodeLegacy() {
@@ -82,6 +84,9 @@ func (u *Upstream) openCodeFreeRoute(body []byte, format clientFormat, model str
 	var tools []json.RawMessage
 	if raw := payload["tools"]; len(raw) > 0 && json.Unmarshal(raw, &tools) != nil {
 		return nil, fmt.Errorf("OpenCode tools 必须是数组")
+	}
+	if len(tools) == 0 {
+		return u, nil
 	}
 	compatible, err := openCodeNativeToolContracts(tools, format)
 	if err != nil {
@@ -101,6 +106,21 @@ func (u *Upstream) openCodeFreeRoute(body []byte, format clientFormat, model str
 		}
 	}
 	return nil, fmt.Errorf("OpenCode inference 免费模型要求完整的原生工具及参数；当前客户端工具不兼容。Zen 渠道请将上游地址改为 https://opencode.ai/zen；自定义网关请配置对应的 /zen 入口")
+}
+
+// opencode2api appends the protocol endpoint directly to /inference. The
+// family subpaths used by the general catalog adapter are a different route.
+// Apply this only to shaped free requests at the standard official base.
+func (u *Upstream) openCodeFreeEndpointURL(format clientFormat, endpoint string) string {
+	parsed, err := url.Parse(strings.TrimSpace(u.BaseURL))
+	if err == nil && parsed.Scheme == "https" && strings.EqualFold(parsed.Host, "opencode.ai") && u.openCodeTier() == "zen" {
+		switch strings.TrimRight(parsed.Path, "/") {
+		case "/inference", "/inference/v1":
+			parsed.Path, parsed.RawPath = "/inference", ""
+			return upstreamURL(parsed.String(), endpoint)
+		}
+	}
+	return u.endpointURL(format, endpoint)
 }
 
 func openCodeToolContract(raw json.RawMessage, format clientFormat) (string, json.RawMessage) {
@@ -209,8 +229,16 @@ func (u *Upstream) shapeOpenCodeFreeRequest(body []byte, format clientFormat, mo
 	if err != nil {
 		return nil, false, err
 	}
-	if !compatible {
+	if !compatible && len(tools) != 0 {
 		return nil, false, fmt.Errorf("OpenCode inference 免费模型工具与客户端不兼容，请使用 Zen 兼容入口")
+	}
+	if len(tools) == 0 {
+		for _, name := range []string{"shell", "edit", "glob", "grep", "read"} {
+			tools = append(tools, renderOpenCodeTool(name, definitions[name], format))
+		}
+		if len(compatibility) > 0 && compatibility[0] != nil {
+			*compatibility[0] = openCodeToolCompatibility{NoClientTools: true}
+		}
 	}
 	for index, tool := range tools {
 		name, _ := openCodeToolContract(tool, format)

@@ -520,7 +520,8 @@ async function openEditor(upstream) {
 function updateEditorProvider(changed = true) {
   const format = $("editType").value, type = editorUpstreamType();
   const freeOpenCode = type === "opencode-free";
-  if (changed && freeOpenCode && editProbe.provider !== type) $("editKey").value = "";
+  const keepZenCredential = editProbe.provider === "opencode" && $("editOpenCodeTier").value !== "go";
+  if (changed && freeOpenCode && editProbe.provider !== type && !keepZenCredential) $("editKey").value = "";
   const knownURLs = [...Object.values(providerURLs), ...Object.values(openCodeURLs), "https://opencode.ai/inference", "https://opencode.ai/inference/go"];
   if (changed && (editProbe.id === null || freeOpenCode) && knownURLs.includes($("editBase").value.replace(/\/+$/, ""))) $("editBase").value = type === "opencode" ? openCodeURLs[$("editOpenCodeTier").value] : providerURLs[type];
   const iconType = isOpenCodeType(type) ? "opencode" : type;
@@ -534,7 +535,7 @@ function updateEditorProvider(changed = true) {
     "openai-responses": "上游固定使用 /v1/responses。请确认上游支持 Responses 接口。",
     "openai-auto": "旧连接沿用原有行为：跟随 OpenAI 客户端接口，其他格式转换为 Chat。可改选上游实际支持的固定格式。",
     "opencode-free": "保留默认地址，点击「获取模型」即可选择 OpenCode 当前免费模型。无需安装 CLI，API Key 可留空；模型可用性与免费额度由 OpenCode 调整。",
-    opencode: "旧连接保留原有 Zen / Go 套餐、密钥和协议。新建免费渠道请选择「OpenCode 免费模型」；切换时留空使用匿名凭据，也可填写自己的 Zen API Key。",
+    opencode: "旧连接保留原有 Zen / Go 套餐、密钥和协议。Zen 连接切换为免费渠道时保留已有密钥；Go 连接切换时使用匿名凭据，也可填写自己的 Zen API Key。",
     cline: "点击「登录 Cline 账号」完成浏览器授权，即可获取当前免费模型，无需安装 CLI。也可手动填写账号凭据。免费模型与额度由 Cline 调整。",
     anthropic: "上游使用 Anthropic 原生 /v1/messages 接口。",
     gemini: "上游使用 Gemini 原生 generateContent / streamGenerateContent 接口。"
@@ -543,9 +544,9 @@ function updateEditorProvider(changed = true) {
   $("editKey").required = editProbe.id === null && !freeOpenCode;
   $("editKeyRequired").classList.toggle("hidden", !$("editKey").required);
   $("editKey").setCustomValidity("");
-  if (freeOpenCode) $("editKey").placeholder = "留空使用匿名访问，或填写自己的 Zen API Key";
+  if (freeOpenCode) $("editKey").placeholder = editProbe.id === null ? "留空使用匿名访问，或填写自己的 Zen API Key" : "留空保留已有 Zen 凭据；填写 public 使用匿名访问";
   else if (changed) $("editKey").placeholder = editProbe.id === null ? "输入上游 API 密钥" : "留空保留已保存凭据";
-  $("editKeyHint").textContent = type === "cline" ? "浏览器授权后自动填入；也可粘贴 RefreshToken 或单个账号 JSON。普通 API Key 请加 api-key: 前缀。编辑时留空保留。" : freeOpenCode ? "新连接留空默认匿名访问；已有免费连接编辑时留空保留凭据，填写 public 可切回匿名。填写 Key 后仍只提供免费模型。" : editProbe.id === null ? "用于网关访问上游服务。密钥默认隐藏，请妥善保管。" : "留空会保留当前密钥；填写新密钥将替换原密钥。";
+  $("editKeyHint").textContent = type === "cline" ? "浏览器授权后自动填入；也可粘贴 RefreshToken 或单个账号 JSON。普通 API Key 请加 api-key: 前缀。编辑时留空保留。" : freeOpenCode ? "新连接留空默认匿名访问；旧 Zen 连接切换及免费连接编辑时留空保留凭据，填写 public 可切回匿名。填写 Key 后仍只提供免费模型。" : editProbe.id === null ? "用于网关访问上游服务。密钥默认隐藏，请妥善保管。" : "留空会保留当前密钥；填写新密钥将替换原密钥。";
   $("editBase").placeholder = type === "opencode" ? openCodeURLs[$("editOpenCodeTier").value] : providerURLs[type];
   editProbe.provider = type;
   updateClineLoginProvider(changed);

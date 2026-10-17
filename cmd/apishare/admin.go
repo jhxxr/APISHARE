@@ -390,11 +390,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			u.Name = *req.Name
 		}
 		if req.Type != nil {
-			if *req.Type == openCodeFreeType && u.Type != openCodeFreeType {
-				// A newly selected free channel starts anonymously unless the
-				// administrator explicitly supplies a credential for that channel.
-				u.APIKey = "public"
-			}
+			u.APIKey = u.openCodeKeyForType(*req.Type)
 			u.Type = *req.Type
 		}
 		if req.OpenAIProtocol != nil {
@@ -608,9 +604,7 @@ func registerAdminRoutes(r *gin.Engine) {
 		if strings.TrimSpace(req.Type) != "" {
 			typ = strings.TrimSpace(req.Type)
 		}
-		if typ == openCodeFreeType && u.Type != openCodeFreeType {
-			key = "public"
-		}
+		key = u.openCodeKeyForType(typ)
 		if strings.TrimSpace(req.BaseURL) != "" {
 			base = strings.TrimSpace(req.BaseURL)
 		}

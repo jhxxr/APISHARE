@@ -101,6 +101,7 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 	if err != nil {
 		return nil, 0, err
 	}
+	freeOriginalBody := body
 	var freeTools openCodeToolCompatibility
 	body, freeShaped, err := freeRoute.shapeOpenCodeFreeRequest(body, format, model, &freeTools)
 	if err != nil {
@@ -113,7 +114,12 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 			return nil, 0, err
 		}
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, freeRoute.endpointURL(format, nativeEndpoint(format, cr)), bytes.NewReader(body))
+	endpoint := nativeEndpoint(format, cr)
+	requestURL := freeRoute.endpointURL(format, endpoint)
+	if freeShaped {
+		requestURL = freeRoute.openCodeFreeEndpointURL(format, endpoint)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, 0, fmt.Errorf("无法创建模型测试请求")
 	}
@@ -149,6 +155,15 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 		return nil, 0, err
 	}
 	resp, err := client.Do(req)
+	var freePreviousPath string
+	if err == nil && freeShaped {
+		var attempt *openCodeFreeAttempt
+		attempt, err = retryOpenCodeFreeTier(up, req, resp, freeOriginalBody, format, model, nil, client.Do)
+		if attempt != nil {
+			req, resp, body, freeTools = attempt.request, attempt.response, attempt.body, attempt.tools
+			freePreviousPath = attempt.previousPath
+		}
+	}
 	if err == nil && up.Type == "cline" {
 		resp, err = retryClineUnauthorized(client, req, resp, up)
 	}
@@ -160,8 +175,14 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
-		detail := redactModelTestError(string(body), up.APIKey)
+		responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
+		detail := redactModelTestError(string(responseBody), up.APIKey)
+		if up.isOpenCode() {
+			if freePreviousPath != "" {
+				detail += "; 首次入口 " + freePreviousPath + " 返回 FreeTierError，已尝试另一入口"
+			}
+			return nil, resp.StatusCode, fmt.Errorf("上游返回 HTTP %d：%s\n%s", resp.StatusCode, truncate(detail, 1200), up.openCodeRequestSummary(req, body, format))
+		}
 		return nil, resp.StatusCode, fmt.Errorf("上游返回 HTTP %d：%s", resp.StatusCode, truncate(detail, 2000))
 	}
 	if up.Type == "cline" {

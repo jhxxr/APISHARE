@@ -420,19 +420,20 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		info.Status = http.StatusBadRequest
 		return info, false, &protocolConversionError{err}
 	}
-	if freeRoute != up {
-		endpoint := task.endpoint
-		if !native {
-			endpoint = nativeEndpoint(wireFormat, &canonReq{Model: upModel, Stream: task.stream})
-		}
-		url = freeRoute.endpointURL(wireFormat, endpoint)
-	}
+	freeOriginalBody := reqBody
 	var freeShaped bool
 	var freeTools openCodeToolCompatibility
 	reqBody, freeShaped, err = freeRoute.shapeOpenCodeFreeRequest(reqBody, wireFormat, upModel, &freeTools)
 	if err != nil {
 		info.Status = http.StatusBadRequest
 		return info, false, &protocolConversionError{err}
+	}
+	if freeShaped {
+		endpoint := task.endpoint
+		if !native {
+			endpoint = nativeEndpoint(wireFormat, &canonReq{Model: upModel, Stream: task.stream})
+		}
+		url = freeRoute.openCodeFreeEndpointURL(wireFormat, endpoint)
 	}
 
 	var clineTask string
@@ -522,6 +523,17 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	}()
 	keepalive := beginMessagesKeepalive(c, task)
 	resp, err := messagesHTTPDo(client, req, keepalive, cancel)
+	var freePreviousPath string
+	if err == nil && freeShaped {
+		var attempt *openCodeFreeAttempt
+		attempt, err = retryOpenCodeFreeTier(up, req, resp, freeOriginalBody, wireFormat, upModel, c.Request.Header, func(retry *http.Request) (*http.Response, error) {
+			return messagesHTTPDo(client, retry, keepalive, cancel)
+		})
+		if attempt != nil {
+			req, resp, reqBody, freeTools = attempt.request, attempt.response, attempt.body, attempt.tools
+			freePreviousPath = attempt.previousPath
+		}
+	}
 	if err == nil && up.Type == "cline" {
 		resp, err = retryClineUnauthorized(client, req, resp, up, func(retry *http.Request) (*http.Response, error) {
 			return messagesHTTPDo(client, retry, keepalive, cancel)
@@ -581,10 +593,16 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		detail := string(b)
 		if up.isOpenCode() {
 			detail = redactModelTestError(detail, up.openCodeAPIKey())
+			if freePreviousPath != "" {
+				detail += "; 首次入口 " + freePreviousPath + " 返回 FreeTierError，已尝试另一入口"
+			}
 		}
 		info.OutputText.WriteString(detail)
 		if isRetryableStatus(info.Status) {
 			if up.isOpenCode() {
+				if info.Status == http.StatusForbidden {
+					return info, false, fmt.Errorf("upstream %s returned %d: %s; %s", up.Name, info.Status, truncate(detail, 1000), up.openCodeRequestSummary(req, reqBody, wireFormat))
+				}
 				return info, false, fmt.Errorf("upstream %s returned %d (model=%s, path=%s): %s", up.Name, info.Status, upModel, req.URL.EscapedPath(), truncate(detail, 1000))
 			}
 			return info, false, fmt.Errorf("upstream %s returned %d", up.Name, info.Status)
