@@ -22,6 +22,11 @@ type openCodeToolDefinition struct {
 	Parameters  json.RawMessage `json:"parameters"`
 }
 
+type openCodeToolCompatibility struct {
+	ReadAlias     string
+	NoClientTools bool
+}
+
 var openCodeToolDefinitions = sync.OnceValues(func() (map[string]openCodeToolDefinition, error) {
 	data, err := openCodeToolAssets.ReadFile("opencode_tools.json")
 	if err != nil {
@@ -41,18 +46,21 @@ var openCodeToolDefinitions = sync.OnceValues(func() (map[string]openCodeToolDef
 })
 
 func (u *Upstream) openCodePublic() bool {
-	return u.Type == "opencode" && u.openCodeTier() == "zen" && strings.TrimSpace(u.APIKey) == "public"
+	return u.isOpenCode() && u.openCodeTier() == "zen" && strings.TrimSpace(u.openCodeAPIKey()) == "public"
 }
 
 func (u *Upstream) openCodeFreeModel(model string) bool {
-	if u.Type != "opencode" {
+	if !u.isOpenCode() {
 		return false
 	}
-	if strings.Contains(strings.ToLower(model), "free") {
+	if !u.openCodeFreeOnly() && strings.Contains(strings.ToLower(model), "free") {
 		return true
 	}
 	openCodeCatalogs.Lock()
 	defer openCodeCatalogs.Unlock()
+	if u.openCodeFreeOnly() {
+		return openCodeCatalogFreeModel(latestOpenCodeCatalogLocked(), "zen", model)
+	}
 	return latestOpenCodeCatalogLocked().FreeModels[u.openCodeTier()][model]
 }
 
@@ -61,7 +69,7 @@ func (u *Upstream) openCodeFreeModel(model string) bool {
 // own schemas can be preserved. Only change a known official origin and path;
 // custom gateways and Go credentials must never be redirected to another tier.
 func (u *Upstream) openCodeFreeRoute(body []byte, format clientFormat, model string) (*Upstream, error) {
-	if u.Type != "opencode" || (!u.openCodePublic() && !u.openCodeFreeModel(model)) || u.openCodeLegacy() {
+	if !u.isOpenCode() || (!u.openCodePublic() && !u.openCodeFreeModel(model)) || u.openCodeLegacy() {
 		return u, nil
 	}
 	if format != FormatOpenAIChat && format != FormatOpenAIResponse && format != FormatAnthropic {
@@ -154,8 +162,8 @@ func openCodeNativeToolContracts(tools []json.RawMessage, format clientFormat) (
 	return true, nil
 }
 
-func (u *Upstream) shapeOpenCodeFreeRequest(body []byte, format clientFormat, model string, toolAlias ...*string) ([]byte, bool, error) {
-	if u.Type != "opencode" || (!u.openCodePublic() && !u.openCodeFreeModel(model)) {
+func (u *Upstream) shapeOpenCodeFreeRequest(body []byte, format clientFormat, model string, compatibility ...*openCodeToolCompatibility) ([]byte, bool, error) {
+	if !u.isOpenCode() || (!u.openCodePublic() && !u.openCodeFreeModel(model)) {
 		return body, false, nil
 	}
 	if format != FormatOpenAIChat && format != FormatOpenAIResponse && format != FormatAnthropic {
@@ -183,12 +191,12 @@ func (u *Upstream) shapeOpenCodeFreeRequest(body []byte, format clientFormat, mo
 		return nil, false, fmt.Errorf("OpenCode tools 必须是数组")
 	}
 	if u.openCodeLegacy() {
-		alias, err := shapeLegacyOpenCodeTools(payload, tools, format)
+		adaptation, err := shapeLegacyOpenCodeTools(payload, tools, format)
 		if err != nil {
 			return nil, false, err
 		}
-		if len(toolAlias) > 0 && toolAlias[0] != nil {
-			*toolAlias[0] = alias
+		if len(compatibility) > 0 && compatibility[0] != nil {
+			*compatibility[0] = adaptation
 		}
 		encoded, err := json.Marshal(payload)
 		return encoded, true, err

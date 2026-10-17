@@ -46,6 +46,9 @@ var openCodeCatalogs = struct {
 }{entries: make(map[openCodeCatalogKey]*openCodeCatalogEntry)}
 
 func (u *Upstream) openCodeTier() string {
+	if u.openCodeFreeOnly() {
+		return "zen"
+	}
 	if u.OpenCodeTier == "go" || u.OpenCodeTier == "zen" {
 		return u.OpenCodeTier
 	}
@@ -57,7 +60,7 @@ func (u *Upstream) openCodeTier() string {
 }
 
 func (u *Upstream) openCodeAuto() bool {
-	return u.Type == "opencode" && (u.OpenAIProtocol == "" || u.OpenAIProtocol == "auto")
+	return u.isOpenCode() && (u.OpenAIProtocol == "" || u.OpenAIProtocol == "auto")
 }
 
 func validOpenCodeTier(tier string) bool { return tier == "" || tier == "zen" || tier == "go" }
@@ -289,6 +292,9 @@ func (u *Upstream) openCodeCatalog(ctx context.Context) (openCodeCatalog, error)
 }
 
 func (u *Upstream) resolveWireFormat(ctx context.Context, in clientFormat, model string) (clientFormat, error) {
+	if err := u.validateOpenCodeFreeModel(ctx, model); err != nil {
+		return "", &protocolConversionError{err}
+	}
 	if !u.openCodeAuto() {
 		return u.wireFormat(in), nil
 	}
@@ -329,7 +335,7 @@ func latestOpenCodeCatalogLocked() openCodeCatalog {
 // request origins from remote metadata.
 func (u *Upstream) endpointURL(format clientFormat, endpoint string) string {
 	base := u.BaseURL
-	if u.Type == "opencode" {
+	if u.isOpenCode() {
 		parsed, err := url.Parse(base)
 		if err == nil {
 			path := strings.TrimRight(parsed.Path, "/")

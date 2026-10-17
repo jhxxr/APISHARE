@@ -12,13 +12,13 @@ import (
 // The legacy Zen gate only requires a read tool. Preserve the client's schema
 // and alias an existing tool, preferring a file reader. Even a differently named
 // tool must remain executable by the caller once its original name is restored.
-func shapeLegacyOpenCodeTools(payload map[string]json.RawMessage, tools []json.RawMessage, format clientFormat) (string, error) {
+func shapeLegacyOpenCodeTools(payload map[string]json.RawMessage, tools []json.RawMessage, format clientFormat) (openCodeToolCompatibility, error) {
 	candidate, alias := -1, ""
 	fallback, fallbackName := -1, ""
 	for index, raw := range tools {
 		name, _ := openCodeToolContract(raw, format)
 		if name == "read" {
-			return "", nil
+			return openCodeToolCompatibility{}, nil
 		}
 		if fallback < 0 && name != "" {
 			fallback, fallbackName = index, name
@@ -32,7 +32,7 @@ func shapeLegacyOpenCodeTools(payload map[string]json.RawMessage, tools []json.R
 	}
 	if candidate < 0 {
 		if len(tools) != 0 {
-			return "", fmt.Errorf("OpenCode Zen 免费模型需要至少一个客户端函数工具，当前工具类型不支持兼容别名")
+			return openCodeToolCompatibility{}, fmt.Errorf("OpenCode Zen 免费模型需要至少一个客户端函数工具，当前工具类型不支持兼容别名")
 		}
 		stub := openCodeToolDefinition{
 			Description: "Disabled compatibility declaration. Do not invoke this tool. Use the caller's available tools instead.",
@@ -40,22 +40,19 @@ func shapeLegacyOpenCodeTools(payload map[string]json.RawMessage, tools []json.R
 		}
 		tools = append(tools, renderOpenCodeTool("read", stub, format))
 		payload["tools"], _ = json.Marshal(tools)
-		// The declaration is only for the legacy gate. With no client tools,
-		// prohibit tool selection instead of relying on its description alone.
-		payload["tool_choice"] = json.RawMessage(`"none"`)
-		if format == FormatAnthropic {
-			payload["tool_choice"] = json.RawMessage(`{"type":"none"}`)
-		}
-		return "", nil
+		// Preserve the caller's tool_choice, including an omitted default, as
+		// opencode2api does. Reject any returned tool call before forwarding it
+		// to a client that supplied no tool executor.
+		return openCodeToolCompatibility{NoClientTools: true}, nil
 	}
 	var tool map[string]json.RawMessage
 	if json.Unmarshal(tools[candidate], &tool) != nil {
-		return "", fmt.Errorf("无法读取 OpenCode read 工具")
+		return openCodeToolCompatibility{}, fmt.Errorf("无法读取 OpenCode read 工具")
 	}
 	if format == FormatOpenAIChat {
 		var function map[string]json.RawMessage
 		if json.Unmarshal(tool["function"], &function) != nil {
-			return "", fmt.Errorf("无法读取 OpenCode read 工具")
+			return openCodeToolCompatibility{}, fmt.Errorf("无法读取 OpenCode read 工具")
 		}
 		function["name"] = json.RawMessage(`"read"`)
 		tool["function"], _ = json.Marshal(function)
@@ -77,7 +74,7 @@ func shapeLegacyOpenCodeTools(payload map[string]json.RawMessage, tools []json.R
 		rewriteOpenCodeToolNames(value, format, alias, "read")
 		payload[field], _ = json.Marshal(value)
 	}
-	return alias, nil
+	return openCodeToolCompatibility{ReadAlias: alias}, nil
 }
 
 func openCodeReadToolName(name string) bool {
@@ -149,13 +146,14 @@ type openCodeAliasBody struct {
 	reader  *bufio.Reader
 	format  clientFormat
 	alias   string
+	noTools bool
 	sse     bool
 	pending []byte
 	err     error
 }
 
-func newOpenCodeAliasBody(source io.ReadCloser, format clientFormat, alias string, sse bool) io.ReadCloser {
-	return &openCodeAliasBody{source: source, reader: bufio.NewReader(source), format: format, alias: alias, sse: sse}
+func newOpenCodeAliasBody(source io.ReadCloser, format clientFormat, compatibility openCodeToolCompatibility, sse bool) io.ReadCloser {
+	return &openCodeAliasBody{source: source, reader: bufio.NewReader(source), format: format, alias: compatibility.ReadAlias, noTools: compatibility.NoClientTools, sse: sse}
 }
 
 func (body *openCodeAliasBody) Read(output []byte) (int, error) {
@@ -171,7 +169,11 @@ func (body *openCodeAliasBody) Read(output []byte) (int, error) {
 			if err != nil {
 				return 0, err
 			}
-			body.pending = restoreOpenCodeToolJSON(raw, body.format, body.alias)
+			body.pending, err = body.restoreJSON(raw)
+			if err != nil {
+				body.err = err
+				return 0, err
+			}
 			body.err = io.EOF
 		} else {
 			var frame []byte
@@ -194,7 +196,12 @@ func (body *openCodeAliasBody) Read(output []byte) (int, error) {
 				}
 				lineStart = len(frame)
 			}
-			body.pending = body.restoreFrame(frame)
+			var err error
+			body.pending, err = body.restoreFrame(frame)
+			if err != nil {
+				body.err = err
+				return 0, err
+			}
 		}
 	}
 	if len(body.pending) == 0 && body.err != nil {
@@ -205,7 +212,7 @@ func (body *openCodeAliasBody) Read(output []byte) (int, error) {
 	return n, nil
 }
 
-func (body *openCodeAliasBody) restoreFrame(frame []byte) []byte {
+func (body *openCodeAliasBody) restoreFrame(frame []byte) ([]byte, error) {
 	lines := bytes.SplitAfter(frame, []byte("\n"))
 	var data [][]byte
 	first := -1
@@ -221,13 +228,16 @@ func (body *openCodeAliasBody) restoreFrame(frame []byte) []byte {
 		data = append(data, value)
 	}
 	if first < 0 {
-		return frame
+		return frame, nil
 	}
 	raw := bytes.Join(data, []byte("\n"))
 	if !json.Valid(raw) {
-		return frame
+		return frame, nil
 	}
-	restored := restoreOpenCodeToolJSON(raw, body.format, body.alias)
+	restored, err := body.restoreJSON(raw)
+	if err != nil {
+		return nil, err
+	}
 	var result bytes.Buffer
 	for index, line := range lines {
 		if index == first {
@@ -238,7 +248,50 @@ func (body *openCodeAliasBody) restoreFrame(frame []byte) []byte {
 			result.Write(line)
 		}
 	}
-	return result.Bytes()
+	return result.Bytes(), nil
+}
+
+func (body *openCodeAliasBody) restoreJSON(raw []byte) ([]byte, error) {
+	if body.noTools {
+		value, err := decodeProtocolObject(raw)
+		if err == nil && openCodeResponseHasToolCall(value) {
+			return nil, fmt.Errorf("OpenCode returned a tool call although the client supplied no tools")
+		}
+	}
+	if body.alias != "" {
+		return restoreOpenCodeToolJSON(raw, body.format, body.alias), nil
+	}
+	return raw, nil
+}
+
+// Check protocol envelopes only. Do not inspect generated text, arbitrary
+// function arguments, or tool-result payloads for tool-like JSON fragments.
+func openCodeResponseHasToolCall(value any) bool {
+	if values, ok := value.([]any); ok {
+		for _, child := range values {
+			if openCodeResponseHasToolCall(child) {
+				return true
+			}
+		}
+		return false
+	}
+	entry := object(value)
+	if entry == nil {
+		return false
+	}
+	kind := str(entry["type"])
+	if kind == "function_call" || kind == "tool_use" || strings.HasPrefix(kind, "response.function_call_arguments.") || len(array(entry["tool_calls"])) > 0 || object(entry["function_call"]) != nil {
+		return true
+	}
+	if kind == "tool_result" || kind == "function_call_output" {
+		return false
+	}
+	for _, key := range []string{"choices", "message", "delta", "item", "response", "output", "content", "content_block"} {
+		if openCodeResponseHasToolCall(entry[key]) {
+			return true
+		}
+	}
+	return false
 }
 
 func (body *openCodeAliasBody) Close() error { return body.source.Close() }

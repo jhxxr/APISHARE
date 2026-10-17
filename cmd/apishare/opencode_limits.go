@@ -69,12 +69,12 @@ func (up *Upstream) openCodeRateKey() openCodeRateKey {
 			}
 		}
 	}
-	raw, _ := json.Marshal([]any{origin, up.openCodeTier(), up.APIKey, egress})
+	raw, _ := json.Marshal([]any{origin, up.openCodeTier(), up.openCodeAPIKey(), egress})
 	return openCodeRateKey{db, sha256.Sum256(raw)}
 }
 
 func (up *Upstream) openCodeRateLimit() *openCodeRateLimitError {
-	if up.Type != "opencode" {
+	if !up.isOpenCode() {
 		return nil
 	}
 	key := up.openCodeRateKey()
@@ -138,7 +138,7 @@ func rememberOpenCodeRateDetail(up *Upstream, limit *openCodeRateLimitError, bod
 }
 
 func markOpenCodeRateSuccess(up *Upstream, started time.Time) {
-	if up.Type != "opencode" {
+	if !up.isOpenCode() {
 		return
 	}
 	key := up.openCodeRateKey()
@@ -156,7 +156,7 @@ func (up *Upstream) availableForRelay() bool {
 
 func (up *Upstream) relayFailures() int {
 	failures := healthFails(up.ID)
-	if up.Type != "opencode" {
+	if !up.isOpenCode() {
 		return failures
 	}
 	key := up.openCodeRateKey()

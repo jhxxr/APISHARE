@@ -46,8 +46,8 @@ func (up *Upstream) applyHeaders(req *http.Request, incoming http.Header) error 
 		}
 		rules = config.headerRules
 	}
-	if up.Type == "opencode" {
-		return applyOpenCodeHeaderRules(req, rules, up.APIKey, incoming)
+	if up.isOpenCode() {
+		return applyOpenCodeHeaderRules(req, rules, up.openCodeAPIKey(), incoming)
 	}
 	if up.Type == "cline" {
 		return up.applyClineHeaders(req, rules, incoming)

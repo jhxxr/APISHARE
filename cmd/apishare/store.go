@@ -338,7 +338,7 @@ type Upstream struct {
 	config           *upstreamConfig // Immutable parsed runtime configuration; never exposed by APIs.
 	ID               int64           `json:"id"`
 	Name             string          `json:"name"`
-	Type             string          `json:"type"` // provider: openai | opencode | cline | anthropic | gemini; OpenAIProtocol selects the outbound protocol
+	Type             string          `json:"type"` // provider: openai | opencode-free | opencode (legacy) | cline | anthropic | gemini
 	BaseURL          string          `json:"base_url"`
 	APIKey           string          `json:"api_key"`
 	Weight           int             `json:"weight"`
@@ -663,6 +663,9 @@ func dbListUpstreams() ([]Upstream, error) {
 }
 
 func dbInsertUpstream(u *Upstream) error {
+	if err := u.normalizeOpenCodeFree(); err != nil {
+		return err
+	}
 	res, err := db.Exec(`INSERT INTO upstreams(name,type,base_url,api_key,weight,models,model_map,enabled,created_at,proxy_id,header_overrides,openai_protocol,structured_output,opencode_tier)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		u.Name, u.Type, u.BaseURL, u.APIKey, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), nowStr(), u.ProxyID, u.HeaderOverrides, u.OpenAIProtocol, u.StructuredOutput, u.OpenCodeTier)
@@ -675,12 +678,15 @@ func dbInsertUpstream(u *Upstream) error {
 }
 
 func dbUpdateUpstream(u *Upstream) error {
+	if err := u.normalizeOpenCodeFree(); err != nil {
+		return err
+	}
 	_, err := db.Exec(`UPDATE upstreams SET name=?,type=?,base_url=?,api_key=?,weight=?,models=?,model_map=?,enabled=?,proxy_id=?,header_overrides=?,openai_protocol=?,structured_output=?,opencode_tier=? WHERE id=?`,
 		u.Name, u.Type, u.BaseURL, u.APIKey, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), u.ProxyID, u.HeaderOverrides, u.OpenAIProtocol, u.StructuredOutput, u.OpenCodeTier, u.ID)
 	if err == nil {
 		// A replaced OpenCode credential must not inherit the row's previous
 		// connection failure. Its credential-scoped rate cooldown is independent.
-		if u.Type == "opencode" {
+		if u.isOpenCode() {
 			healthMarkSuccess(u.ID)
 		}
 		invalidateRoutingSnapshot()

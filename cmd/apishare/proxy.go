@@ -428,8 +428,8 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		url = freeRoute.endpointURL(wireFormat, endpoint)
 	}
 	var freeShaped bool
-	var freeToolAlias string
-	reqBody, freeShaped, err = freeRoute.shapeOpenCodeFreeRequest(reqBody, wireFormat, upModel, &freeToolAlias)
+	var freeTools openCodeToolCompatibility
+	reqBody, freeShaped, err = freeRoute.shapeOpenCodeFreeRequest(reqBody, wireFormat, upModel, &freeTools)
 	if err != nil {
 		info.Status = http.StatusBadRequest
 		return info, false, &protocolConversionError{err}
@@ -466,12 +466,12 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		req.Header.Set("Accept-Encoding", "identity")
 	}
 	switch up.Type {
-	case "opencode":
+	case "opencode", openCodeFreeType:
 		session, sessionErr := openCodeSessionForTask(task, c.Request.Header)
 		if sessionErr != nil {
 			return info, false, sessionErr
 		}
-		setOpenCodeHeaders(req, up.APIKey, wireFormat, session, c.Request.Header)
+		setOpenCodeHeaders(req, up.openCodeAPIKey(), wireFormat, session, c.Request.Header)
 		if openCodeLegacyRequest(req) {
 			if task.openCodeRequest == "" {
 				task.openCodeRequest = req.Header.Get("x-opencode-request")
@@ -509,7 +509,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		if c.Request.Context().Err() != nil || errors.Is(err, errDownstreamWrite) {
 			return
 		}
-		if up.Type == "opencode" && info.Status == http.StatusTooManyRequests {
+		if up.isOpenCode() && info.Status == http.StatusTooManyRequests {
 			return
 		}
 		if err != nil || isRetryableStatus(info.Status) {
@@ -538,7 +538,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	if relayNetwork.BodyIdleTimeout > 0 {
 		resp.Body = newActivityDeadlineBody(resp.Body, relayNetwork.BodyIdleTimeout)
 	}
-	if up.Type == "opencode" && wireFormat == FormatOpenAIResponse && resp.StatusCode == http.StatusBadRequest && !task.openCodeReasoningRepaired {
+	if up.isOpenCode() && wireFormat == FormatOpenAIResponse && resp.StatusCode == http.StatusBadRequest && !task.openCodeReasoningRepaired {
 		original := resp
 		resp, err = retryOpenCodeReasoning(client, req, resp, reqBody, keepalive, cancel)
 		task.openCodeReasoningRepaired = resp != original
@@ -557,12 +557,12 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		retryAfter = openCodeRetryAfter(resp.Header.Get("Retry-After"), time.Now())
 	}
 	var rateLimit *openCodeRateLimitError
-	if up.Type == "opencode" && isRetryableStatus(info.Status) {
+	if up.isOpenCode() && isRetryableStatus(info.Status) {
 		retryAfter = openCodeRetryAfter(resp.Header.Get("Retry-After"), time.Now())
 		if info.Status == http.StatusTooManyRequests {
 			rateLimit = recordOpenCodeRateLimit(up, retryAfter)
 			current, currentErr := cachedRoutingUpstream(up.ID)
-			if currentErr != nil || (current.Type == "opencode" && current.openCodeRateKey() == up.openCodeRateKey()) {
+			if currentErr != nil || (current.isOpenCode() && current.openCodeRateKey() == up.openCodeRateKey()) {
 				healthMarkRetryAfter(up.ID, rateLimit.until)
 			}
 		}
@@ -578,8 +578,15 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 			info.OutputText.WriteString(rateLimit.detail)
 			return info, false, rateLimit
 		}
-		info.OutputText.WriteString(string(b))
+		detail := string(b)
+		if up.isOpenCode() {
+			detail = redactModelTestError(detail, up.openCodeAPIKey())
+		}
+		info.OutputText.WriteString(detail)
 		if isRetryableStatus(info.Status) {
+			if up.isOpenCode() {
+				return info, false, fmt.Errorf("upstream %s returned %d (model=%s, path=%s): %s", up.Name, info.Status, upModel, req.URL.EscapedPath(), truncate(detail, 1000))
+			}
 			return info, false, fmt.Errorf("upstream %s returned %d", up.Name, info.Status)
 		}
 		// 客户端错误（400/404/413/422 等）：不重试。原生透传原始错误体，转换路径包装成本格式错误
@@ -596,8 +603,8 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		normalizeClineResponse(resp)
 	}
 	isSSE := strings.Contains(ct, "text/event-stream")
-	if freeToolAlias != "" {
-		resp.Body = newOpenCodeAliasBody(resp.Body, wireFormat, freeToolAlias, isSSE)
+	if freeTools.ReadAlias != "" || freeTools.NoClientTools {
+		resp.Body = newOpenCodeAliasBody(resp.Body, wireFormat, freeTools, isSSE)
 	}
 
 	if native {

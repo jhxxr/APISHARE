@@ -313,7 +313,11 @@ func registerAdminRoutes(r *gin.Engine) {
 			return
 		}
 		if !validUpstreamType(u.Type) {
-			c.JSON(400, gin.H{"error": "type must be openai, opencode, cline, anthropic or gemini"})
+			c.JSON(400, gin.H{"error": "type must be openai, opencode-free, opencode, cline, anthropic or gemini"})
+			return
+		}
+		if err := u.normalizeOpenCodeFree(); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
 		if u.BaseURL == "" || u.APIKey == "" {
@@ -386,6 +390,11 @@ func registerAdminRoutes(r *gin.Engine) {
 			u.Name = *req.Name
 		}
 		if req.Type != nil {
+			if *req.Type == openCodeFreeType && u.Type != openCodeFreeType {
+				// A newly selected free channel starts anonymously unless the
+				// administrator explicitly supplies a credential for that channel.
+				u.APIKey = "public"
+			}
 			u.Type = *req.Type
 		}
 		if req.OpenAIProtocol != nil {
@@ -446,6 +455,10 @@ func registerAdminRoutes(r *gin.Engine) {
 				}
 			}
 			u.ProxyID = *req.ProxyID
+		}
+		if err := u.normalizeOpenCodeFree(); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
 		}
 		if err := dbUpdateUpstream(u); err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
@@ -522,8 +535,16 @@ func registerAdminRoutes(r *gin.Engine) {
 	// probeUpstream 处理两种探测：未保存的上游（/upstream-probe，必须显式给全参数）
 	// 与已保存的上游（/upstreams/:id/probe，参数留空则用已存值）。
 	probeResult := func(c *gin.Context, up *Upstream) {
-		if !validUpstreamProtocol(up.Type, up.OpenAIProtocol) || !validOpenCodeTier(up.OpenCodeTier) {
+		if err := up.normalizeOpenCodeFree(); err != nil {
+			c.JSON(400, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+		if !validUpstreamType(up.Type) || !validUpstreamProtocol(up.Type, up.OpenAIProtocol) || !validOpenCodeTier(up.OpenCodeTier) {
 			c.JSON(400, gin.H{"ok": false, "error": "invalid upstream protocol or OpenCode tier"})
+			return
+		}
+		if up.BaseURL == "" || up.APIKey == "" {
+			c.JSON(400, gin.H{"ok": false, "error": "base_url and api_key are required"})
 			return
 		}
 		if _, err := parseHeaderOverrides(up.HeaderOverrides); err != nil {
@@ -550,12 +571,12 @@ func registerAdminRoutes(r *gin.Engine) {
 			OpenAIProtocol  string `json:"openai_protocol"`
 			OpenCodeTier    string `json:"opencode_tier"`
 		}
-		if c.ShouldBindJSON(&req) != nil || req.Type == "" || req.BaseURL == "" || req.APIKey == "" {
-			c.JSON(400, gin.H{"ok": false, "error": "type, base_url and api_key are required"})
+		if c.ShouldBindJSON(&req) != nil || req.Type == "" {
+			c.JSON(400, gin.H{"ok": false, "error": "type is required"})
 			return
 		}
 		if !validUpstreamType(req.Type) {
-			c.JSON(400, gin.H{"ok": false, "error": "type must be openai, opencode, cline, anthropic or gemini"})
+			c.JSON(400, gin.H{"ok": false, "error": "type must be openai, opencode-free, opencode, cline, anthropic or gemini"})
 			return
 		}
 		probeResult(c, &Upstream{Type: req.Type, BaseURL: req.BaseURL, APIKey: req.APIKey, ProxyID: req.ProxyID, HeaderOverrides: req.HeaderOverrides, OpenAIProtocol: req.OpenAIProtocol, OpenCodeTier: req.OpenCodeTier})
@@ -586,6 +607,9 @@ func registerAdminRoutes(r *gin.Engine) {
 		typ, base, key := u.Type, u.BaseURL, u.APIKey
 		if strings.TrimSpace(req.Type) != "" {
 			typ = strings.TrimSpace(req.Type)
+		}
+		if typ == openCodeFreeType && u.Type != openCodeFreeType {
+			key = "public"
 		}
 		if strings.TrimSpace(req.BaseURL) != "" {
 			base = strings.TrimSpace(req.BaseURL)

@@ -112,7 +112,7 @@ function setHeaderTemplate(kind) {
   if (kind === "example") {
     headers = { "*": true, "re:^X-Trace-.*$": true, "X-Foo": "{client_header:X-Foo}" };
     const type = editorUpstreamType();
-    if (type !== "opencode") {
+    if (!isOpenCodeType(type)) {
       headers[type === "anthropic" ? "x-api-key" : type === "gemini" ? "x-goog-api-key" : "Authorization"] = ["openai", "cline"].includes(type) ? "Bearer {api_key}" : "{api_key}";
     }
   }

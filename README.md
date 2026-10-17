@@ -60,7 +60,7 @@
   - **管理控制台**：首启进入 `/setup/` 初始化，支持一键热重命名安全后台路径（如 `/secret-portal`），全可视化管理密钥、模型白名单、代理、公告与详细审计日志。
   - **调用速度指标**：每条调用记录显示**首字延迟**（请求发出到首个输出增量）、**总耗时**（覆盖流式输出的完整转发时间）与**输出 TPS**（输出 Token ÷ 实际生成时长），与耗时列区分开，便于直接对比上游响应速度。
   - **调用记录自动清理**：后台设置可选择调用明细保留 **7 天（默认）/ 30 / 90 / 180 / 365 天**或**永久保留**；超期的逐条调用详情每小时自动删除，删除前先把调用次数、Token 与费用按“日期 × 模型”汇总到 `call_log_daily`，累计数据、公开首页统计与费用图表不会丢失。
-  - **自定义模型测试**：在上游列表点击“测试模型”，选择或输入模型，默认发送 `hi`，也可填写自己的多行测试消息；默认使用流式请求，可切换非流式对比兼容性，结果在请求完成后统一展示。支持恢复默认消息、调整最大输出 Token，查看回复、思考内容、耗时、用量和上游错误提示。测试直接使用该上游保存的协议、模型映射、代理及请求头，不经过其他上游；每次测试为独立请求，可能产生上游费用。
+  - **自定义模型测试**：在上游列表点击“测试模型”，自动读取上游模型并展开可搜索列表，已配置模型与上游可用模型分组展示；点选即可切换，也可直接输入列表外的自定义模型名，无需先手动获取再清空输入框。列表在浮层内滚动，不会因模型过多撑长卡片。默认发送 `hi`，也可填写自己的多行测试消息；默认使用流式请求，可切换非流式对比兼容性，结果在请求完成后统一展示。支持恢复默认消息、调整最大输出 Token，查看回复、思考内容、耗时、用量和上游错误提示。测试直接使用该上游保存的协议、模型映射、代理及请求头，不经过其他上游；每次测试为独立请求，可能产生上游费用。
   - **一键复制上游**：在上游列表点击“复制”，确认框内可修改新上游名称（留空自动使用“原名 副本”），保存后会把原上游的接口类型、Base URL、API Key、模型白名单与映射、请求头覆盖、代理、权重与启用状态完整复制为一条新连接，便于快速添加同账号的多密钥或相似配置；复制出的上游立即参与调度，原上游删除后不受影响。
 
 ---
@@ -122,7 +122,7 @@ flowchart TD
 | **OpenAI Chat Completions** | `type: "openai"`<br>`openai_protocol: "chat"` | `/v1/chat/completions` | OpenAI 官方、xAI Grok、DeepSeek、GLM、通义千问、vLLM、Ollama |
 | **OpenAI Responses** | `type: "openai"`<br>`openai_protocol: "responses"` | `/v1/responses` | OpenAI 官方 Responses 端点或支持 Responses 协议的兼容商 |
 | **Cline** | `type: "cline"`<br>`openai_protocol: "chat"` | 固定 Chat Completions，支持账号令牌刷新及免费模型发现 | Cline 账号 / 官方 API |
-| **OpenCode Zen / Go** | `type: "opencode"`<br>`opencode_tier: "zen" / "go"`<br>`openai_protocol: "auto" / "chat" / "responses" / "anthropic"` | 按套餐与模型选择 Chat、Responses 或 Messages 端点 | OpenCode Zen、OpenCode Go |
+| **OpenCode 免费模型** | `type: "opencode-free"`<br>`openai_protocol: "auto" / "chat" / "responses" / "anthropic"` | 自动发现免费模型，按模型选择 Chat、Responses 或 Messages 端点 | OpenCode Zen 免费模型，匿名或自有 Zen Key |
 | **Anthropic Messages** | `type: "anthropic"` | `/v1/messages` | Anthropic 官方 Claude 端点 |
 | **Gemini generateContent** | `type: "gemini"` | `:generateContent`<br>`:streamGenerateContent` | Google AI Studio 官方端点 |
 
@@ -141,25 +141,19 @@ flowchart TD
 
 参考实现：[认证与刷新](https://github.com/luawei1/cline2api/blob/main/auth.go)、[请求构造与响应处理](https://github.com/luawei1/cline2api/blob/main/proxy.go)、[动态免费模型目录](https://github.com/luawei1/cline2api/blob/main/models_sync.go)、[默认客户端请求头](https://github.com/luawei1/cline2api/blob/main/admin.go)。
 
-#### OpenCode Zen / Go 渠道
+#### OpenCode 免费模型渠道
 
-新增 OpenCode 上游时，选择 Zen 或 Go，填入对应 API Key，保持“按套餐和模型自动识别”即可。默认根地址分别是 `https://opencode.ai/zen` 和 `https://opencode.ai/zen/go`，与参考项目 2026-10-17 的持 Key 配置一致。也可手动填写 `https://opencode.ai/inference` 或 `https://opencode.ai/inference/go`，此时网关自动选择 `openai` / `anthropic` 地址族和对应的 2.x 请求格式。自建代理可填写自己的 Base URL。
+在「添加上游」选择 **OpenCode 免费模型**，保留默认地址 `https://opencode.ai/zen`，选择需要的代理后，点击「获取模型」，勾选模型并保存即可。无需安装 CLI，也无需选择 Zen / Go 套餐。API Key 可留空，网关默认使用匿名凭据 `public`；如需使用自己的 Zen Key，可以在同一连接中填写。编辑已有免费连接时留空保留凭据，填写 `public` 可切回匿名。
 
-OpenCode 渠道按所填地址选择客户端头：inference 使用 `User-Agent: opencode/latest/<版本>/cli`、`x-opencode-client: cli`、40 位小写十六进制项目 ID，以及 `x-opencode-session`、`x-opencode-session-id`、`x-session-affinity` 和 `X-Session-Id`；旧 `/zen` 使用 `opencode/1.18.31 (<系统> <架构>; <运行时>)`、`prj_` 项目 ID 和每次请求的 `x-opencode-request`，不发送 `x-opencode-session-id`。2.x 版本由官方 npm 包 `@opencode/cli` 每小时刷新；首次检测成功前使用内置兼容版本。模型列表、模型测试和正式调用使用相同的客户端头适配。Messages 设置 `x-api-key`、`anthropic-version` 和默认 Anthropic beta 头；当前官方 inference 地址还设置 Console Bearer 认证。Chat / Responses 及模型列表使用 Bearer 认证。
+- **免费目录**：从官方目录识别免费模型，只展示免费条目；填写实际 Key 后仍只提供免费模型。正式调用和模型测试都会先检查映射后的模型 ID，手动白名单和别名不会绕过免费限制。目录短暂不可用时沿用缓存，已有目录中的 `-free` 条目可由端点文档补充识别。
+- **模型名称**：Zen 免费版的 ID 为 `space-bunny-free`；`space-bunny` 是 Go 目录中的另一个模型，不会自动视为免费。客户端可继续使用自己的名称，在模型映射中配置 `{"space-bunny":"space-bunny-free"}`。请以「获取模型」返回的最新目录为准。
+- **协议与代理**：默认自动识别模型原生协议，也可手动指定 Chat、Responses 或 Messages；免费资格仍由官方目录检查。目录刷新、模型获取、正式请求和模型测试使用所选代理；模型列表访问成功不代表某个推理请求一定被上游放行。
+- **工具兼容**：默认 `/zen` 入口保留客户端工具的参数定义，必要时把真实客户端工具临时命名为 `read`，同步改写工具选择和历史调用，并在 JSON / SSE 响应中还原名称。没有客户端工具时只声明禁用的兼容工具，保留调用方原有的工具选择设置；若上游仍返回工具调用，在转发给客户端之前拦截，不会执行或透传这个客户端不存在的工具。官方网关 `/inference` 请求缺少完整原生工具时自动使用兼容的 `/zen` 入口，避免向客户端返回它没有声明的 `glob`、`shell` 等工具；自建代理路径不会自动改写。网关不执行客户端工具。
+- **会话与限流**：复用 OpenCode 客户端头、官方降序格式会话标识和会话持久化；保持对话亲和性。旧版本持久化的不合法会话标识会在读取时原子修复，合法标识保持稳定；旧 `/zen` 入口的请求 ID 使用 `req_` 加 32 位 hex。匿名请求按代理出口共享 429 冷却；相同实际 Key 在同一服务和套餐下共享冷却。遵守上游 `Retry-After`，诊断不更新生产冷却。
+- **错误详情**：`403 FreeTierError` 表示上游拒绝当前免费请求，仍受其客户端校验、账号与区域策略影响。正式转发保留脱敏后的上游错误详情，并显示实际模型和请求路径；没有其他可用渠道时也不会只剩一个没有原因的 `403`。
+- **旧配置兼容**：已有 `type: "opencode"` 的 Zen / Go 连接保留原套餐、Key、模型和转发方式，编辑器显示为「OpenCode · 旧配置」。新建入口使用 `opencode-free`；旧连接可改选「OpenCode 免费模型」，重新获取免费模型并保存。切换时默认使用匿名凭据，若需要自己的 Zen Key，请显式填写；Go 地址不能用于新的免费渠道。
 
-会话标识优先取客户端提供的 OpenCode 会话头、`X-Session-Id`、`X-Conversation-Id`、`conversation-id` 或请求体的 `metadata.session_id` / `conversation_id`；缺失时取模型与对话开头的指纹。非 OpenCode 格式、以及外形正确但时间位编码不符合官方降序规则的标识，会映射为官方格式的会话 ID，按网关 API Key 隔离，保存到 SQLite 并滑动保留 30 天；重试、切换上游与多轮请求沿用这个映射。提供显式会话标识可区分开头内容相同的独立对话。OpenCode 会话头和项目 ID 由渠道按对应入口管理；批量透传不会破坏映射。inference 禁止发送 `x-opencode-request`，旧 `/zen` 的请求 ID 在同次转发的重试间保持一致。
-
-OpenCode 的 `auto` 从官方模型目录和端点文档识别原生协议，按 Zen / Go 分别记录，同名模型可使用不同协议。识别使用映射后的模型 ID，正式调用与模型测试共用该结果；未知或不支持的协议不会猜成 Chat，模型列表也会过滤这些条目。自建代理或未收录模型可手动选择固定协议并配置模型白名单。目录请求使用渠道所选代理，不携带渠道密钥或自定义请求头；成功结果在内存缓存 5 分钟并持久化到 SQLite，刷新失败保留上次结果并退避重试。
-
-OpenCode 正式转发收到首个 429 即冷却 15 秒，连续限流按 15、30、60、120 秒退避，并完整遵守更长的 `Retry-After`。实际 Key 的冷却在同一服务、套餐下跨模型及复制渠道共享；匿名 `public` 的冷却按配置的代理出口共享。同一 Key 被限流时，不会通过复制渠道再次请求它；可继续选择其他有效 Key。较早发起的并发成功请求不会清除较晚收到的 429 冷却。诊断请求不更新生产冷却状态。所有候选均限流且尚未输出响应时，返回 HTTP 429 和剩余等待秒数，不包装成 502。响应头 `X-APISHARE-RateLimit-Source` 区分 `upstream`、`gateway-qps` 和 `gateway-concurrency`；后两者来自本地 API Key 的 QPS / 并发限制。账户或出口的真实额度仍由上游决定。冷却和入口请求格式对照了 [2026-10-17 参考版本](https://github.com/jasonxu114514/opencode2api/tree/a9470df4fca93a47d7ec58febcbc63100af88644/internal/gateway)。
-
-Responses 明确返回推理引用过期错误时，会保留会话、工具调用与消息内容，移除失效推理引用并仅修复重试一次。普通 400 错误不触发此重试，模型诊断也不触发自动修复。流式输出开始后沿用网关现有的禁止重放机制。
-
-免费 OpenCode 模型按入口适配工具：inference 补齐 `shell`、`edit`、`glob`、`grep`、`read` 五个工具，同名官方工具替换为完整官方定义；旧 `/zen` 只满足一个 `read` 工具要求，保留客户端现有定义，必要时将 `ReadFile` 等读文件工具临时别名为 `read`，同步改写请求内的工具选择与历史调用，并在 JSON / SSE 响应中还原原名。没有读文件工具时，旧入口仅附加一个声明为禁用的兼容工具。此行为同时用于匿名和持 Key 的免费请求，以及后台模型测试。识别依据是映射后的模型 ID 含 `free`，或官方目录明确标明输入、输出成本均为零且未弃用；固定协议渠道沿用已缓存的目录信息，自动协议渠道会先加载目录。声明只随请求转发，网关不执行这些工具。
-
-免费请求会强制使用上游流式响应，Chat 同时启用 `stream_options.include_usage`，保留其他流式选项；客户端请求普通 JSON 时，网关聚合流式内容和用量后返回普通 JSON。原始客户端请求和会话映射保持独立，跨渠道重试不会把这些工具注入到其他渠道。匿名免费 Zen 配置可选择 Zen、API Key 填 `public`、协议保持自动；模型列表仅展示已识别的免费模型。持有实际 Key 时仍使用该 Key，不自动替换为 `public`。
-
-工具声明快照来自 OpenCode CLI，随程序内置，来源和 MIT 许可见 `cmd/apishare/third_party/opencode/`。上游更新校验规则后，可能需要更新此快照；免费服务的账号、区域和限流策略仍由上游决定。具体实现对照了 [opencode2api 协议发现](https://github.com/jasonxu114514/opencode2api/blob/a6601da673c03832bf78ce04b100dee8c8a92385/internal/models/discovery.go)、[请求构造](https://github.com/jasonxu114514/opencode2api/blob/a6601da673c03832bf78ce04b100dee8c8a92385/internal/gateway/upstream.go) 和 [OpenCode 官方请求头](https://github.com/anomalyco/opencode/blob/00e7472faa2ef15b30db6110440117e4e7e1a72a/packages/core/src/session/model-request.ts)。
+免费模型、额度和访问策略由 OpenCode 决定。内置工具定义与 MIT 许可见 `cmd/apishare/third_party/opencode/`。参考：[OpenCode 官方模型目录](https://opencode.ai/v2/docs/console/models/)、[opencode2api 请求适配](https://github.com/jasonxu114514/opencode2api/blob/main/internal/gateway/upstream.go)、[会话编码修复](https://github.com/jasonxu114514/opencode2api/pull/70)。
 
 > [!TIP]
 > **路由匹配优先级规则（`pickUpstream`）**：

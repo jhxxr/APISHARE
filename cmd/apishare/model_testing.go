@@ -101,8 +101,8 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 	if err != nil {
 		return nil, 0, err
 	}
-	var freeToolAlias string
-	body, freeShaped, err := freeRoute.shapeOpenCodeFreeRequest(body, format, model, &freeToolAlias)
+	var freeTools openCodeToolCompatibility
+	body, freeShaped, err := freeRoute.shapeOpenCodeFreeRequest(body, format, model, &freeTools)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -126,12 +126,12 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 		req.Header.Set("Accept-Encoding", "identity")
 	}
 	switch up.Type {
-	case "opencode":
+	case "opencode", openCodeFreeType:
 		session, err := newOpenCodeSessionID()
 		if err != nil {
 			return nil, 0, err
 		}
-		setOpenCodeHeaders(req, up.APIKey, format, session, nil)
+		setOpenCodeHeaders(req, up.openCodeAPIKey(), format, session, nil)
 	case "anthropic":
 		req.Header.Set("x-api-key", up.APIKey)
 		req.Header.Set("anthropic-version", "2023-06-01")
@@ -167,8 +167,8 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 	if up.Type == "cline" {
 		normalizeClineResponse(resp, 4<<20)
 	}
-	if freeToolAlias != "" {
-		resp.Body = newOpenCodeAliasBody(resp.Body, format, freeToolAlias, strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream"))
+	if freeTools.ReadAlias != "" || freeTools.NoClientTools {
+		resp.Body = newOpenCodeAliasBody(resp.Body, format, freeTools, strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream"))
 	}
 	result, err := readModelTestResponse(resp.Body, resp.Header.Get("Content-Type"), format)
 	if err != nil {

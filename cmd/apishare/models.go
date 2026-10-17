@@ -47,7 +47,7 @@ func upstreamModelCacheKeyForProxy(u *Upstream, p *OutboundProxy) modelCacheKey 
 		proxyConnection = proxyFingerprint(p)
 	}
 	connection, _ := json.Marshal([]any{u.Type, u.BaseURL, u.APIKey, proxyConnection, u.HeaderOverrides, clientHeaderVersionFingerprint(u.HeaderOverrides)})
-	if u.Type == "opencode" {
+	if u.isOpenCode() {
 		connection = append(connection, []byte(openCodeUserAgent())...)
 		connection = append(connection, []byte(u.OpenAIProtocol+":"+u.openCodeTier())...)
 	}
@@ -106,15 +106,20 @@ func probeConfiguredModels(ctx context.Context, up *Upstream) ([]string, error) 
 }
 
 func probeConfiguredModelList(ctx context.Context, up *Upstream, client *http.Client, efforts map[string][]string) ([]string, error) {
+	probe := *up
+	up = &probe
+	if err := up.normalizeOpenCodeFree(); err != nil {
+		return nil, err
+	}
 	if up.Type == "cline" {
 		return probeClineModels(ctx, up, client)
 	}
 	base := up.BaseURL
-	if up.Type == "opencode" {
+	if up.isOpenCode() {
 		base = strings.TrimSuffix(up.endpointURL(FormatOpenAIChat, "/v1/models"), "/v1/models")
 	}
 	ids, err := probeUpstreamModelListWithClient(ctx, up.Type, base, up.APIKey, client, up.HeaderOverrides, efforts)
-	if err != nil || (!up.openCodeAuto() && !up.openCodePublic()) {
+	if err != nil || (!up.openCodeAuto() && !up.openCodePublic() && !up.openCodeFreeOnly()) {
 		return ids, err
 	}
 	catalog, err := up.openCodeCatalog(ctx)
@@ -123,7 +128,11 @@ func probeConfiguredModelList(ctx context.Context, up *Upstream, client *http.Cl
 	}
 	supported := make([]string, 0, len(ids))
 	for _, id := range ids {
-		if (!up.openCodeAuto() || catalog.Tiers[up.openCodeTier()][id] != "") && (!up.openCodePublic() || up.openCodeFreeModel(id)) {
+		free := up.openCodeFreeModel(id)
+		if up.openCodeFreeOnly() {
+			free = openCodeCatalogFreeModel(catalog, "zen", id)
+		}
+		if (!up.openCodeAuto() || catalog.Tiers[up.openCodeTier()][id] != "") && (!(up.openCodePublic() || up.openCodeFreeOnly()) || free) {
 			supported = append(supported, id)
 		}
 	}
@@ -156,6 +165,9 @@ func probeUpstreamModelsWithClient(ctx context.Context, upType, baseURL, apiKey 
 	if len(headerOverrides) > 0 {
 		headers = headerOverrides[0]
 	}
+	if upType == openCodeFreeType {
+		return probeConfiguredModelList(ctx, &Upstream{Type: upType, BaseURL: baseURL, APIKey: apiKey, HeaderOverrides: headers}, client, nil)
+	}
 	return probeUpstreamModelListWithClient(ctx, upType, baseURL, apiKey, client, headers, nil)
 }
 
@@ -165,7 +177,7 @@ func probeUpstreamModelListWithClient(ctx context.Context, upType, baseURL, apiK
 	}
 	upType, baseURL, apiKey = strings.TrimSpace(upType), strings.TrimSpace(baseURL), strings.TrimSpace(apiKey)
 	if !validUpstreamType(upType) {
-		return nil, fmt.Errorf("type must be openai, opencode, cline, anthropic or gemini")
+		return nil, fmt.Errorf("type must be openai, opencode-free, opencode, cline, anthropic or gemini")
 	}
 	base, err := url.Parse(baseURL)
 	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" || base.User != nil || base.RawQuery != "" || base.Fragment != "" {
@@ -204,7 +216,7 @@ func probeUpstreamModelListWithClient(ctx context.Context, upType, baseURL, apiK
 		}
 		req.Header.Set("Accept", "application/json")
 		switch upType {
-		case "opencode":
+		case "opencode", openCodeFreeType:
 			session, err := newOpenCodeSessionID()
 			if err != nil {
 				return nil, err
@@ -402,7 +414,7 @@ func availableModels(ctx context.Context) ([]catalogModel, error) {
 		go func() {
 			defer workers.Done()
 			for index := range jobs {
-				if (ups[index].openCodeAuto() || ups[index].openCodePublic()) && strings.TrimSpace(ups[index].Models) != "" {
+				if (ups[index].openCodeAuto() || ups[index].openCodePublic() || ups[index].openCodeFreeOnly()) && strings.TrimSpace(ups[index].Models) != "" {
 					_, fetchErrors[index] = ups[index].openCodeCatalog(ctx)
 				} else {
 					ids[index], fetchErrors[index] = cachedUpstreamModels(ctx, &ups[index])
@@ -412,7 +424,7 @@ func availableModels(ctx context.Context) ([]catalogModel, error) {
 	}
 enqueue:
 	for i, up := range ups {
-		if !up.Enabled || up.Weight <= 0 || (strings.TrimSpace(up.Models) != "" && !up.openCodeAuto() && !up.openCodePublic()) {
+		if !up.Enabled || up.Weight <= 0 || (strings.TrimSpace(up.Models) != "" && !up.openCodeAuto() && !up.openCodePublic() && !up.openCodeFreeOnly()) {
 			continue
 		}
 		select {
@@ -435,7 +447,7 @@ enqueue:
 			if u.openCodeAuto() && u.routingWireFormat(FormatOpenAIChat, id) == "" {
 				return
 			}
-			if u.openCodePublic() && !u.openCodeFreeModel(u.mapModel(id)) {
+			if (u.openCodePublic() || u.openCodeFreeOnly()) && !u.openCodeFreeModel(u.mapModel(id)) {
 				return
 			}
 			if id != "" && !seen[id] {

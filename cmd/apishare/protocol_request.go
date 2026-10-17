@@ -34,7 +34,7 @@ func (u *Upstream) wireFormat(in clientFormat) clientFormat {
 		return FormatAnthropic
 	case "gemini":
 		return FormatGemini
-	case "opencode":
+	case "opencode", openCodeFreeType:
 		switch u.OpenAIProtocol {
 		case "chat":
 			return FormatOpenAIChat
@@ -65,14 +65,14 @@ func validOpenAIProtocol(p string) bool {
 }
 
 func validUpstreamType(t string) bool {
-	return t == "openai" || t == "opencode" || t == "cline" || t == "anthropic" || t == "gemini"
+	return t == "openai" || t == "opencode" || t == openCodeFreeType || t == "cline" || t == "anthropic" || t == "gemini"
 }
 
 func validUpstreamProtocol(upstreamType, protocol string) bool {
 	if upstreamType == "cline" {
 		return protocol == "" || protocol == "auto" || protocol == "chat"
 	}
-	if upstreamType == "opencode" {
+	if upstreamType == "opencode" || upstreamType == openCodeFreeType {
 		return protocol == "" || protocol == "auto" || protocol == "chat" || protocol == "responses" || protocol == "anthropic"
 	}
 	return validOpenAIProtocol(protocol)

@@ -52,9 +52,10 @@ func explicitSessionID(header http.Header, bodySession string) string {
 }
 
 func openCodeSessionForTask(task *relayTask, incoming http.Header) (string, error) {
-	if task.openCodeSession != "" {
+	if openCodeDescendingPattern.MatchString(task.openCodeSession) {
 		return task.openCodeSession, nil
 	}
+	task.openCodeSession = ""
 	cr := task.canon
 	if cr == nil {
 		cr = &canonReq{Model: task.model}
@@ -80,21 +81,32 @@ func openCodeSessionForTask(task *relayTask, incoming http.Header) (string, erro
 		return "", fmt.Errorf("OpenCode session store is unavailable")
 	}
 	now := time.Now()
+	scopeHash := hex.EncodeToString(sum[:])
+	var session string
 	err = db.QueryRow(`INSERT INTO opencode_sessions(scope,session_id,expires_at) VALUES(?,?,?)
 		ON CONFLICT(scope) DO UPDATE SET
 		 session_id=CASE WHEN opencode_sessions.expires_at<=? THEN excluded.session_id ELSE opencode_sessions.session_id END,
-		 expires_at=excluded.expires_at RETURNING session_id`, hex.EncodeToString(sum[:]), newID, now.Add(openCodeSessionTTL).Unix(), now.Unix()).Scan(&task.openCodeSession)
+		 expires_at=excluded.expires_at RETURNING session_id`, scopeHash, newID, now.Add(openCodeSessionTTL).Unix(), now.Unix()).Scan(&session)
 	if err != nil {
 		return "", fmt.Errorf("could not persist OpenCode session ID")
 	}
-	return task.openCodeSession, nil
+	if !openCodeDescendingPattern.MatchString(session) {
+		// Older releases persisted foreign encodings for up to 30 days. Repair
+		// those mappings once, keeping a concurrent repair's already valid ID.
+		err = db.QueryRow(`UPDATE opencode_sessions
+			SET session_id=CASE WHEN session_id=? THEN ? ELSE session_id END
+			WHERE scope=? RETURNING session_id`, session, newID, scopeHash).Scan(&session)
+		if err != nil || !openCodeDescendingPattern.MatchString(session) {
+			return "", fmt.Errorf("could not repair legacy OpenCode session ID")
+		}
+	}
+	task.openCodeSession = session
+	return session, nil
 }
 
 func setOpenCodeHeaders(req *http.Request, apiKey string, format clientFormat, session string, incoming http.Header) {
 	req.Header.Set("User-Agent", openCodeUserAgent())
-	if req.Header.Get("Accept") == "" {
-		req.Header.Set("Accept", "application/json, text/event-stream")
-	}
+	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("x-opencode-client", "cli")
 	req.Header.Set("x-opencode-project", openCodeProjectID("global", false))
 	if project := strings.TrimSpace(incoming.Get("x-opencode-project")); project != "" && validHeaderValue(project) {
@@ -120,7 +132,7 @@ func setOpenCodeHeaders(req *http.Request, apiKey string, format clientFormat, s
 			project = "global"
 		}
 		req.Header.Set("x-opencode-project", openCodeProjectID(project, true))
-		var requestNonce [12]byte
+		var requestNonce [16]byte
 		if _, requestErr := rand.Read(requestNonce[:]); requestErr == nil {
 			req.Header.Set("x-opencode-request", "req_"+hex.EncodeToString(requestNonce[:]))
 		}
@@ -239,7 +251,7 @@ func openCodeLegacyRequest(req *http.Request) bool {
 }
 
 func (u *Upstream) openCodeLegacy() bool {
-	if u.Type != "opencode" {
+	if !u.isOpenCode() {
 		return false
 	}
 	probe, err := http.NewRequest(http.MethodPost, upstreamURL(u.BaseURL, "/v1/messages"), nil)
