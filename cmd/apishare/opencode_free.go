@@ -5,6 +5,8 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"reflect"
 	"strings"
 	"sync"
 )
@@ -54,6 +56,104 @@ func (u *Upstream) openCodeFreeModel(model string) bool {
 	return latestOpenCodeCatalogLocked().FreeModels[u.openCodeTier()][model]
 }
 
+// The inference gate requires CLI schemas, but the gateway cannot execute the
+// tools it declares. Generic clients must use the legacy Zen gate, where their
+// own schemas can be preserved. Only change a known official origin and path;
+// custom gateways and Go credentials must never be redirected to another tier.
+func (u *Upstream) openCodeFreeRoute(body []byte, format clientFormat, model string) (*Upstream, error) {
+	if u.Type != "opencode" || (!u.openCodePublic() && !u.openCodeFreeModel(model)) || u.openCodeLegacy() {
+		return u, nil
+	}
+	if format != FormatOpenAIChat && format != FormatOpenAIResponse && format != FormatAnthropic {
+		return u, nil
+	}
+	var payload map[string]json.RawMessage
+	if json.Unmarshal(body, &payload) != nil || payload == nil {
+		return nil, fmt.Errorf("OpenCode 免费模型请求必须是 JSON 对象")
+	}
+	var tools []json.RawMessage
+	if raw := payload["tools"]; len(raw) > 0 && json.Unmarshal(raw, &tools) != nil {
+		return nil, fmt.Errorf("OpenCode tools 必须是数组")
+	}
+	compatible, err := openCodeNativeToolContracts(tools, format)
+	if err != nil {
+		return nil, err
+	}
+	if compatible {
+		return u, nil
+	}
+	parsed, err := url.Parse(strings.TrimSpace(u.BaseURL))
+	if err == nil && parsed.Scheme == "https" && strings.EqualFold(parsed.Host, "opencode.ai") && u.openCodeTier() == "zen" {
+		switch strings.TrimRight(parsed.Path, "/") {
+		case "/inference", "/inference/v1", "/inference/openai", "/inference/openai/v1", "/inference/anthropic", "/inference/anthropic/v1":
+			parsed.Path, parsed.RawPath = "/zen", ""
+			route := *u
+			route.BaseURL = parsed.String()
+			return &route, nil
+		}
+	}
+	return nil, fmt.Errorf("OpenCode inference 免费模型要求完整的原生工具及参数；当前客户端工具不兼容。Zen 渠道请将上游地址改为 https://opencode.ai/zen；自定义网关请配置对应的 /zen 入口")
+}
+
+func openCodeToolContract(raw json.RawMessage, format clientFormat) (string, json.RawMessage) {
+	var tool map[string]json.RawMessage
+	if json.Unmarshal(raw, &tool) != nil {
+		return "", nil
+	}
+	if format == FormatOpenAIChat {
+		var function map[string]json.RawMessage
+		if json.Unmarshal(tool["function"], &function) != nil {
+			return "", nil
+		}
+		tool = function
+	} else if format == FormatOpenAIResponse {
+		var kind string
+		_ = json.Unmarshal(tool["type"], &kind)
+		if kind != "function" {
+			return "", nil
+		}
+	} else if format == FormatAnthropic {
+		var kind string
+		_ = json.Unmarshal(tool["type"], &kind)
+		if kind != "" && kind != "custom" {
+			return "", nil
+		}
+	}
+	var name string
+	_ = json.Unmarshal(tool["name"], &name)
+	if format == FormatAnthropic {
+		return name, tool["input_schema"]
+	}
+	return name, tool["parameters"]
+}
+
+// Names alone are insufficient: read.path and Read.file_path, for example,
+// are different contracts. Never replace a caller's schema or add capabilities
+// that its tool executor did not offer.
+func openCodeNativeToolContracts(tools []json.RawMessage, format clientFormat) (bool, error) {
+	definitions, err := openCodeToolDefinitions()
+	if err != nil {
+		return false, err
+	}
+	present := make(map[string]bool, len(tools))
+	for _, raw := range tools {
+		name, schema := openCodeToolContract(raw, format)
+		if definition, known := definitions[name]; known {
+			var actual, expected any
+			if json.Unmarshal(schema, &actual) != nil || json.Unmarshal(definition.Parameters, &expected) != nil || !reflect.DeepEqual(actual, expected) {
+				return false, nil
+			}
+			present[name] = true
+		}
+	}
+	for _, name := range []string{"shell", "edit", "glob", "grep", "read"} {
+		if !present[name] {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func (u *Upstream) shapeOpenCodeFreeRequest(body []byte, format clientFormat, model string, toolAlias ...*string) ([]byte, bool, error) {
 	if u.Type != "opencode" || (!u.openCodePublic() && !u.openCodeFreeModel(model)) {
 		return body, false, nil
@@ -97,32 +197,29 @@ func (u *Upstream) shapeOpenCodeFreeRequest(body []byte, format clientFormat, mo
 	if err != nil {
 		return nil, false, err
 	}
-	present := make(map[string]bool, len(tools))
-	for index, tool := range tools {
-		var entry struct {
-			Name     string `json:"name"`
-			Function struct {
-				Name string `json:"name"`
-			} `json:"function"`
-		}
-		if json.Unmarshal(tool, &entry) != nil {
-			continue
-		}
-		name := entry.Name
-		if format == FormatOpenAIChat {
-			name = entry.Function.Name
-		}
-		if name == "" {
-			continue
-		}
-		present[name] = true
-		if definition, known := definitions[name]; known {
-			tools[index] = renderOpenCodeTool(name, definition, format)
-		}
+	compatible, err := openCodeNativeToolContracts(tools, format)
+	if err != nil {
+		return nil, false, err
 	}
-	for _, name := range []string{"shell", "edit", "glob", "grep", "read"} {
-		if !present[name] {
-			tools = append(tools, renderOpenCodeTool(name, definitions[name], format))
+	if !compatible {
+		return nil, false, fmt.Errorf("OpenCode inference 免费模型工具与客户端不兼容，请使用 Zen 兼容入口")
+	}
+	for index, tool := range tools {
+		name, _ := openCodeToolContract(tool, format)
+		if definition, known := definitions[name]; known {
+			// Keep strict/cache flags and other client fields while normalizing
+			// only the description required by the inference gate.
+			var entry map[string]json.RawMessage
+			_ = json.Unmarshal(tool, &entry)
+			if format == FormatOpenAIChat {
+				var function map[string]json.RawMessage
+				_ = json.Unmarshal(entry["function"], &function)
+				function["description"], _ = json.Marshal(definition.Description)
+				entry["function"], _ = json.Marshal(function)
+			} else {
+				entry["description"], _ = json.Marshal(definition.Description)
+			}
+			tools[index], _ = json.Marshal(entry)
 		}
 	}
 	payload["tools"], _ = json.Marshal(tools)

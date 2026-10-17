@@ -10,33 +10,42 @@ import (
 )
 
 // The legacy Zen gate only requires a read tool. Preserve the client's schema
-// and alias an existing file reader rather than replacing it with CLI 2.x tools.
+// and alias an existing tool, preferring a file reader. Even a differently named
+// tool must remain executable by the caller once its original name is restored.
 func shapeLegacyOpenCodeTools(payload map[string]json.RawMessage, tools []json.RawMessage, format clientFormat) (string, error) {
 	candidate, alias := -1, ""
+	fallback, fallbackName := -1, ""
 	for index, raw := range tools {
-		var tool map[string]any
-		if json.Unmarshal(raw, &tool) != nil {
-			continue
-		}
-		entry := tool
-		if format == FormatOpenAIChat {
-			entry = object(tool["function"])
-		}
-		name := str(entry["name"])
+		name, _ := openCodeToolContract(raw, format)
 		if name == "read" {
 			return "", nil
+		}
+		if fallback < 0 && name != "" {
+			fallback, fallbackName = index, name
 		}
 		if candidate < 0 && openCodeReadToolName(name) {
 			candidate, alias = index, name
 		}
 	}
 	if candidate < 0 {
+		candidate, alias = fallback, fallbackName
+	}
+	if candidate < 0 {
+		if len(tools) != 0 {
+			return "", fmt.Errorf("OpenCode Zen 免费模型需要至少一个客户端函数工具，当前工具类型不支持兼容别名")
+		}
 		stub := openCodeToolDefinition{
 			Description: "Disabled compatibility declaration. Do not invoke this tool. Use the caller's available tools instead.",
 			Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
 		}
 		tools = append(tools, renderOpenCodeTool("read", stub, format))
 		payload["tools"], _ = json.Marshal(tools)
+		// The declaration is only for the legacy gate. With no client tools,
+		// prohibit tool selection instead of relying on its description alone.
+		payload["tool_choice"] = json.RawMessage(`"none"`)
+		if format == FormatAnthropic {
+			payload["tool_choice"] = json.RawMessage(`{"type":"none"}`)
+		}
 		return "", nil
 	}
 	var tool map[string]json.RawMessage

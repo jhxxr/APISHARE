@@ -415,9 +415,21 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		}
 		url = up.endpointURL(wireFormat, nativeEndpoint(wireFormat, &canonReq{Model: upModel, Stream: task.stream}))
 	}
+	freeRoute, err := up.openCodeFreeRoute(reqBody, wireFormat, upModel)
+	if err != nil {
+		info.Status = http.StatusBadRequest
+		return info, false, &protocolConversionError{err}
+	}
+	if freeRoute != up {
+		endpoint := task.endpoint
+		if !native {
+			endpoint = nativeEndpoint(wireFormat, &canonReq{Model: upModel, Stream: task.stream})
+		}
+		url = freeRoute.endpointURL(wireFormat, endpoint)
+	}
 	var freeShaped bool
 	var freeToolAlias string
-	reqBody, freeShaped, err = up.shapeOpenCodeFreeRequest(reqBody, wireFormat, upModel, &freeToolAlias)
+	reqBody, freeShaped, err = freeRoute.shapeOpenCodeFreeRequest(reqBody, wireFormat, upModel, &freeToolAlias)
 	if err != nil {
 		info.Status = http.StatusBadRequest
 		return info, false, &protocolConversionError{err}

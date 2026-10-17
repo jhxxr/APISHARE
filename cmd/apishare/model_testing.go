@@ -97,12 +97,16 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 	if err != nil {
 		return nil, 0, err
 	}
-	var freeToolAlias string
-	body, freeShaped, err := up.shapeOpenCodeFreeRequest(body, format, model, &freeToolAlias)
+	freeRoute, err := up.openCodeFreeRoute(body, format, model)
 	if err != nil {
 		return nil, 0, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, up.endpointURL(format, nativeEndpoint(format, cr)), bytes.NewReader(body))
+	var freeToolAlias string
+	body, freeShaped, err := freeRoute.shapeOpenCodeFreeRequest(body, format, model, &freeToolAlias)
+	if err != nil {
+		return nil, 0, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, freeRoute.endpointURL(format, nativeEndpoint(format, cr)), bytes.NewReader(body))
 	if err != nil {
 		return nil, 0, fmt.Errorf("无法创建模型测试请求")
 	}
