@@ -5,167 +5,89 @@
 <h1 align="center">API Share</h1>
 
 <p align="center">
-  <strong>轻量级 · 全协议双向互转 · 会话粘性 · 零外部依赖的现代化 AI 分发网关</strong>
+  <strong>轻量级 AI 分发网关 · 全协议双向转换 · 会话粘性 · 单二进制零外部依赖</strong>
   <br />
-  <em>Universal AI Routing Gateway with Bi-directional Protocol Conversion, Prompt Cache Stickiness & Zero External Dependencies</em>
+  <em>Universal AI routing gateway with bi-directional protocol conversion and prompt-cache stickiness</em>
 </p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square" alt="License"></a>
   <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.26+-00ADD8?style=flat-square&logo=go" alt="Go Version"></a>
-  <a href="https://github.com"><img src="https://img.shields.io/badge/Docker-GHCR-2496ED?style=flat-square&logo=docker" alt="Docker Support"></a>
+  <a href="https://github.com/jhxxr/APISHARE/pkgs/container/apishare"><img src="https://img.shields.io/badge/Docker-GHCR-2496ED?style=flat-square&logo=docker" alt="Docker Support"></a>
   <a href="https://sqlite.org/"><img src="https://img.shields.io/badge/Storage-Pure_Go_SQLite_(WAL)-003B57?style=flat-square&logo=sqlite" alt="SQLite"></a>
   <img src="https://img.shields.io/badge/Platform-Linux%20|%20macOS%20|%20Windows-lightgrey?style=flat-square" alt="Platform">
   <img src="https://img.shields.io/badge/PRs-Welcome-brightgreen.svg?style=flat-square" alt="PRs Welcome">
 </p>
 
 <p align="center">
-  <a href="#-核心特性">✨ 核心特性</a> •
-  <a href="#️-架构与协议矩阵">🏗️ 架构与协议</a> •
-  <a href="#-快速开始">🚀 快速开始</a> •
-  <a href="#-常用客户端接入">🔌 客户端接入</a> •
-  <a href="#-跨协议转换引擎">🔄 协议转换引擎</a> •
-  <a href="#️-进阶功能与配置">⚙️ 进阶配置</a> •
-  <a href="#-环境变量参考">📜 环境变量</a> •
-  <a href="#-开源协议与致谢">📄 许可证</a>
+  <a href="#-核心特性">核心特性</a> •
+  <a href="#-支持的协议">支持的协议</a> •
+  <a href="#-快速开始">快速开始</a> •
+  <a href="#-客户端接入">客户端接入</a> •
+  <a href="#-文档">文档</a> •
+  <a href="#-本地开发">本地开发</a> •
+  <a href="#-许可证">许可证</a>
 </p>
 
 ---
 
 ## 📖 项目简介
 
-**API Share** 是一个用 Go 语言编写的高性能、轻量级 AI 分发网关。它统一接入 **OpenAI Chat Completions**、**OpenAI Responses (Codex)**、**OpenCode Zen / Go**、**Cline 免费模型**、**Anthropic Claude**、**Google Gemini** 以及各类 **OpenAI 兼容协议** 上游。客户端通过网关签发的统一 API Key 发起调用，由网关在毫秒级内完成请求鉴权、智能计费、限流控频、会话粘性路由、故障转移与全协议双向动态转换。
+API Share 是一个用 Go 编写的 AI 网关。它统一接收 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 和 Google Gemini 四种协议，再把请求转发到对应的上游服务，并在转发过程中完成鉴权、计费、限流、会话粘性路由、故障转移与跨协议转换。
+
+客户端只需要一个网关签发的 API Key，就可以用 Claude Code 驱动 DeepSeek、用 Codex CLI 驱动 Gemini，或者让任意 OpenAI 兼容客户端接入不同厂商的模型。
 
 > [!NOTE]
-> **官方规范与合规定位**：本项目只对接**官方 API 上游**（OpenAI、Anthropic、Gemini、xAI Grok、DeepSeek、GLM、Qwen 或私有部署的 vLLM / Ollama 等标准端点），不包含任何“网页订阅逆向转 API”、TLS 浏览器指纹伪装或高危轮换代理逻辑，专注为生产级开发与自动化提供纯粹、稳定、合规的转发底座。
+> 本项目只对接官方 API 上游（OpenAI、Anthropic、Gemini、xAI、DeepSeek、GLM、Qwen 或私有部署的 vLLM / Ollama 等标准端点），不包含网页订阅逆向、TLS 指纹伪装或代理轮换逻辑。
 
 ---
 
 ## ✨ 核心特性
 
-- ⚡ **零外部依赖 · 极速单二进制**
-  纯 Go 编写（内置现代化纯 Go SQLite WAL 驱动 `modernc.org/sqlite` 与 `go:embed` 静态前端），无须部署 Redis、MySQL 或 Nginx 即可独立稳定运行，开箱即用。
-- 🔄 **全协议任意双向互转 (Universal Protocol Converter)**
-  打破厂商生态壁垒：支持 OpenAI Chat、OpenAI Responses、Anthropic Messages、Google Gemini 四大格式的任意入站与出站互相转换。例如：**使用 Claude Code 驱动 DeepSeek / Gemini**，或**使用 OpenAI Codex 驱动常规 Chat Completions 模型**。
-- 🎯 **智能会话粘性 (Prompt Cache 命中优化)**
-  根据会话特征或请求头将同一轮对话精准绑定到同一物理上游，大幅提升 Claude、Gemini 及 OpenAI 的 Prompt Cache 命中率，降低最高 80%+ 的推理延迟与成本。
-- ⚖️ **加权调度与弹性熔断 (Fault Tolerance & Failover)**
-  多上游按权重分流，在上游遭遇 `401 / 403 / 408 / 429 / 5xx / 529` 或网络波动时毫秒级透明重试下一个可用上游；连续故障触发指数退避冷却（30s ~ 10m），成功后自动解除。
-- 💰 **官方牌价自动对齐与多级配额**
-  启动及每日定时自动同步 **LiteLLM 官方定价镜像库**，告别繁重的人工维护；支持每 Key 独立 QPS 令牌桶与并发控制，独创 **“共享额度池” 与 “模型独立专属额度”** 混合配置。
-- 🛡️ **上游独立代理池与动态 Header 伪装**
-  每个上游可单独绑定 HTTP / HTTPS / SOCKS5 / SOCKS5h 代理；支持基于正则匹配的请求头改写与客户端请求头透传；内置自动定时同步官方 Codex CLI 与 Claude Code 最新稳定版 User-Agent 变量。
-- 📊 **现代化公开展现与后台控制台**
-  - **公开首页 `/`**：滚动 24 小时真实请求 Uptime（分钟/小时粒度）与每个模型的**平均输出速度**（输出 Token ÷ 生成时长加权平均，无样本显示“—”）、全站 Token 滚轮动效、模型调用趋势，并提供基于 HttpOnly Cookie 的免登录安全额度查验。
-  - **管理控制台**：首启进入 `/setup/` 初始化，支持一键热重命名安全后台路径（如 `/secret-portal`），全可视化管理密钥、模型白名单、代理、公告与详细审计日志。
-  - **调用速度指标**：每条调用记录显示**首字延迟**（请求发出到首个输出增量）、**总耗时**（覆盖流式输出的完整转发时间）与**输出 TPS**（输出 Token ÷ 实际生成时长），与耗时列区分开，便于直接对比上游响应速度。
-  - **调用记录自动清理**：后台设置可选择调用明细保留 **7 天（默认）/ 30 / 90 / 180 / 365 天**或**永久保留**；超期的逐条调用详情每小时自动删除，删除前先把调用次数、Token 与费用按“日期 × 模型”汇总到 `call_log_daily`，累计数据、公开首页统计与费用图表不会丢失。
-  - **自定义模型测试**：在上游列表点击“测试模型”，自动读取上游模型并展开可搜索列表，已配置模型与上游可用模型分组展示；点选即可切换，也可直接输入列表外的自定义模型名，无需先手动获取再清空输入框。列表在浮层内滚动，不会因模型过多撑长卡片。默认发送 `hi`，也可填写自己的多行测试消息；默认使用流式请求，可切换非流式对比兼容性，结果在请求完成后统一展示。支持恢复默认消息、调整最大输出 Token，查看回复、思考内容、耗时、用量和上游错误提示。测试直接使用该上游保存的协议、模型映射、代理及请求头，不经过其他上游；每次测试为独立请求，可能产生上游费用。
-  - **一键复制上游**：在上游列表点击“复制”，确认框内可修改新上游名称（留空自动使用“原名 副本”），保存后会把原上游的接口类型、Base URL、API Key、模型白名单与映射、请求头覆盖、代理、权重与启用状态完整复制为一条新连接，便于快速添加同账号的多密钥或相似配置；复制出的上游立即参与调度，原上游删除后不受影响。
+- **全协议双向转换** — OpenAI Chat / Responses、Anthropic Messages、Gemini 四种格式任意入站与出站组合。
+- **会话粘性** — 通过请求头或对话指纹把同一会话绑定到同一上游，提升 Prompt Cache 命中率。
+- **加权路由与故障转移** — 按权重分流，上游返回 `401 / 403 / 408 / 429 / 5xx / 529` 或网络异常时自动切换；连续故障触发指数退避冷却。
+- **计费与配额** — 每日同步 LiteLLM 价格库，支持每 Key 的 QPS、并发、共享额度与模型专属额度。
+- **独立代理池** — 每个上游可单独绑定 HTTP / HTTPS / SOCKS5 / SOCKS5h 代理。
+- **单二进制部署** — 纯 Go SQLite（WAL）与 `go:embed` 静态前端，无需 Redis、MySQL 或 Nginx。
+- **管理与监控** — 初始化向导、热重命名后台路径、公开状态页、调用日志与速度指标。
 
 ---
 
-## 🏗️ 架构与协议矩阵
+## 🏗️ 支持的协议
 
-### 整体架构流转
+### 入站
 
-```mermaid
-flowchart TD
-    subgraph Clients["💻 客户端接入 (Inbound)"]
-        C1["OpenAI SDK / Chatbox<br><code>/v1/chat/completions</code>"]
-        C2["OpenAI Codex CLI / Responses<br><code>/v1/responses</code>"]
-        C3["Claude Code / Anthropic SDK<br><code>/v1/messages</code>"]
-        C4["Google Gemini CLI / SDK<br><code>/v1beta/models/...</code>"]
-    end
+| 协议 | 端点 | 认证方式 |
+|---|---|---|
+| OpenAI Chat Completions | `POST /v1/chat/completions` | `Authorization: Bearer` |
+| OpenAI Responses | `POST /v1/responses`、`/v1/responses/compact` | `Authorization: Bearer` |
+| OpenAI Embeddings / Audio | `POST /v1/embeddings`、`/v1/audio/*` | `Authorization: Bearer` |
+| OpenAI Realtime | `GET /v1/realtime`（WebSocket）、`POST /v1/realtime/calls`（WebRTC） | Bearer 或子协议 |
+| Anthropic Messages | `POST /v1/messages` | `x-api-key` 或 Bearer |
+| Google Gemini | `POST /v1beta/models/{model}:generateContent`<br>`POST /v1beta/models/{model}:streamGenerateContent` | `x-goog-api-key`、Bearer 或 `?key=` |
+| 模型目录 | `GET /v1/models`、`GET /v1/models/{model}` | Bearer 或 `x-api-key` |
 
-    subgraph Gateway["⚡ API Share Gateway (Single Binary)"]
-        direction TB
-        Auth["🔑 密钥鉴权 & 限流 (QPS / 并发信号量)"]
-        Sticky["🎯 会话粘性提取 (Session-Id / 对话指纹)"]
-        Router["⚖️ 路由决策 (格式匹配 > 权重 > 熔断过滤)"]
-        Engine["🔄 协议双向转换引擎 (Chat ⇋ Responses ⇋ Claude ⇋ Gemini)"]
-        ProxyHead["🛡️ 独立代理池 (SOCKS5/HTTP) & 动态 Header 注入"]
-        Billing["💰 用量统计与计费扣除 (LiteLLM 官方价格库)"]
+### 出站
 
-        Auth --> Sticky --> Router --> Engine --> ProxyHead --> Billing
-    end
+| 上游类型 | 管理 API `type` | 说明 |
+|---|---|---|
+| OpenAI Chat Completions | `openai` + `openai_protocol: "chat"` | OpenAI 官方及各类兼容商 |
+| OpenAI Responses | `openai` + `openai_protocol: "responses"` | 支持 Responses 协议的上游 |
+| Anthropic Messages | `anthropic` | Claude 官方端点 |
+| Google Gemini | `gemini` | AI Studio 官方端点 |
+| Cline 免费模型 | `cline` | 账号登录、令牌刷新与免费模型发现 |
+| OpenCode 免费模型 | `opencode-free` | 自动发现免费模型并按模型选择原生协议 |
 
-    subgraph Upstreams["🌐 目标上游服务 (Outbound)"]
-        U1["OpenAI 官方 API"]
-        U2["Anthropic Claude"]
-        U3["Google Gemini"]
-        U4["OpenAI 兼容商<br>(DeepSeek / Grok / GLM / Qwen / vLLM)"]
-    end
-
-    Clients ==> Gateway
-    ProxyHead ==> Upstreams
-```
-
-### 1. 客户端接入矩阵 (入站 Inbound)
-
-| 协议格式 | 接入端点 | 推荐认证请求头 | 典型适配客户端 |
-|---|---|---|---|
-| **OpenAI Chat Completions** | `POST /v1/chat/completions` | `Authorization: Bearer sk-xxx` | OpenAI SDK、Chatbox、LobeChat、NextChat |
-| **OpenAI Responses** | `POST /v1/responses` | `Authorization: Bearer sk-xxx` | 新版 OpenAI SDK、OpenAI Codex CLI |
-| **OpenAI Embeddings** | `POST /v1/embeddings` | `Authorization: Bearer sk-xxx` | 各类 RAG 知识库检索客户端 |
-| **OpenAI Audio** | `POST /v1/audio/speech`、`/v1/audio/transcriptions`、`/v1/audio/translations` | `Authorization: Bearer sk-xxx` | TTS、语音识别、音频翻译 |
-| **OpenAI Realtime WebSocket** | `GET /v1/realtime?model={model}`（WebSocket Upgrade） | Bearer 或浏览器凭证子协议 | 双向实时音频、文本与工具事件 |
-| **OpenAI Realtime WebRTC** | `POST /v1/realtime/calls`；兼容 `POST /v1/realtime?model={model}` | `Authorization: Bearer sk-xxx` | 浏览器 SDP 建连 |
-| **Anthropic Messages** | `POST /v1/messages` | `x-api-key` 或 `Authorization` | Claude Code CLI、Anthropic SDK |
-| **Google Gemini** | `POST /v1beta/models/{model}:generateContent`<br>`POST /v1beta/models/{model}:streamGenerateContent` | `x-goog-api-key`、`Authorization` 或 `?key=` | Gemini CLI、google-genai SDK |
-| **模型目录 / 详情** | `GET /v1/models`<br>`GET /v1/models/{model}` | OpenAI Bearer 或 Claude `x-api-key` | OpenAI SDK、Claude 客户端 |
-
-### 2. 上游请求协议矩阵 (出站 Outbound)
-
-| 后台选项 | 管理 API 参数 | 请求生成端点 | 典型适用上游 |
-|---|---|---|---|
-| **OpenAI Chat Completions** | `type: "openai"`<br>`openai_protocol: "chat"` | `/v1/chat/completions` | OpenAI 官方、xAI Grok、DeepSeek、GLM、通义千问、vLLM、Ollama |
-| **OpenAI Responses** | `type: "openai"`<br>`openai_protocol: "responses"` | `/v1/responses` | OpenAI 官方 Responses 端点或支持 Responses 协议的兼容商 |
-| **Cline** | `type: "cline"`<br>`openai_protocol: "chat"` | 固定 Chat Completions，支持账号令牌刷新及免费模型发现 | Cline 账号 / 官方 API |
-| **OpenCode 免费模型** | `type: "opencode-free"`<br>`openai_protocol: "auto" / "chat" / "responses" / "anthropic"` | 自动发现免费模型，按模型选择 Chat、Responses 或 Messages 端点 | OpenCode Zen 免费模型，匿名或自有 Zen Key |
-| **Anthropic Messages** | `type: "anthropic"` | `/v1/messages` | Anthropic 官方 Claude 端点 |
-| **Gemini generateContent** | `type: "gemini"` | `:generateContent`<br>`:streamGenerateContent` | Google AI Studio 官方端点 |
-
-#### Cline 免费模型渠道
-
-在「添加上游」选择 **Cline 免费模型**，保留默认地址 `https://api.cline.bot/api/v1`。选择代理后，点击 **登录 Cline 账号**，打开授权页并核对验证码，在浏览器登录自己的 Cline 账号；完成后网关自动将账号凭据填回当前编辑器，无需本地安装 CLI，也无需手动读取 Token。随后点击「获取模型」，勾选需要的模型并保存连接。支持粘贴单个账号 JSON（`{"refreshToken":"..."}` 或 `{"refresh_token":"..."}`）；可从已登录的 Cline 客户端凭据或 cline2api 导出账号中取得。需要代理时，在同一连接中选择代理，认证刷新、模型发现、正式转发和模型测试均使用该代理。
-
-- **账号与 API Key 区别**：默认把凭据作为 RefreshToken，刷新后发送 `Authorization: Bearer workos:<accessToken>`。普通官方 API Key 需填成 `api-key:你的密钥`；已有短期访问令牌可填 `workos:你的访问令牌`，但短期令牌无法自动续期。Cline [官方免费模型说明](https://github.com/cline/cline/blob/main/docs/getting-started/free-models.mdx) 指出促销免费额度仅用于扩展和 CLI，普通 API Key 不享有该额度；本渠道账号协议参考 [cline2api](https://github.com/luawei1/cline2api)，实际可用性、免费额度和区域限制由 Cline 决定。
-- **浏览器登录**：通过 WorkOS 设备授权和 Cline `/auth/register` 完成登录；由网关轮询授权，浏览器无需提供回调地址，服务器远程部署也可使用。授权状态仅当前管理员会话可读取，链接及凭据响应禁止缓存；可取消、重新发起登录，切换连接类型、地址、代理或手动修改凭据会停止等待，关闭编辑器也会取消。登录成功只填入当前编辑器，点击保存后才绑定到上游；登录凭据仍按下述规则保存在 SQLite。
-- **手动授权与回填**：授权方式选择「手动授权并回填」，点击登录生成链接，可复制到其他浏览器打开。登录授权后，把完整的 `http://127.0.0.1:48801/auth?code=...` 回调地址或其中的授权码粘贴回来，点击「完成回填」。浏览器提示本地页面无法访问时，复制地址栏即可，不需要安装 CLI 或启动本地回调服务。网关通过官方 `/auth/token` 换取凭据，使用发起授权时选择的代理；授权码通常一次有效，失效后需重新授权。完整回调地址只在网关内解析，不会访问其中的网址。已取得的 RefreshToken 仍可直接填入账号凭据栏。
-- **自动续期**：调用 `/auth/refresh`，在官方认证入口明确拒绝凭据时尝试 WorkOS 刷新；并发请求和复制的相同账号连接共享刷新锁。轮换后的 RefreshToken 和 AccessToken 保存在 SQLite 的 `cline_tokens` 表，服务重启及“获取模型”后不会丢失轮换结果；401 在输出正文前最多刷新重试一次。
-- **模型发现**：账号模式读取 `/ai/cline/recommended-models` 的 `free` 数组，不使用写死的免费模型清单，沿用 5 分钟缓存。官方 API Key 模式读取 `/models` 的全部目录。获取模型代表凭据可刷新、目录可访问，具体模型能否调用需使用「测试模型」确认；模型白名单和别名映射沿用现有功能，可手动指定付费或订阅模型，但可能消耗账号额度。
-- **客户端标识**：账号模式对齐参考项目的默认请求头，包括 `User-Agent: Cline/3.0.47`、`X-CLIENT-TYPE: cline-cli`、`X-CLIENT-VERSION`、`X-PLATFORM`、`X-CORE-VERSION`、`HTTP-Referer` 和 `X-Title`。宽泛透传不会覆盖这些标识，仍可用固定请求头显式修改；该兼容版本随程序内置，不自动跟随 npm。
-- **请求与响应**：固定使用 Chat Completions，保留工具声明、工具历史和客户端参数，发送一致的 `session_id` / `X-Task-ID`。省略 `reasoning_effort: none`，将 `max_completion_tokens` 转为 `max_tokens`，低于 16 的正数输出预算提高到 16。JSON 和 SSE 中的 `{data: ...}` 完成响应会解包，跨格式请求继续由现有协议转换器处理。
-- **会话隔离**：优先使用请求体 `session_id` / `metadata.session_id` / `conversation_id`，再取 `X-Task-ID` / `X-Session-Id` 或转换前的会话标识，缺失时取第一条用户消息指纹，并按网关 Key 和上游隔离。开头相同的独立会话请提供显式会话 ID。
-
-参考实现：[认证与刷新](https://github.com/luawei1/cline2api/blob/main/auth.go)、[请求构造与响应处理](https://github.com/luawei1/cline2api/blob/main/proxy.go)、[动态免费模型目录](https://github.com/luawei1/cline2api/blob/main/models_sync.go)、[默认客户端请求头](https://github.com/luawei1/cline2api/blob/main/admin.go)。
-
-#### OpenCode 免费模型渠道
-
-在「添加上游」选择 **OpenCode 免费模型**，保留默认地址 `https://opencode.ai/zen`，选择需要的代理后，点击「获取模型」，勾选模型并保存即可。无需安装 CLI，也无需选择 Zen / Go 套餐。API Key 可留空，网关默认使用匿名凭据 `public`；如需使用自己的 Zen Key，可以在同一连接中填写。编辑已有免费连接时留空保留凭据，填写 `public` 可切回匿名。
-
-- **免费目录**：从官方目录识别免费模型，只展示免费条目；填写实际 Key 后仍只提供免费模型。正式调用和模型测试都会先检查映射后的模型 ID，手动白名单和别名不会绕过免费限制。目录短暂不可用时沿用缓存，已有目录中的 `-free` 条目可由端点文档补充识别。
-- **模型名称**：Zen 免费版的 ID 为 `space-bunny-free`；`space-bunny` 是 Go 目录中的另一个模型，不会自动视为免费。客户端可继续使用自己的名称，在模型映射中配置 `{"space-bunny":"space-bunny-free"}`。请以「获取模型」返回的最新目录为准。
-- **协议与代理**：默认自动识别模型原生协议，也可手动指定 Chat、Responses 或 Messages；免费资格仍由官方目录检查。目录刷新、模型获取、正式请求和模型测试使用所选代理；模型列表访问成功不代表某个推理请求一定被上游放行。
-- **工具兼容**：默认 `/zen` 入口保留客户端工具的参数定义，必要时把真实客户端工具临时命名为 `read`，同步改写工具选择和历史调用，并在 JSON / SSE 响应中还原名称。没有客户端工具时只声明禁用的兼容工具，保留调用方原有的工具选择设置；若上游仍返回工具调用，在转发给客户端之前拦截，不会执行或透传这个客户端不存在的工具。官方网关 `/inference` 请求缺少完整原生工具时自动使用兼容的 `/zen` 入口，避免向客户端返回它没有声明的 `glob`、`shell` 等工具；自建代理路径不会自动改写。网关不执行客户端工具。
-- **会话与限流**：复用 OpenCode 客户端头、官方降序格式会话标识和会话持久化；保持对话亲和性。旧版本持久化的不合法会话标识会在读取时原子修复，合法标识保持稳定；旧 `/zen` 入口的请求 ID 使用 `req_` 加 32 位 hex。匿名请求按代理出口共享 429 冷却；相同实际 Key 在同一服务和套餐下共享冷却。遵守上游 `Retry-After`，诊断不更新生产冷却。
-- **错误详情**：`403 FreeTierError` 表示上游拒绝当前免费请求，仍受其客户端校验、账号与区域策略影响。正式转发保留脱敏后的上游错误详情，并显示实际模型和请求路径；没有其他可用渠道时也不会只剩一个没有原因的 `403`。
-- **旧配置兼容**：已有 `type: "opencode"` 的 Zen / Go 连接保留原套餐、Key、模型和转发方式，编辑器显示为「OpenCode · 旧配置」。新建入口使用 `opencode-free`；旧连接可改选「OpenCode 免费模型」，重新获取免费模型并保存。切换时默认使用匿名凭据，若需要自己的 Zen Key，请显式填写；Go 地址不能用于新的免费渠道。
-
-免费模型、额度和访问策略由 OpenCode 决定。内置工具定义与 MIT 许可见 `cmd/apishare/third_party/opencode/`。参考：[OpenCode 官方模型目录](https://opencode.ai/v2/docs/console/models/)、[opencode2api 请求适配](https://github.com/jasonxu114514/opencode2api/blob/main/internal/gateway/upstream.go)、[会话编码修复](https://github.com/jasonxu114514/opencode2api/pull/70)。
-
-> [!TIP]
-> **路由匹配优先级规则（`pickUpstream`）**：
-> 原生格式 + 显式模型白名单 ＞ 转换格式 + 显式模型白名单 ＞ 原生格式 + 通配符 ＞ 转换格式 + 通配符。如果需要精准控制特定模型路由，推荐在后台为上游配置准确的模型白名单。
+渠道配置、Cline / OpenCode 登录流程与路由优先级见 **[上游渠道文档](docs/UPSTREAM_CHANNELS.md)**。
 
 ---
 
 ## 🚀 快速开始
 
-### 方式一：Docker 一键部署 (推荐)
+### Docker 部署（推荐）
 
-项目预构建的多架构镜像发布在 GitHub Container Registry (GHCR)，支持 `linux/amd64` 与 `linux/arm64`：
+镜像发布在 GitHub Container Registry，支持 `linux/amd64` 与 `linux/arm64`：
 
 ```bash
 docker run -d \
@@ -173,16 +95,15 @@ docker run -d \
   --restart unless-stopped \
   -p 8080:8080 \
   -v apishare-data:/data \
-  ghcr.io/<owner>/<repo>:latest
+  ghcr.io/jhxxr/apishare:latest
 ```
 
-或使用 `docker-compose.yml` 组织：
+或使用 `docker-compose.yml`：
 
 ```yaml
-version: "3.8"
 services:
   apishare:
-    image: ghcr.io/<owner>/<repo>:latest
+    image: ghcr.io/jhxxr/apishare:latest
     container_name: apishare
     restart: unless-stopped
     ports:
@@ -194,45 +115,57 @@ services:
       - API_DB=/data/apishare.db
 ```
 
-### 方式二：本地编译运行
+### 本地编译
 
-环境要求：**Go 1.26.2+**。由于采用纯 Go 实现的 SQLite，无需任何 CGO 编译依赖环境。
+环境要求：Go 1.26.2+，无需 CGO。
 
 ```bash
-# 1. 克隆代码库
-git clone https://github.com/<owner>/<repo>.git && cd apishare
-
-# 2. 编译为单二进制文件
-# Linux / macOS
+git clone https://github.com/jhxxr/APISHARE.git && cd APISHARE
 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o apishare ./cmd/apishare
 PORT=8080 API_DB=apishare.db ./apishare
+```
 
-# Windows (PowerShell)
+Windows PowerShell：
+
+```powershell
 go build -trimpath -ldflags="-s -w" -o apishare.exe ./cmd/apishare
 $env:PORT = "8080"; $env:API_DB = "apishare.db"; .\apishare.exe
 ```
 
-### 首次初始化步骤 (首次引导)
+### 首次初始化
 
-1. **设置管理员密码与后台路径**：浏览器打开 `http://127.0.0.1:8080/`，系统检测到空数据库将自动进入独立的 `/setup/` 初始化向导。设置高强度管理员密码（至少 12 位）及自定义管理后台路径（默认 `/admin`，支持随时热更名），保存后配置即刻写入 SQLite。
-2. **添加上游服务**：进入后台「上游服务」页面，选择上游实际支持的接口类型（OpenAI Chat、OpenAI Responses、OpenCode Zen / Go、Cline、Anthropic 或 Gemini），填入 Base URL、上游 API Key、权重与**模型白名单**。选择 OpenCode 后，选 Zen 或 Go 套餐并填入对应密钥，保留默认地址和自动协议，即可按模型选择原生接口；点击“获取模型”可探测当前 Key 可用且受支持的模型。自建代理可修改地址，未收录模型可指定固定协议并设置相应白名单。
-3. **签发访问密钥 (API Key)**：进入「API 密钥」页面创建访问令牌，绑定允许调用的模型列表，分配共享额度或各模型独立专属额度（USD，0 为无限额）。
-4. **价格与定价检查**：进入「设置」页面检查 LiteLLM 官方价格库同步状态（支持手动立即刷新），亦可根据需要手动配置单模型自定义价格覆盖。
+1. 打开 `http://127.0.0.1:8080/`，按向导设置管理员密码与后台路径（默认 `/admin`）。
+2. 进入「上游服务」添加上游：选择接口类型，填写 Base URL、API Key、权重与模型白名单。
+3. 进入「API 密钥」创建访问令牌，绑定可用模型并设置额度。
+4. 在「设置」中检查 LiteLLM 价格库同步状态，按需配置自定义价格。
+
+用一条请求验证：
+
+```bash
+curl http://127.0.0.1:8080/v1/chat/completions \
+  -H "Authorization: Bearer sk-your-apishare-key" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}'
+```
 
 ---
 
-## 🔌 常用客户端接入
+## 🔌 客户端接入
 
-### 1. OpenAI Codex CLI 接入
+### Claude Code
 
-后台将仅支持 Chat Completions 的上游（如 DeepSeek、GLM、本地 vLLM）设置为 `OpenAI Chat Completions`（`openai_protocol: "chat"`）。Codex 客户端直接以原生 `responses` 格式连接网关，由网关在内存中实时转换工具调用与流式增量。
+```bash
+export ANTHROPIC_BASE_URL="http://127.0.0.1:8080"
+export ANTHROPIC_API_KEY="sk-your-apishare-key"
+claude
+```
 
-修改 Codex 的 `config.toml` 配置：
+### Codex CLI
 
 ```toml
 model = "deepseek-v4-flash"
 model_provider = "apishare"
-web_search = "disabled"   # 普通 Chat 上游不支持服务端搜索，必须显式禁用
+web_search = "disabled"
 
 [model_providers.apishare]
 name = "API Share"
@@ -242,307 +175,114 @@ wire_api = "responses"
 requires_openai_auth = false
 ```
 
-配置环境变量后启动：
 ```bash
 export APISHARE_API_KEY="sk-your-apishare-key"
 codex
 ```
 
-### 2. Anthropic Claude Code 接入
-
-将 Claude Code 直接指向 API Share 网关端点，即使后端挂载的是 OpenAI 或 Gemini 上游，也能顺畅运行：
-
-```bash
-export ANTHROPIC_BASE_URL="http://127.0.0.1:8080"
-export ANTHROPIC_API_KEY="sk-your-apishare-key"
-claude
-```
-
-Claude Code 会独立发起 Haiku 后台请求；将 Haiku 别名映射到其他模型时，也需要上游支持该请求使用的功能。对于 `output_config.format`（兼容旧版 `output_format`）中的 JSON Schema，网关会转换为目标 Chat 的 `response_format.json_schema`、Responses 的 `text.format` 或 Gemini 的 `generationConfig.responseJsonSchema`，不再一律拒绝。
-
-在上游编辑器的「结构化输出转换」中选择：
-
-| 选项 | 管理 API 的 `structured_output` | 行为 |
-| --- | --- | --- |
-| 保留结构约束（默认） | `""` 或 `"json_schema"` | 将完整 Schema 转换为上游对应参数；上游必须支持该功能及所用 Schema。 |
-| JSON 兼容模式（校验后返回） | `"json_object"` | 仅用于支持 JSON 模式的 Chat / Responses 上游。发送 JSON 模式及 Schema 提示，验证结果后再返回。要求 Schema 根类型明确为 `object`。 |
-| 不支持跨格式结构化输出 | `"disabled"` | 在本地跳过该转换候选，继续寻找可用上游，不消耗网络重试次数。 |
-
-DeepSeek 官方 Chat 文档提供 `json_object`，Responses 文档提供 `json_schema`；WorkBuddy 等第三方入口需以实际支持情况为准。对于只支持 JSON 模式的 DeepSeek Chat 入口，选择「JSON 兼容模式」；若已经验证入口支持 Schema，则保留默认设置。不同模型能力不同，可拆分为不同上游配置。连接测试仅检查连接和模型列表，不代表已验证结构化输出能力。
-
-跨格式的结构化响应会在完整接收并通过 JSON Schema 校验后交付；流式 Messages 客户端等待期间继续收到心跳，普通流式任务仍实时转发。正常结束但不符合 Schema 的结果不会当作成功返回，可按既有重试设置切换其他候选；工具调用、明确拒绝和达到 token 上限仍保留各自的协议语义。原生同协议请求保留原有透传行为。这项设置不改变上游端点，也不会静默忽略 Schema；本地校验不会读取 Schema 指向的外部文件或 URL。
-
-参考：[Claude 结构化输出](https://platform.claude.com/docs/en/build-with-claude/structured-outputs)、[DeepSeek JSON 模式](https://api-docs.deepseek.com/guides/json_mode/)、[DeepSeek Responses](https://api-docs.deepseek.com/api/create-response/)。
-
-### 3. OpenAI SDK / 兼容客户端
-
-#### Python
+### OpenAI SDK
 
 ```python
 from openai import OpenAI
 
 client = OpenAI(
     api_key="sk-your-apishare-key",
-    base_url="http://127.0.0.1:8080/v1"
+    base_url="http://127.0.0.1:8080/v1",
 )
 
 response = client.chat.completions.create(
     model="gpt-4o",
     messages=[{"role": "user", "content": "Hello!"}],
-    stream=True
+    stream=True,
 )
 for chunk in response:
     print(chunk.choices[0].delta.content or "", end="")
 ```
 
-#### cURL 测试指令
-
-```bash
-# OpenAI Chat 格式
-curl http://127.0.0.1:8080/v1/chat/completions \
-  -H "Authorization: Bearer sk-your-apishare-key" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}'
-
-# Claude Messages 格式 (支持 X-Session-Id 锁定粘性)
-curl http://127.0.0.1:8080/v1/messages \
-  -H "x-api-key: sk-your-apishare-key" \
-  -H "anthropic-version: 2023-06-01" \
-  -H "X-Session-Id: session-user-12345" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"claude-3-7-sonnet-20250219","max_tokens":1024,"messages":[{"role":"user","content":"hi"}]}'
-
-# Google Gemini 格式
-curl "http://127.0.0.1:8080/v1beta/models/gemini-2.5-flash:generateContent" \
-  -H "x-goog-api-key: sk-your-apishare-key" \
-  -H "Content-Type: application/json" \
-  -d '{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}'
-```
+Claude Code 结构化输出、Codex 配置说明、Gemini 与 cURL 示例、音频和 Realtime 接入见 **[客户端接入指南](docs/CLIENTS.md)**。
 
 ---
 
-### 4. 音频与 Realtime 接入
+## ⚙️ 常用配置
 
-在后台添加 `type: "openai"` 上游，将音频 / Realtime 模型加入上游和客户端 Key 的模型白名单即可，无需新增协议类型。`openai_protocol` 的 Chat / Responses 选项不改变这些独立端点；上游必须原生支持对应接口，音频不会转换为 Claude / Gemini 文本请求。模型别名、独立 HTTP(S) / SOCKS 代理、动态请求头和建连前故障切换均可使用。
-
-服务端 WebSocket 连接示例（替换地址、模型及 Key）：
-
-```javascript
-import WebSocket from "ws";
-
-const socket = new WebSocket("wss://gateway.example/v1/realtime?model=voice-alias", {
-  headers: { Authorization: `Bearer ${process.env.APISHARE_API_KEY}` },
-});
-socket.on("open", () => socket.send(JSON.stringify({
-  type: "session.update", session: { type: "realtime", instructions: "请用中文回答。" },
-})));
-socket.on("message", data => console.log(data.toString()));
-```
-
-浏览器原生 `WebSocket` 可使用 `["realtime", "openai-insecure-api-key." + apiShareKey]` 子协议鉴权；网关仅向客户端协商 `realtime`，使用上游自己的 Key 建连。可选 `OpenAI-Beta: realtime=v1` 请求头用于 beta 协议。每条 WebSocket 在整个连接期间占用一个 Key 并发槽，连接内不能切换模型；已建立的会话不会重试到其他上游。网关按不同 `response.done.response.id` 的真实 usage 逐轮记账，自动去重；每轮结束以及显式创建响应、提交音频或更新会话时重新检查 Key 权限与额度，额度耗尽使用关闭码 `1008` 结束会话。没有上游 usage 的事件不会按文本猜测音频 Token。
-
-WebRTC 推荐统一建连方式：
-
-```javascript
-const form = new FormData();
-form.set("sdp", offer.sdp); // RTCPeerConnection 创建的本地 SDP
-form.set("session", JSON.stringify({ type: "realtime", model: "voice-alias" }));
-const response = await fetch("https://gateway.example/v1/realtime/calls", {
-  method: "POST", headers: { Authorization: `Bearer ${apiShareKey}` }, body: form,
-});
-if (!response.ok) throw new Error(await response.text());
-await pc.setRemoteDescription({ type: "answer", sdp: await response.text() });
-```
-
-也支持 `Content-Type: application/sdp` 配合 `?model=voice-alias` 的建连请求。SDP、上传音频和其他 multipart 字段保持原样，仅按上游模型映射改写模型字段；上传总请求体上限为 32 MiB。语音合成的二进制响应及转录 SSE 增量直接转发。
-
-**计费边界：** WebRTC 音频和数据通道直连上游，网关只记录 SDP 建连，不掌握后续 usage，因此不能对通话逐轮扣费、限制通话并发或在额度耗尽后结束直连通话。需要完整网关计费与会话配额控制时使用 WebSocket。当前不提供临时上游密钥签发、`call_id` sideband 和通话控制 API；也不转发上游的 `Location`。HTTP 音频接口仅按上游返回的 Token usage 记账；MP3 / WAV、纯文本和仅报告时长的结果没有 Token usage 时，记录请求但不按字符数或时长猜测费用。
-
-自动价格同步支持音频单价；手动价格 JSON 可增加 `in_audio`、`out_audio`、`cache_read_audio`（USD / 1M tokens），分别用于音频输入、输出和缓存读取，后台日志会展示对应的用量与费用。未配置专用音频单价时回退到普通输入、输出、缓存读取单价。
-
-实现参考 [sub2api 的 WebSocket passthrough relay（固定版本）](https://github.com/Wei-Shaw/sub2api/blob/9c2cca9e627291bc719bada3d57de23b625a4180/backend/internal/service/openai_ws_v2/passthrough_relay.go) 中的双向转发与终止事件用量处理；音频接口依照 [OpenAI WebSocket 文档](https://developers.openai.com/api/docs/guides/realtime-websocket) 和 [WebRTC 文档](https://developers.openai.com/api/docs/guides/realtime-webrtc) 实现。
-
-## 🔄 跨协议转换引擎
-
-API Share 实现了业界领先的高保真度协议转换层，具备针对复杂工程级场景的深度健壮性保证：
-
-```
-Anthropic SDK / Claude Code (POST /v1/messages)
-               │
-               ▼
-   [ API Share 协议标准化抽象层 ]
-               │
-               ▼
-OpenAI / DeepSeek 上游 (POST /v1/chat/completions)
-               │
-               ▼ (流式 SSE / 思考过程 / 工具调用)
-   [ 逆向保真组装与事件流重塑 ]
-               │
-               ▼
-Anthropic 规范 SSE 增量推送 (message_start -> content_block_delta -> message_stop)
-```
-
-### 深度保真特性
-
-1. **Codex Responses 自由文本与工具转换**
-   - 完美适配 Codex 客户端特有的 `custom` 自由文本工具（如 `apply_patch`）、`namespace` 命名空间以及客户端模式的 `tool_search`。
-   - 跨格式转发时自动将自由文本安全打包为标准函数入参，并在回程流式下发时完整恢复 `custom_tool_call`、原始命名空间、工具搜索结果与对应 `call_id`。
-2. **多工具调用与历史严格配对**
-   - 并行工具调用历史按实际批次自动配对，严格清理取消、重连后无结果的残缺调用；重复的调用 ID 分组配对隔离，防止上下文混乱。
-3. **Claude Code 复杂系统指令兼容**
-   - 自动识别并合并 Claude Code 在 Anthropic `messages[]` 内部动态插入的纯文本 `role: "system"`，按序聚合到目标接口系统指令，同时避免扰乱会话指纹。
-4. **全模态视觉图片规范化互转**
-   - 统一转译 OpenAI URL/data URL、Anthropic URL/Base64、Gemini inlineData/fileData；针对 Responses 工具执行返回的结构化截图及数据，自动规范重构为目标模型的图片消息块。
-5. **SSE 流式断流保护与首包回滚**
-   - 上游流式请求默认携带 `Accept-Encoding: identity`，消除代理压缩器导致的推理 SSE 积压延迟；
-   - 在首次向客户端输出实质性文本、推理思考或工具增量前，若遭遇上游断流或错误，**不消耗客户端重试预算，静默无缝切换到备用上游**；一旦产生实质输出后遇错则返回标准失败事件，严格避免工具重复执行。
-   - Messages 流式请求默认每 10 秒向客户端保活，覆盖等待响应头、原生转发和跨协议转换。Claude Code `2.1.193` 及以上版本在已打开的正文、思考或工具块内收到空增量，其他情况发送标准 `ping`。保活不计入输出或用量，也不延长上游空闲超时；只有心跳时仍可切换上游，实际消息开始后禁止重放。HTTP 状态已由心跳提交后，最终错误以 SSE `error` 事件返回，并在调用日志中记录失败状态。
-   - 转换为 Messages 时，首个工具调用的参数逐片发送；其他交错内容按顺序暂存，直到活动工具关闭后发送。参数不完整时返回失败，不发送成功结束事件。
-6. **深度思考 / Reasoning 隔离与档位自适应**
-   - 支持 Chat `reasoning_effort`、Responses `reasoning.effort` 与 Claude `output_config.effort` 的双向自适应映射（如 DeepSeek `xhigh -> max`, `medium -> high`）。
-   - 思维链明文缓存机制：针对返回的推理内容按 `Key + 客户端模型 + 上游 ID + 映射模型` 独立空间缓存（LRU 1024 项 / 8 MiB，TTL 7天），多轮对话精准回放，杜绝密文伪装与跨租户泄露。
-
----
-
-## ⚙️ 进阶功能与配置
-
-### 1. 🎯 会话粘性与 Prompt Cache 优化
-多轮对话路由到不同实例会导致上游的 KV Cache（Prompt Cache）彻底失效。API Share 采用双轨识别机制：
-1. **显式请求头**：客户端传入 `X-Session-Id` 或 `X-Conversation-Id`；
-2. **对话前缀指纹**：自动提取 `hash(端点 + 模型 + system指令 + 首条user消息)` 动态计算指纹。
-
-粘性关系存入 SQLite，具备**滑动过期机制**（默认 30 分钟，有调用自动顺延），服务重启不丢失。当粘性节点故障时，网关透明故障转移到新上游并自动刷新绑定，节点恢复后不会发生不必要的抖动回切。
-
-### 2. 💰 智能计费与多级配额策略
-- **计费优先级**：`后台手动覆盖价格 > LiteLLM 官方牌价库 > 网关内置兜底表 > default (0)`。
-- **准确 Usage 采集**：原生捕获 OpenAI `include_usage`、Anthropic `message_delta`、Gemini `usageMetadata` 与 Responses `response.completed`；若遇到个别不返回用量的上游，网关自动调用内置 `tiktoken-go` 进行本地分词计算。
-- **分项价格与费用明细**：普通输入、缓存读取/创建、明确的 1 小时缓存创建、正文和推理分别计算。手动价格可选 `cache_read`、`cache_write`、`cache_write_1h`、`reasoning`，缺省继承输入/输出单价，明确填 0 表示免费；自动同步保留价格库中的分项。新日志保存当次价格和费用快照，扣费与日志在同一事务提交。长上下文分档、托管工具、存储及分模态价格仍需专项适配，详见[计费边界](docs/SUB2API_BILLING_AUDIT.md)。
-- **速度指标**：日志的速度列记录 `first_token_ms`（首字延迟，仅流式实际下发增量时才有值）、`duration_ms`（总耗时，覆盖完整流式转发）与 `latency_ms`（上游响应头耗时，保留原有含义）。输出 TPS 由输出 Token 与实际生成时长（总耗时减首字）推导；非流式请求没有首字，按总耗时估算。历史日志缺少新列，总耗时回退显示原有的响应头耗时，首字与 TPS 显示为“—”，不会伪造速度数据。公开首页的每个模型同时展示最近 24 小时平均输出速度（`avg_tps`，成功调用的输出 Token ÷ 生成时长加权平均），没有可测量样本时显示“—”。
-- **共享池 vs 独立配额**：
-  在后台可针对密钥设置基础共享额度（如 100 USD），同时对特定昂贵模型（如 `o3-mini`、`claude-3-7-sonnet`）设置专属独立额度（如 20 USD）。独立额度仅消耗自身配额，互不挤占，用尽后返回 `402 Payment Required`。
-
-### 3. 🌐 独立上游代理池 (Proxy Pool)
-每个上游可独立配置代理网络，支持 `HTTP`、`HTTPS`、`SOCKS5`、`SOCKS5h`（代理解析域名）及鉴权。连接测试、模型拉取、常规请求与流式传输均严格遵守所选代理通道，彻底解除服务器网络受限问题。
-
-### 4. 🎭 动态请求头与客户端版本同步
-在后台每个上游均可配置请求头覆盖规则（支持正则透传、变量注入）：
-
-```json
-{
-  "*": true,
-  "re:^X-Trace-.*$": true,
-  "X-Custom-Env": "production",
-  "User-Agent": "{claude_code_user_agent}",
-  "Authorization": "Bearer {api_key}"
-}
-```
-
-网关后台内置自动化守护器，定期从 npm 官方仓库同步获取 `@openai/codex`、`@anthropic-ai/claude-code` 和 `@opencode/cli` 的最新稳定版本，通过 `{codex_user_agent}`、`{claude_code_user_agent}` 与 `{opencode_user_agent}` 占位符自动注入对应格式的 User-Agent。OpenCode 专用渠道默认自动使用其版本，无需额外配置模板。
-
-### 5. 模型标签与模型映射
-在上游编辑器的「模型访问」中输入模型名，按回车、逗号或粘贴多行即可生成可移除的标签，重复名称自动去重；也可以获取当前 Key 的模型后勾选。白名单留空允许全部模型。
-
-模型映射支持可视化逐行编辑、JSON 切换和批量添加。例如 `{"chat-fast":"deepseek-chat"}` 表示客户端请求 `chat-fast` 时，该上游收到 `deepseek-chat`。映射中的请求名称自动参与模型发现和显式路由，无需再手动加入上游白名单；API Key 的模型权限和配额仍按客户端请求名称检查。每条规则只替换一次，保存后立即生效。批量添加每行填写 `请求模型 = 上游模型`，空名称、重复规则和无效 JSON 会提示错误。
-
-### 6. 🧹 调用记录自动清理
-
-后台「设置 → 调用记录保留」可选择 `7 天（默认）`、`30 天`、`90 天`、`180 天`、`365 天` 或 `永久保留`。网关启动后立即检查一次，之后每小时清理超过保留期的**逐条调用详情**（`call_logs`）；保存新的保留期后也会立即清理一次，调短后无需等待下一个整点。
-
-清理只删除明细，**累计数据不受影响**：删除前会先把调用次数、成功次数、输入/输出 Token、费用以及最后一次调用时间与状态，按“北京时间日期 × 模型”汇总进 `call_log_daily` 汇总表，汇总与删除在同一事务内完成，既不丢失也不会重复计数。因此公开首页的累计 Token / 调用次数、最近调用状态、24 小时 Uptime、30 天调用趋势以及后台的今日统计与 7 天费用图表，在明细删除后仍保持完整。
-
-保留期通过 `settings` 表中的 `log_retention_days` 持久化，接口为 `PUT /{admin_path}/api/settings` 的 `log_retention_days` 字段（仅接受上述预设值，非法值返回 400）。若数据库体积长期增长，可把保留期调短后等待下一次清理。
-
----
-
-## 📜 环境变量参考
-
-所有环境变量均具备合理的生产默认值，按需覆盖即可：
-
-| 环境变量 | 默认值 | 作用说明 |
+| 环境变量 | 默认值 | 说明 |
 |---|---|---|
 | `PORT` | `8080` | 服务监听端口 |
-| `API_DB` | `apishare.db` | SQLite 数据库文件存放路径（容器内为 `/data/apishare.db`） |
-| `ADMIN_PATH` | `admin` | 首次配置向导设定的默认后台路径（首启后以数据库中的配置为准） |
-| `UPSTREAM_MAX_IDLE_CONNS` | `256` | 连接池最大空闲连接总数 |
-| `UPSTREAM_MAX_IDLE_CONNS_PER_HOST` | `64` | 每个目标主机保留的最大空闲连接数 |
-| `UPSTREAM_DIAL_TIMEOUT_SEC` | `15` | TCP 建连与 TLS 握手超时时间（秒） |
-| `UPSTREAM_HEADER_TIMEOUT_SEC` | `180` | 等待上游响应首包头部的最长超时（秒，0 为不限） |
-| `UPSTREAM_IDLE_TIMEOUT_SEC` | `300` | 等待上游数据包的空闲超时（秒，不限制流式持续总长，0 为不限） |
-| `STREAM_KEEPALIVE_INTERVAL_SEC` | `10` | Messages 流式请求向客户端发送保活事件的间隔（秒，0 为关闭，最大 300）；不影响上游空闲超时，其他协议和非流式请求不注入保活 |
-| `REALTIME_MAX_DURATION_SEC` | `3600` | Realtime WebSocket 单连接最长存活时间（秒，1～86400）；空闲读取另受 `UPSTREAM_IDLE_TIMEOUT_SEC` 限制 |
-| `TIKTOKEN_CACHE_DIR` | 临时目录/`data-gym-cache` | 本地 Token 分词词表缓存路径 |
+| `API_DB` | `apishare.db` | SQLite 数据库路径 |
+| `ADMIN_PATH` | `admin` | 空数据库首次启动时的默认后台路径 |
+| `UPSTREAM_HEADER_TIMEOUT_SEC` | `180` | 等待上游响应头的超时（秒） |
+| `UPSTREAM_IDLE_TIMEOUT_SEC` | `300` | 上游数据空闲超时（秒，0 为不限） |
+
+完整环境变量、代理池、动态请求头、模型映射与日志保留见 **[配置参考](docs/CONFIGURATION.md)**。
 
 ---
 
-## 🛠️ 本地联调与开发测试
+## 📚 文档
 
-### 目录结构
+| 文档 | 内容 |
+|---|---|
+| [上游渠道与协议矩阵](docs/UPSTREAM_CHANNELS.md) | 入站 / 出站协议、路由优先级、Cline 与 OpenCode 渠道 |
+| [客户端接入指南](docs/CLIENTS.md) | Codex、Claude Code、OpenAI SDK、Gemini、音频与 Realtime |
+| [协议转换引擎](docs/PROTOCOL_CONVERSION.md) | 工具调用、推理内容、流式保活与已知边界 |
+| [会话粘性、计费与配额](docs/BILLING.md) | Prompt Cache、价格同步、Usage 采集、日志清理 |
+| [配置参考](docs/CONFIGURATION.md) | 环境变量、代理、请求头、模型映射 |
+| [本地开发与测试](docs/DEVELOPMENT.md) | 目录结构、构建、Mock 上游、测试 |
+| [全格式审计](docs/SUB2API_ALL_FORMATS_AUDIT.md) | 跨协议行为与 sub2api 问题对照 |
+| [Responses 审计](docs/SUB2API_RESPONSES_AUDIT.md) | Responses / Codex 兼容性明细 |
+| [计费审计](docs/SUB2API_BILLING_AUDIT.md) | Token 分类与计费口径 |
 
-```text
-.
-├── cmd/
-│   ├── apishare/          # 网关主程序与 Go 测试
-│   │   └── web/           # 编译时内嵌的管理后台和公开页面
-│   └── mockupstream/      # 多协议 Mock 上游
-├── docs/                  # 协议兼容与计费排查文档
-├── .github/workflows/     # 自动构建与镜像发布
-├── Dockerfile
-├── go.mod
-├── go.sum
-├── LICENSE
-└── README.md
-```
+---
 
-以下命令均在仓库根目录执行；Go 模块文件保留在根目录，主程序入口为 `./cmd/apishare`。
-
-代码库内置了多协议 Mock 测试桩 `cmd/mockupstream`，可一次性模拟四大协议服务端，方便脱机验证转换逻辑与计费：
+## 🛠️ 本地开发
 
 ```bash
-# 启动两个独立的假上游示例
+# 启动两个 Mock 上游
 go run ./cmd/mockupstream -addr :18081 -name mockA
 go run ./cmd/mockupstream -addr :18082 -name mockB
 
-# 执行完整的测试套件
-go test -v ./...
+# 运行测试
+go test ./...
 
-# 运行真实的 Codex CLI 协议回路测试 (需本地已安装 codex)
+# Codex CLI 协议回路测试（需已安装 codex）
 export APISHARE_CODEX_BINARY="codex"
 go test ./cmd/apishare -run TestCodexCLIResponsesToolLoop -v -count=1
 ```
 
+目录结构、前端资源与更多测试说明见 **[开发文档](docs/DEVELOPMENT.md)**。
+
 ---
 
-## 🗺️ 路线图 (Roadmap)
+## 🗺️ 路线图
 
-- [x] 全协议覆盖（OpenAI Chat、Responses、Claude Messages、Gemini）
-- [x] 基于指纹与会话 ID 的滑动窗口 Prompt Cache 会话粘性
-- [x] LiteLLM 官方价格库每日自动同步
-- [x] SOCKS5 / HTTP 独立代理池与动态 Header 模板
-- [x] 现代化公开展现主页（分钟级 24H Uptime 仪表盘、Token 滚轮动画）
-- [x] 独立模型专属配额与共享额度混合结算
-- [x] 客户端真实 User-Agent 自动检测与无缝同步
-- [x] 多模态音频 / 实时语音（Audio HTTP、Realtime WebSocket 双向代理、WebRTC SDP 建连；计费边界见上文）
-- [ ] 分布式集群模式与 SQLite 异地自动备份同步
+- [x] OpenAI Chat / Responses、Anthropic Messages、Gemini 全协议覆盖
+- [x] 会话粘性与 Prompt Cache 优化
+- [x] LiteLLM 价格库每日同步
+- [x] 独立代理池与动态请求头
+- [x] 共享额度与模型专属配额
+- [x] 音频与 Realtime（WebSocket / WebRTC）
+- [ ] 分布式集群与 SQLite 异地备份
 
 ---
 
 ## 🤝 参与贡献
 
-热烈欢迎提交 Issue 与 Pull Request！
-1. Fork 本仓库并创建特性分支 (`git checkout -b feature/amazing-feature`)
-2. 提交代码更改并确保通过所有单元测试 (`go test ./...`)
-3. 提交 Commit (`git commit -m 'feat: add amazing feature'`)
-4. 推送分支 (`git push origin feature/amazing-feature`)
-5. 新建 Pull Request
+欢迎提交 Issue 与 Pull Request。
+
+1. Fork 仓库并创建特性分支：`git checkout -b feature/amazing-feature`
+2. 修改代码并通过测试：`go test ./...`
+3. 提交：`git commit -m 'feat: add amazing feature'`
+4. 推送并发起 Pull Request
 
 ---
 
-## 📄 开源协议与致谢
+## 📄 许可证
 
-- 本项目基于 **[MIT License](LICENSE)** 开源。
-- 前端内嵌的 Space Grotesk 和 Orbitron 字体分别遵循其各自的 [SIL Open Font License](cmd/apishare/web/public/fonts/OFL.txt)。
-- **技术致谢**：感谢 [LiteLLM](https://github.com/BerriAI/litellm) 提供的全网模型官方价格规范；感谢 [New API](https://github.com/QuantumNous/new-api) 与 [Sub2API](https://github.com/Wei-Shaw/sub2api) 在多格式协议兼容设计上给予的灵感与先驱探索。
+本项目基于 [MIT License](LICENSE) 开源。
+
+前端内嵌的 Space Grotesk 与 Orbitron 字体遵循各自的 [SIL Open Font License](cmd/apishare/web/public/fonts/OFL.txt)。
+
+感谢 [LiteLLM](https://github.com/BerriAI/litellm) 提供的模型价格规范，以及 [New API](https://github.com/QuantumNous/new-api)、[Sub2API](https://github.com/Wei-Shaw/sub2api) 在协议兼容设计上的探索。
 
 <div align="center">
-  <sub>Built with ❤️ by the API Share Open Source Community.</sub>
+  <sub>Built with ❤️ by the API Share contributors.</sub>
 </div>
