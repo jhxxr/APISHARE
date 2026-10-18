@@ -88,12 +88,22 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	model = up.mapModel(model)
-	if !validUpstreamType(up.Type) {
-		return nil, 0, fmt.Errorf("unsupported upstream type %q", up.Type)
+	format, err := up.resolveWireFormat(ctx, FormatOpenAIChat, model)
+	if err != nil {
+		return nil, 0, err
 	}
-	format := up.wireFormat(FormatOpenAIChat)
 	cr := &canonReq{Model: model, Messages: []canonMsg{{Role: "user", Text: message}}, MaxTokens: maxTokens, Stream: stream}
 	body, err := renderProtocolRequest(format, cr, model)
+	if err != nil {
+		return nil, 0, err
+	}
+	freeRoute, err := up.openCodeFreeRoute(body, format, model)
+	if err != nil {
+		return nil, 0, err
+	}
+	freeOriginalBody := body
+	var freeTools openCodeToolCompatibility
+	body, freeShaped, err := freeRoute.shapeOpenCodeFreeRequest(body, format, model, &freeTools)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -105,7 +115,10 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 		}
 	}
 	endpoint := nativeEndpoint(format, cr)
-	requestURL := upstreamURL(up.BaseURL, endpoint)
+	requestURL := freeRoute.endpointURL(format, endpoint)
+	if freeShaped {
+		requestURL = freeRoute.openCodeFreeEndpointURL(format, endpoint)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, 0, fmt.Errorf("无法创建模型测试请求")
@@ -114,11 +127,17 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 	if clineTask != "" {
 		req.Header.Set("X-Task-ID", clineTask)
 	}
-	if stream {
+	if stream || freeShaped {
 		req.Header.Set("Accept", "text/event-stream")
 		req.Header.Set("Accept-Encoding", "identity")
 	}
 	switch up.Type {
+	case "opencode", openCodeFreeType:
+		session, err := newOpenCodeSessionID()
+		if err != nil {
+			return nil, 0, err
+		}
+		setOpenCodeHeaders(req, up.openCodeAPIKey(), format, session, nil)
 	case "anthropic":
 		req.Header.Set("x-api-key", up.APIKey)
 		req.Header.Set("anthropic-version", "2023-06-01")
@@ -136,6 +155,15 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 		return nil, 0, err
 	}
 	resp, err := client.Do(req)
+	var freePreviousPath string
+	if err == nil && freeShaped {
+		var attempt *openCodeFreeAttempt
+		attempt, err = retryOpenCodeFreeTier(up, req, resp, freeOriginalBody, format, model, nil, client.Do)
+		if attempt != nil {
+			req, resp, body, freeTools = attempt.request, attempt.response, attempt.body, attempt.tools
+			freePreviousPath = attempt.previousPath
+		}
+	}
 	if err == nil && up.Type == "cline" {
 		resp, err = retryClineUnauthorized(client, req, resp, up)
 	}
@@ -149,10 +177,19 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
 		detail := redactModelTestError(string(responseBody), up.APIKey)
+		if up.isOpenCode() {
+			if freePreviousPath != "" {
+				detail += "; 首次入口 " + freePreviousPath + " 返回 FreeTierError，已尝试另一入口"
+			}
+			return nil, resp.StatusCode, fmt.Errorf("上游返回 HTTP %d：%s\n%s", resp.StatusCode, truncate(detail, 1200), up.openCodeRequestSummary(req, body, format))
+		}
 		return nil, resp.StatusCode, fmt.Errorf("上游返回 HTTP %d：%s", resp.StatusCode, truncate(detail, 2000))
 	}
 	if up.Type == "cline" {
 		normalizeClineResponse(resp, 4<<20)
+	}
+	if freeTools.ReadAlias != "" || freeTools.NoClientTools {
+		resp.Body = newOpenCodeAliasBody(resp.Body, format, freeTools, strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream"))
 	}
 	result, err := readModelTestResponse(resp.Body, resp.Header.Get("Content-Type"), format)
 	if err != nil {

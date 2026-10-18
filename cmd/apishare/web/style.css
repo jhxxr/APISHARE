@@ -302,6 +302,7 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline
 .provider-icon { display: grid; place-items: center; width: 35px; height: 35px; flex: 0 0 auto; border-radius: 8px; background: var(--panel-soft); border: 1px solid var(--border-strong); font: 500 16px var(--mono); }
 .provider-icon.openai { background: #e7f5ee; color: #047857; border-color: #c1e3d2; }
 .provider-icon.cline { background: #e8f2fa; color: #285f84; border-color: #c5dced; font-size: 12px; }
+.provider-icon.opencode { background: #f1edff; color: #6248a8; border-color: #d9cff6; font-size: 12px; }
 .provider-icon.anthropic { background: #fbefe6; color: #965228; border-color: #ead6c4; }
 .provider-icon.gemini { background: #edf1fc; color: #4263a9; border-color: #d2dcf3; }
 .provider-icon .icon { width: 21px; height: 21px; }

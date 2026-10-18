@@ -36,7 +36,7 @@
 }
 ```
 
-网关后台内置自动化守护器，定期从 npm 官方仓库同步获取 `@openai/codex` 和 `@anthropic-ai/claude-code` 的最新稳定版本，通过 `{codex_user_agent}` 与 `{claude_code_user_agent}` 占位符自动注入对应格式的 User-Agent。
+网关后台内置自动化守护器，定期从 npm 官方仓库同步获取 `@openai/codex`、`@anthropic-ai/claude-code` 和 `@opencode/cli` 的最新稳定版本，通过 `{codex_user_agent}`、`{claude_code_user_agent}` 与 `{opencode_user_agent}` 占位符自动注入对应格式的 User-Agent。OpenCode 专用渠道默认自动使用其版本，无需额外配置模板。
 
 ## 模型白名单与模型映射
 

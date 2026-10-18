@@ -97,15 +97,18 @@ func (i *relayInfo) protocolUsage() upstreamUsage {
 
 // relayTask 一次转发所需的全部上下文。
 type relayTask struct {
-	format         clientFormat
-	endpoint       string    // 原生透传时的上游路径
-	body           []byte    // 客户端原始请求体（原生透传用）
-	canon          *canonReq // 规范化请求（转换用）
-	model          string    // 客户端请求的模型
-	stream         bool
-	nativeOnly     bool // 只允许原生类型的上游（如 embeddings），禁止跨格式转换
-	apiKeyID       int64
-	wantUsageChunk bool // openai chat 流式：客户端是否要求 include_usage
+	format                    clientFormat
+	endpoint                  string    // 原生透传时的上游路径
+	body                      []byte    // 客户端原始请求体（原生透传用）
+	canon                     *canonReq // 规范化请求（转换用）
+	model                     string    // 客户端请求的模型
+	stream                    bool
+	nativeOnly                bool // 只允许原生类型的上游（如 embeddings），禁止跨格式转换
+	apiKeyID                  int64
+	wantUsageChunk            bool   // openai chat 流式：客户端是否要求 include_usage
+	openCodeSession           string // Reused across retries, tiers, and protocol conversions.
+	openCodeRequest           string
+	openCodeReasoningRepaired bool
 }
 
 // relayHandler 返回转发处理器（一种客户端格式一个实例）。
@@ -274,6 +277,14 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 			insertFailureLog(ak, info, task, http.StatusBadRequest, conversion.Error())
 			return
 		}
+		var rateLimit *openCodeRateLimitError
+		if errors.As(lastErr, &rateLimit) {
+			c.Header("Retry-After", rateLimit.retryAfter())
+			c.Header("X-APISHARE-RateLimit-Source", "upstream")
+			writeRelayError(c, task.format, http.StatusTooManyRequests, rateLimit.Error())
+			insertFailureLog(ak, info, task, http.StatusTooManyRequests, rateLimit.Error())
+			return
+		}
 		// 所有上游都失败且未给客户端写出任何内容
 		msg := "all upstream attempts failed"
 		if lastErr != nil {
@@ -356,12 +367,15 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	info = relayInfo{UpstreamID: up.ID, UpstreamName: up.Name}
 	upModel := up.mapModel(task.model)
 	info.UpstreamModel = upModel
-	if !validUpstreamType(up.Type) {
-		info.Status = http.StatusBadRequest
-		return info, false, &protocolConversionError{fmt.Errorf("unsupported upstream type %q", up.Type)}
+	if limit := up.openCodeRateLimit(); limit != nil {
+		info.Status = http.StatusTooManyRequests
+		return info, false, limit
 	}
 	replayScope := responseReplayScope{task.apiKeyID, up.ID, task.model, upModel}
-	wireFormat := up.wireFormat(task.format)
+	wireFormat, err := up.resolveWireFormat(c.Request.Context(), task.format, upModel)
+	if err != nil {
+		return info, false, err
+	}
 	info.Usage.Source = wireFormat
 	native := wireFormat == task.format || task.nativeOnly
 	var effortLevels []string
@@ -374,7 +388,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	var url string
 	var reqBody []byte
 	if native {
-		url = upstreamURL(up.BaseURL, task.endpoint)
+		url = up.endpointURL(wireFormat, task.endpoint)
 		reqBody = task.body
 		if upModel != task.model {
 			if task.format == FormatGemini {
@@ -399,7 +413,27 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 			info.Status = http.StatusBadRequest
 			return info, false, &protocolConversionError{err}
 		}
-		url = upstreamURL(up.BaseURL, nativeEndpoint(wireFormat, &canonReq{Model: upModel, Stream: task.stream}))
+		url = up.endpointURL(wireFormat, nativeEndpoint(wireFormat, &canonReq{Model: upModel, Stream: task.stream}))
+	}
+	freeRoute, err := up.openCodeFreeRoute(reqBody, wireFormat, upModel)
+	if err != nil {
+		info.Status = http.StatusBadRequest
+		return info, false, &protocolConversionError{err}
+	}
+	freeOriginalBody := reqBody
+	var freeShaped bool
+	var freeTools openCodeToolCompatibility
+	reqBody, freeShaped, err = freeRoute.shapeOpenCodeFreeRequest(reqBody, wireFormat, upModel, &freeTools)
+	if err != nil {
+		info.Status = http.StatusBadRequest
+		return info, false, &protocolConversionError{err}
+	}
+	if freeShaped {
+		endpoint := task.endpoint
+		if !native {
+			endpoint = nativeEndpoint(wireFormat, &canonReq{Model: upModel, Stream: task.stream})
+		}
+		url = freeRoute.openCodeFreeEndpointURL(wireFormat, endpoint)
 	}
 
 	var clineTask string
@@ -426,13 +460,25 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	if clineTask != "" {
 		req.Header.Set("X-Task-ID", clineTask)
 	}
-	if task.stream {
+	if task.stream || freeShaped {
 		req.Header.Set("Accept", "text/event-stream")
 		// Compressors that do not flush each SSE frame can hide the entire
 		// reasoning phase. An upstream may explicitly override this in headers.
 		req.Header.Set("Accept-Encoding", "identity")
 	}
 	switch up.Type {
+	case "opencode", openCodeFreeType:
+		session, sessionErr := openCodeSessionForTask(task, c.Request.Header)
+		if sessionErr != nil {
+			return info, false, sessionErr
+		}
+		setOpenCodeHeaders(req, up.openCodeAPIKey(), wireFormat, session, c.Request.Header)
+		if openCodeLegacyRequest(req) {
+			if task.openCodeRequest == "" {
+				task.openCodeRequest = req.Header.Get("x-opencode-request")
+			}
+			req.Header.Set("x-opencode-request", task.openCodeRequest)
+		}
 	case "anthropic":
 		req.Header.Set("x-api-key", up.APIKey)
 		if v := c.Request.Header.Get("anthropic-version"); v != "" {
@@ -464,15 +510,30 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		if c.Request.Context().Err() != nil || errors.Is(err, errDownstreamWrite) {
 			return
 		}
+		if up.isOpenCode() && info.Status == http.StatusTooManyRequests {
+			return
+		}
 		if err != nil || isRetryableStatus(info.Status) {
 			healthMarkFailure(up.ID)
 			healthMarkRetryAfter(up.ID, retryAfter)
 		} else if info.Status >= 200 && info.Status < 300 {
 			healthMarkSuccess(up.ID)
+			markOpenCodeRateSuccess(up, start)
 		}
 	}()
 	keepalive := beginMessagesKeepalive(c, task)
 	resp, err := messagesHTTPDo(client, req, keepalive, cancel)
+	var freePreviousPath string
+	if err == nil && freeShaped {
+		var attempt *openCodeFreeAttempt
+		attempt, err = retryOpenCodeFreeTier(up, req, resp, freeOriginalBody, wireFormat, upModel, c.Request.Header, func(retry *http.Request) (*http.Response, error) {
+			return messagesHTTPDo(client, retry, keepalive, cancel)
+		})
+		if attempt != nil {
+			req, resp, reqBody, freeTools = attempt.request, attempt.response, attempt.body, attempt.tools
+			freePreviousPath = attempt.previousPath
+		}
+	}
 	if err == nil && up.Type == "cline" {
 		resp, err = retryClineUnauthorized(client, req, resp, up, func(retry *http.Request) (*http.Response, error) {
 			return messagesHTTPDo(client, retry, keepalive, cancel)
@@ -489,11 +550,34 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	if relayNetwork.BodyIdleTimeout > 0 {
 		resp.Body = newActivityDeadlineBody(resp.Body, relayNetwork.BodyIdleTimeout)
 	}
+	if up.isOpenCode() && wireFormat == FormatOpenAIResponse && resp.StatusCode == http.StatusBadRequest && !task.openCodeReasoningRepaired {
+		original := resp
+		resp, err = retryOpenCodeReasoning(client, req, resp, reqBody, keepalive, cancel)
+		task.openCodeReasoningRepaired = resp != original
+		if err != nil {
+			original.Body.Close()
+			return info, false, err
+		}
+		if resp != original && relayNetwork.BodyIdleTimeout > 0 {
+			resp.Body = newActivityDeadlineBody(resp.Body, relayNetwork.BodyIdleTimeout)
+		}
+	}
 	resp.Body = newMessagesKeepaliveBody(resp.Body, req.Context(), keepalive)
 	defer resp.Body.Close()
 	info.Status = resp.StatusCode
 	if up.Type == "cline" && isRetryableStatus(info.Status) {
-		retryAfter = upstreamRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+		retryAfter = openCodeRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+	}
+	var rateLimit *openCodeRateLimitError
+	if up.isOpenCode() && isRetryableStatus(info.Status) {
+		retryAfter = openCodeRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+		if info.Status == http.StatusTooManyRequests {
+			rateLimit = recordOpenCodeRateLimit(up, retryAfter)
+			current, currentErr := cachedRoutingUpstream(up.ID)
+			if currentErr != nil || (current.isOpenCode() && current.openCodeRateKey() == up.openCodeRateKey()) {
+				healthMarkRetryAfter(up.ID, rateLimit.until)
+			}
+		}
 	}
 	if up.ProxyID != 0 && info.Status == http.StatusProxyAuthRequired {
 		return info, false, fmt.Errorf("代理认证失败，请检查代理用户名和密码")
@@ -501,9 +585,26 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 
 	if info.Status < 200 || info.Status > 299 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
+		if rateLimit != nil {
+			rememberOpenCodeRateDetail(up, rateLimit, b, req.Header)
+			info.OutputText.WriteString(rateLimit.detail)
+			return info, false, rateLimit
+		}
 		detail := string(b)
+		if up.isOpenCode() {
+			detail = redactModelTestError(detail, up.openCodeAPIKey())
+			if freePreviousPath != "" {
+				detail += "; 首次入口 " + freePreviousPath + " 返回 FreeTierError，已尝试另一入口"
+			}
+		}
 		info.OutputText.WriteString(detail)
 		if isRetryableStatus(info.Status) {
+			if up.isOpenCode() {
+				if info.Status == http.StatusForbidden {
+					return info, false, fmt.Errorf("upstream %s returned %d: %s; %s", up.Name, info.Status, truncate(detail, 1000), up.openCodeRequestSummary(req, reqBody, wireFormat))
+				}
+				return info, false, fmt.Errorf("upstream %s returned %d (model=%s, path=%s): %s", up.Name, info.Status, upModel, req.URL.EscapedPath(), truncate(detail, 1000))
+			}
 			return info, false, fmt.Errorf("upstream %s returned %d", up.Name, info.Status)
 		}
 		// 客户端错误（400/404/413/422 等）：不重试。原生透传原始错误体，转换路径包装成本格式错误
@@ -520,6 +621,9 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		normalizeClineResponse(resp)
 	}
 	isSSE := strings.Contains(ct, "text/event-stream")
+	if freeTools.ReadAlias != "" || freeTools.NoClientTools {
+		resp.Body = newOpenCodeAliasBody(resp.Body, wireFormat, freeTools, isSSE)
+	}
 
 	if native {
 		if !task.stream && isSSE && (!task.nativeOnly || task.format == FormatOpenAIResponse) {

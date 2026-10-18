@@ -46,6 +46,9 @@ func (up *Upstream) applyHeaders(req *http.Request, incoming http.Header) error 
 		}
 		rules = config.headerRules
 	}
+	if up.isOpenCode() {
+		return applyOpenCodeHeaderRules(req, rules, up.openCodeAPIKey(), incoming)
+	}
 	if up.Type == "cline" {
 		return up.applyClineHeaders(req, rules, incoming)
 	}
@@ -84,15 +87,6 @@ func getRoutingSnapshot() (*routingSnapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Retain stored rows for removed providers, but exclude unsupported types
-	// from both model discovery and routing instead of treating them as OpenAI.
-	active := make([]Upstream, 0, len(ups))
-	for _, up := range ups {
-		if validUpstreamType(up.Type) {
-			active = append(active, up)
-		}
-	}
-	ups = active
 	snapshot = &routingSnapshot{database: db, expires: time.Now().Add(routingSnapshotTTL), upstreams: ups, byID: make(map[int64]Upstream, len(ups))}
 	for i := range snapshot.upstreams {
 		up := &snapshot.upstreams[i]

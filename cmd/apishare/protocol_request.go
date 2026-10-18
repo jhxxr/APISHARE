@@ -24,6 +24,7 @@ func unsupported(feature string) error {
 }
 
 // OpenAIProtocol fixes the outbound endpoint independently of the client's endpoint.
+// OpenCode auto resolves the model's native format from the tier's catalog.
 // Empty/auto on OpenAI preserves its existing Chat/Responses behavior.
 func (u *Upstream) wireFormat(in clientFormat) clientFormat {
 	switch u.Type {
@@ -33,6 +34,17 @@ func (u *Upstream) wireFormat(in clientFormat) clientFormat {
 		return FormatAnthropic
 	case "gemini":
 		return FormatGemini
+	case "opencode", openCodeFreeType:
+		switch u.OpenAIProtocol {
+		case "chat":
+			return FormatOpenAIChat
+		case "responses":
+			return FormatOpenAIResponse
+		case "anthropic":
+			return FormatAnthropic
+		default:
+			return "" // Requires resolveWireFormat with the mapped model.
+		}
 	default:
 		switch u.OpenAIProtocol {
 		case "chat":
@@ -53,12 +65,15 @@ func validOpenAIProtocol(p string) bool {
 }
 
 func validUpstreamType(t string) bool {
-	return t == "openai" || t == "cline" || t == "anthropic" || t == "gemini"
+	return t == "openai" || t == "opencode" || t == openCodeFreeType || t == "cline" || t == "anthropic" || t == "gemini"
 }
 
 func validUpstreamProtocol(upstreamType, protocol string) bool {
 	if upstreamType == "cline" {
 		return protocol == "" || protocol == "auto" || protocol == "chat"
+	}
+	if upstreamType == "opencode" || upstreamType == openCodeFreeType {
+		return protocol == "" || protocol == "auto" || protocol == "chat" || protocol == "responses" || protocol == "anthropic"
 	}
 	return validOpenAIProtocol(protocol)
 }

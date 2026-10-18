@@ -18,7 +18,7 @@ type headerRule struct {
 	literal bool
 }
 
-var headerVariable = regexp.MustCompile(`\{(api_key|codex_user_agent|claude_code_user_agent|client_header:([^{}]+))\}`)
+var headerVariable = regexp.MustCompile(`\{(api_key|codex_user_agent|claude_code_user_agent|opencode_user_agent|client_header:([^{}]+))\}`)
 
 func validHeaderName(name string) bool {
 	if name == "" {
@@ -221,7 +221,7 @@ func applyHeaderRules(req *http.Request, rules []headerRule, apiKey string, inco
 				if variable == "{api_key}" {
 					return apiKey
 				}
-				if variable == "{codex_user_agent}" || variable == "{claude_code_user_agent}" {
+				if variable == "{codex_user_agent}" || variable == "{claude_code_user_agent}" || variable == "{opencode_user_agent}" {
 					id := strings.TrimSuffix(strings.TrimPrefix(variable, "{"), "_user_agent}")
 					value, err := clientVersions.userAgent(id)
 					if err != nil {
