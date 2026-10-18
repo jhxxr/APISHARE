@@ -1,21 +1,20 @@
-/* Per-key model permissions. The textarea remains the source of truth. */
+/* Per-key model permissions. The hidden input remains the source of truth. */
 const keyModelPickers = {};
 let editingKeyModelsID = null, savingKeyModels = false;
 
 function initKeyModels() {
   for (const prefix of ["key", "keyEdit"]) {
     keyModelPickers[prefix] = { models: [], quotas: new Map(), generation: 0, controller: null };
-    $(prefix + "ModelControl").innerHTML = '<label class="field"><span>可用模型</span><textarea id="' + prefix + 'Models" rows="3" spellcheck="false" aria-describedby="' + prefix + 'ModelHint" placeholder="例如：model-a, model-b"></textarea><small id="' + prefix + 'ModelHint">未绑定模型的密钥无法调用。填写模型 ID，以逗号或换行分隔；模型别名需单独填写。</small></label><div class="key-model-actions"><button type="button" class="btn ghost" id="' + prefix + 'LoadModels">获取可用模型</button><button type="button" class="text-btn" id="' + prefix + 'ClearModels">清空模型绑定</button><span id="' + prefix + 'ModelSummary" class="muted" role="status"></span></div><p id="' + prefix + 'ModelStatus" class="probe-info" role="status"></p><div id="' + prefix + 'ModelPicker" class="model-picker hidden"><div class="model-picker-toolbar"><label class="search-field"><span class="sr-only">搜索可用模型</span><input id="' + prefix + 'ModelSearch" placeholder="搜索可用模型…"></label></div><div id="' + prefix + 'ModelList" class="probe-box"></div></div><section class="key-quota-control" aria-labelledby="' + prefix + 'QuotaHeading"><h3 id="' + prefix + 'QuotaHeading">模型额度</h3><p class="quota-hint">共享额度由多个模型共同使用。独立额度仅供对应模型使用，用完后不会扣减共享额度。金额单位为 USD，0 表示不限。</p><label class="field key-shared-quota"><span>共享额度 <span class="field-unit">USD</span></span><input id="' + prefix + 'Quota" type="number" min="0" step="0.01" value="0" required aria-describedby="' + prefix + 'SharedUsage"><small id="' + prefix + 'SharedUsage">已使用 $0.00</small></label><div class="key-model-actions"><button type="button" class="text-btn" id="' + prefix + 'AllShared">全部使用共享额度</button><button type="button" class="text-btn" id="' + prefix + 'AllIndependent">全部独立设置</button></div><div id="' + prefix + 'QuotaRows" class="model-quota-rows"></div></section>';
-    $(prefix + "Models").addEventListener("input", () => {
-      clearKeyModelError(prefix);
-      renderKeyModelPicker(prefix);
-    });
+    $(prefix + "ModelControl").innerHTML = '<div class="field"><div class="field-label-row"><label for="' + prefix + 'ModelInput">模型白名单 <span class="optional">可选</span></label><small id="' + prefix + 'ModelSummary" aria-live="polite">未绑定模型，无法调用</small></div><input id="' + prefix + 'Models" type="hidden"><div id="' + prefix + 'ModelTagInput" class="model-tag-input"><div id="' + prefix + 'ModelChips" class="model-chips" aria-label="模型白名单"></div><input id="' + prefix + 'ModelInput" type="text" placeholder="输入模型名，按回车添加" spellcheck="false" autocomplete="off" list="' + prefix + 'ModelOptions" aria-describedby="' + prefix + 'ModelHint"></div><datalist id="' + prefix + 'ModelOptions"></datalist><small id="' + prefix + 'ModelHint">回车或逗号添加，支持粘贴多行模型；点击 × 移除。模型别名需单独填写；留空表示不允许调用任何模型。</small></div><div class="key-model-actions"><button type="button" class="btn ghost" id="' + prefix + 'LoadModels">获取可用模型</button><button type="button" class="text-btn" id="' + prefix + 'ClearModels">清空模型绑定</button></div><p id="' + prefix + 'ModelStatus" class="probe-info" role="status"></p><div id="' + prefix + 'ModelPicker" class="model-picker hidden"><div class="model-picker-toolbar"><label class="search-field"><span class="sr-only">搜索可用模型</span><input id="' + prefix + 'ModelSearch" placeholder="搜索可用模型…"></label></div><div id="' + prefix + 'ModelList" class="probe-box"></div></div><section class="key-quota-control" aria-labelledby="' + prefix + 'QuotaHeading"><h3 id="' + prefix + 'QuotaHeading">模型额度</h3><p class="quota-hint">共享额度由多个模型共同使用。独立额度仅供对应模型使用，用完后不会扣减共享额度。金额单位为 USD，0 表示不限。</p><label class="field key-shared-quota"><span>共享额度 <span class="field-unit">USD</span></span><input id="' + prefix + 'Quota" type="number" min="0" step="0.01" value="0" required aria-describedby="' + prefix + 'SharedUsage"><small id="' + prefix + 'SharedUsage">已使用 $0.00</small></label><div class="key-model-actions"><button type="button" class="text-btn" id="' + prefix + 'AllShared">全部使用共享额度</button><button type="button" class="text-btn" id="' + prefix + 'AllIndependent">全部独立设置</button></div><div id="' + prefix + 'QuotaRows" class="model-quota-rows"></div></section>';
+    initKeyModelTagInput(prefix);
     $(prefix + "ModelSearch").addEventListener("input", () => renderKeyModelPicker(prefix));
     $(prefix + "LoadModels").addEventListener("click", () => loadKeyModelOptions(prefix));
     $(prefix + "ClearModels").addEventListener("click", () => {
       $(prefix + "Models").value = "";
-      $(prefix + "Models").dispatchEvent(new Event("input", { bubbles: true }));
-      $(prefix + "Models").focus();
+      $(prefix + "ModelInput").value = "";
+      clearKeyModelError(prefix);
+      renderKeyModelPicker(prefix);
+      $(prefix + "ModelInput").focus();
     });
     $(prefix + "AllShared").addEventListener("click", () => setAllKeyQuotaModes(prefix, false));
     $(prefix + "AllIndependent").addEventListener("click", () => setAllKeyQuotaModes(prefix, true));
@@ -37,34 +36,114 @@ function resetKeyModelPicker(prefix, key = null) {
   setBusy($(prefix + "LoadModels"), false);
   $(prefix + "ModelPicker").classList.add("hidden");
   $(prefix + "ModelSearch").value = "";
+  $(prefix + "ModelInput").value = "";
+  $(prefix + "ModelOptions").replaceChildren();
   $(prefix + "ModelStatus").textContent = "";
   clearKeyModelError(prefix);
   renderKeyModelPicker(prefix);
 }
 
 function clearKeyModelError(prefix) {
-  $(prefix + "Models").setCustomValidity("");
-  $(prefix + "Models").removeAttribute("aria-invalid");
+  for (const id of [prefix + "Models", prefix + "ModelInput"]) {
+    const field = $(id);
+    field.setCustomValidity("");
+    field.removeAttribute("aria-invalid");
+  }
   $(prefix + "ModelsError")?.classList.add("hidden");
 }
 
 function keyModelSummary(prefix, selected) {
-  return selected.size ? "仅允许 " + selected.size + " 个模型" : $(prefix + "Models").value.trim() ? "请填写有效模型 ID" : "未绑定模型，无法调用";
+  return selected.size ? "已添加 " + selected.size + " 个模型" : "未绑定模型，无法调用";
+}
+
+function commitKeyModelInput(prefix) {
+  const field = $(prefix + "ModelInput");
+  if (!field.value.trim()) { field.value = ""; return; }
+  const current = new Set(parseAllowlist($(prefix + "Models").value));
+  parseAllowlist(field.value).forEach((model) => current.add(model));
+  field.value = "";
+  $(prefix + "Models").value = [...current].join(",");
+  clearKeyModelError(prefix);
+  renderKeyModelPicker(prefix);
+}
+
+function initKeyModelTagInput(prefix) {
+  const field = $(prefix + "ModelInput");
+  field.addEventListener("keydown", (event) => {
+    if (event.isComposing || event.keyCode === 229) return;
+    if (["Enter", ",", "，"].includes(event.key) && !event.ctrlKey && !event.metaKey) {
+      event.preventDefault();
+      commitKeyModelInput(prefix);
+    } else if (event.key === "Backspace" && !field.value) {
+      const chips = $(prefix + "ModelChips");
+      if (chips.lastElementChild) {
+        event.preventDefault();
+        chips.lastElementChild.querySelector("button").focus();
+      }
+    }
+  });
+  field.addEventListener("input", (event) => {
+    if (!event.isComposing && /[,，\r\n]/.test(field.value)) commitKeyModelInput(prefix);
+  });
+  field.addEventListener("compositionend", () => { if (/[,，\r\n]/.test(field.value)) commitKeyModelInput(prefix); });
+  field.addEventListener("paste", (event) => {
+    const value = event.clipboardData?.getData("text");
+    if (!value || !/[,，\r\n]/.test(value)) return;
+    event.preventDefault();
+    field.setRangeText(value.replace(/\r?\n/g, ","), field.selectionStart, field.selectionEnd, "end");
+    commitKeyModelInput(prefix);
+  });
+  field.addEventListener("blur", (event) => {
+    if (!event.relatedTarget?.closest("#" + prefix + "ModelChips")) commitKeyModelInput(prefix);
+  });
+  $(prefix + "ModelTagInput").addEventListener("click", (event) => {
+    if (event.target === $(prefix + "ModelTagInput") || event.target === $(prefix + "ModelChips")) field.focus();
+  });
+}
+
+function renderKeyModelChips(prefix) {
+  const selected = parseAllowlist($(prefix + "Models").value);
+  const box = $(prefix + "ModelChips");
+  box.replaceChildren();
+  selected.forEach((model) => {
+    const chip = document.createElement("span");
+    chip.className = "model-chip";
+    const text = document.createElement("span");
+    text.textContent = model;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("aria-label", "移除模型 " + model);
+    button.innerHTML = icon("close");
+    button.addEventListener("click", () => {
+      commitKeyModelInput(prefix);
+      const current = parseAllowlist($(prefix + "Models").value).filter((item) => item !== model);
+      $(prefix + "Models").value = current.join(",");
+      clearKeyModelError(prefix);
+      renderKeyModelPicker(prefix);
+      $(prefix + "ModelInput").focus();
+    });
+    chip.append(text, button);
+    box.append(chip);
+  });
+  $(prefix + "ModelInput").placeholder = selected.length ? "继续添加模型…" : "输入模型名，按回车添加";
+  $(prefix + "ModelSummary").textContent = keyModelSummary(prefix, new Set(selected));
+  const allowed = new Set(selected);
+  $(prefix + "ModelList").querySelectorAll("input[data-model]").forEach((checkbox) => { checkbox.checked = allowed.has(checkbox.dataset.model); });
 }
 
 function renderKeyModelPicker(prefix) {
   const state = keyModelPickers[prefix];
   const selected = new Set(parseAllowlist($(prefix + "Models").value));
-  $(prefix + "ModelSummary").textContent = keyModelSummary(prefix, selected);
+  renderKeyModelChips(prefix);
   const query = $(prefix + "ModelSearch").value.trim().toLowerCase();
   const models = state.models.filter((model) => model.toLowerCase().includes(query));
   $(prefix + "ModelList").innerHTML = models.map((model) => '<label><input type="checkbox" data-model="' + esc(model) + '" ' + (selected.has(model) ? "checked" : "") + '><span>' + esc(model) + '</span></label>').join("") || '<span class="muted">没有匹配的模型</span>';
   $(prefix + "ModelList").querySelectorAll("input").forEach((checkbox) => checkbox.addEventListener("change", () => {
     const current = new Set(parseAllowlist($(prefix + "Models").value));
     if (checkbox.checked) current.add(checkbox.dataset.model); else current.delete(checkbox.dataset.model);
-    $(prefix + "Models").value = [...current].join(", ");
+    $(prefix + "Models").value = [...current].join(",");
     clearKeyModelError(prefix);
-    $(prefix + "ModelSummary").textContent = keyModelSummary(prefix, current);
+    renderKeyModelChips(prefix);
     renderKeyQuotaRows(prefix);
   }));
   renderKeyQuotaRows(prefix);
@@ -134,6 +213,7 @@ async function loadKeyModelOptions(prefix) {
     const result = await api("api/keys/models", { signal: state.controller.signal });
     if (generation !== state.generation) return;
     state.models = result.models || [];
+    $(prefix + "ModelOptions").innerHTML = state.models.map((model) => '<option value="' + esc(model) + '"></option>').join("");
     $(prefix + "ModelPicker").classList.toggle("hidden", !state.models.length);
     status.textContent = state.models.length ? "已获取 " + state.models.length + " 个模型，勾选后加入白名单。" : "上游尚未提供可用模型，可手动填写模型 ID。";
     renderKeyModelPicker(prefix);
@@ -150,8 +230,9 @@ async function loadKeyModelOptions(prefix) {
 }
 
 function validateKeyModels(prefix) {
-  const field = $(prefix + "Models");
-  field.setCustomValidity(field.value.trim() && !parseAllowlist(field.value).length ? "请填写有效模型 ID；留空表示不允许调用任何模型。" : "");
+  commitKeyModelInput(prefix);
+  const field = $(prefix + "ModelInput");
+  field.setCustomValidity("");
   if (!field.checkValidity()) { field.reportValidity(); return false; }
   for (const input of [$(prefix + "Quota"), ...$(prefix + "QuotaRows").querySelectorAll("input")]) {
     if (!input.checkValidity()) { input.reportValidity(); return false; }
@@ -170,7 +251,7 @@ function openKeyModels(id) {
   $("keyModelsError").classList.add("hidden");
   $("keyModelsDialog").showModal();
   syncModalLock();
-  $("keyEditModels").focus();
+  $("keyEditModelInput").focus();
 }
 
 function closeKeyModels() {

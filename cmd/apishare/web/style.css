@@ -278,7 +278,7 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline
 #keysTable .row-actions button { min-height: 44px; }
 @media (max-width: 600px) {
   .key-model-control .probe-box { grid-template-columns: minmax(0, 1fr); }
-  .key-model-control textarea, .key-model-control input { font-size: 16px; }
+  .key-model-control input, .key-model-control select { font-size: 16px; }
 }
 .composer .block-heading { margin-bottom: 22px; }
 .new-key { display: flex; align-items: center; flex-wrap: wrap; gap: 15px; padding: 19px; border: 1px solid #b8dfcb; border-radius: 10px; background: var(--green-soft); }
