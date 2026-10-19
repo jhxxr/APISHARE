@@ -192,7 +192,7 @@ func TestOpenCodeExplicitOverridesAndChildIdentity(t *testing.T) {
 	incoming.Set("x-opencode-session-id", child)
 	up := &Upstream{Type: "opencode", APIKey: "key", HeaderOverrides: `{"User-Agent":"custom-opencode","x-opencode-project":"global"}`}
 	req := httptest.NewRequest("POST", "http://upstream.invalid/v1/responses", nil)
-	setOpenCodeHeaders(req, up.APIKey, FormatOpenAIResponse, session, incoming)
+	setOpenCodeHeaders(req, up.APIKey, FormatOpenAIResponse, session, incoming, nil, nil)
 	if err := up.applyHeaders(req, incoming); err != nil || req.UserAgent() != "custom-opencode" || req.Header.Get("x-opencode-session") != session || req.Header.Get("x-opencode-session-id") != child {
 		t.Fatalf("explicit override or child identity was lost: %v %v", req.Header, err)
 	}

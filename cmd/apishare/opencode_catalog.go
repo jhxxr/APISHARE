@@ -150,7 +150,7 @@ func fetchOpenCodePublic(ctx context.Context, client *http.Client, endpoint stri
 		return nil, fmt.Errorf("OpenCode 目录地址无效")
 	}
 	req.Header.Set("Accept", "application/json, text/plain, text/markdown")
-	req.Header.Set("User-Agent", openCodeUserAgent())
+	req.Header.Set("User-Agent", openCodeV2UserAgent())
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("无法获取 OpenCode 模型协议目录")
@@ -171,7 +171,7 @@ func openCodeCatalogCacheKey(proxy *OutboundProxy) openCodeCatalogKey {
 	if proxy != nil {
 		connection = fmt.Sprint(proxyFingerprint(proxy))
 	}
-	return openCodeCatalogKey{db, connection + openCodeUserAgent() + fmt.Sprint(openCodeCatalogSources)}
+	return openCodeCatalogKey{db, connection + openCodeV2UserAgent() + fmt.Sprint(openCodeCatalogSources)}
 }
 
 func openCodeCatalogSetting() string {

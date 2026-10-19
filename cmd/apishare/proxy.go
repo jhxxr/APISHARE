@@ -173,7 +173,10 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			task.body = body
 		}
 
-		skey := sessionKeyFromCanon(endpoint, c.Request.Header, cr)
+		// Routing affinity is also scoped by gateway key: identical opening
+		// messages from different users must not share an upstream, its key,
+		// or its proxy egress.
+		skey := scopedSessionKey(ak.ID, sessionKeyFromCanon(endpoint, c.Request.Header, cr))
 
 		s := getSettings()
 		tried := map[int64]bool{}
@@ -460,11 +463,16 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	if clineTask != "" {
 		req.Header.Set("X-Task-ID", clineTask)
 	}
+	fingerprint := openCodeFreeFingerprintRequest(up, req, upModel)
 	if task.stream || freeShaped {
 		req.Header.Set("Accept", "text/event-stream")
-		// Compressors that do not flush each SSE frame can hide the entire
-		// reasoning phase. An upstream may explicitly override this in headers.
-		req.Header.Set("Accept-Encoding", "identity")
+		if !fingerprint {
+			// Compressors that do not flush each SSE frame can hide the entire
+			// reasoning phase. An upstream may explicitly override this in
+			// headers. Bun-compatible traffic instead advertises its native
+			// encodings and decodes them in the transport.
+			req.Header.Set("Accept-Encoding", "identity")
+		}
 	}
 	switch up.Type {
 	case "opencode", openCodeFreeType:
@@ -472,7 +480,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		if sessionErr != nil {
 			return info, false, sessionErr
 		}
-		setOpenCodeHeaders(req, up.openCodeAPIKey(), wireFormat, session, c.Request.Header)
+		setOpenCodeHeaders(req, up.openCodeAPIKey(), wireFormat, session, c.Request.Header, task, reqBody)
 		if openCodeLegacyRequest(req) {
 			if task.openCodeRequest == "" {
 				task.openCodeRequest = req.Header.Get("x-opencode-request")
@@ -499,7 +507,12 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	info.startedAt = start
 	// 总耗时覆盖整个转发过程（含流式输出），与只计到响应头的 LatencyMS 区分。
 	defer func() { info.DurationMS = time.Since(start).Milliseconds() }()
-	client, err := clientForUpstream(upstreamHTTPClient, up.ProxyID)
+	var client *http.Client
+	if fingerprint {
+		client, err = clientForOpenCodeFree(upstreamHTTPClient, up.ProxyID)
+	} else {
+		client, err = clientForUpstream(upstreamHTTPClient, up.ProxyID)
+	}
 	if err != nil {
 		return info, false, err
 	}

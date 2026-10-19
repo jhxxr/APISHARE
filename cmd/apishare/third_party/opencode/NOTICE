@@ -8,10 +8,19 @@ The embedded ../../opencode_tools.json contains model-facing definitions only,
 not executable tool implementations. Definitions originate from OpenCode's
 packages/core/src/tool/plugin/ and packages/core/src/codemode/ sources.
 The compatibility snapshot was obtained from:
-https://github.com/jasonxu114514/opencode2api/blob/a6601da673c03832bf78ce04b100dee8c8a92385/internal/gateway/opencode_tools.json
+https://github.com/jasonxu114514/opencode2api/blob/d04ff337d73403f446b39289a93343ac6d512260/internal/gateway/opencode_tools.json
 
 The snapshot preserves the official client's descriptions and JSON schemas,
-including its Windows/PowerShell shell description, dynamic subagent description,
-and 2026 web-search description. Preserve these strings when updating the data;
-Zen free-tier compatibility depends on complete official definitions.
-The gateway request adaptation is implemented independently.
+including its Linux/bash shell description, dynamic subagent description, and
+2026 web-search description. Preserve these strings when updating the data;
+the /inference free-tier gate compares recognized tool definitions with the
+official client byte-for-byte, so incomplete or reworded definitions are
+rejected.
+
+The embedded JSON remains MIT-licensed and is independent of the transport.
+The Bun-compatible TLS/HTTP transport lives in internal/bunhttp and is ported
+from opencode2api under GPL-3.0-or-later; see its NOTICE. Runtime dependencies
+added for that transport are permissively licensed:
+github.com/refraction-networking/utls (BSD-3-Clause),
+github.com/andybalholm/brotli (MIT), github.com/klauspost/compress (Apache-2.0),
+and golang.org/x/net (BSD-3-Clause).

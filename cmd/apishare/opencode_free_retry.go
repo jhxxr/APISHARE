@@ -66,8 +66,10 @@ func retryOpenCodeFreeTier(up *Upstream, req *http.Request, resp *http.Response,
 		return nil, nil
 	}
 	attempt.request.Header.Set("Content-Type", "application/json")
-	attempt.request.Header.Set("Accept-Encoding", "identity")
-	setOpenCodeHeaders(attempt.request, up.openCodeAPIKey(), format, req.Header.Get("x-opencode-session"), incoming)
+	if !openCodeFreeFingerprintRequest(up, attempt.request, model) {
+		attempt.request.Header.Set("Accept-Encoding", "identity")
+	}
+	setOpenCodeHeaders(attempt.request, up.openCodeAPIKey(), format, req.Header.Get("x-opencode-session"), incoming, nil, attempt.body)
 	if err := up.applyHeaders(attempt.request, incoming); err != nil {
 		return nil, nil
 	}

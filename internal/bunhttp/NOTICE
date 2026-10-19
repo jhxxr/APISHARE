@@ -1,0 +1,27 @@
+internal/bunhttp — Bun-compatible HTTP transport
+
+Copyright (C) 2026 Jason Xu <jasonxu114514@163.com>
+Copyright (C) 2026 API Share contributors (modifications)
+
+This package is ported from opencode2api, commit
+d04ff337d73403f446b39289a93343ac6d512260 (v1.4.2), files
+internal/httpx/bun.go, internal/httpx/bun_dial.go and
+internal/httpx/client.go.
+
+Upstream: https://github.com/jasonxu114514/opencode2api
+License: GNU General Public License, version 3 or later (GPL-3.0-or-later).
+The full license text is in the repository root LICENSE file.
+
+Modifications for API Share:
+
+- Package renamed from httpx to bunhttp.
+- BunOptions accepts a per-request ProxyFunc (for HTTP(S)_PROXY / NO_PROXY)
+  and a uTLS configuration carrying the relay client's certificate policy.
+  The idle pool key includes the selected proxy.
+- OpenCode version constants are exported for the gateway's header shaping.
+- bunRequestHead is exposed as RequestHead for tests and diagnostics.
+- Proxy/TLS policy wiring, request headers and response decompression remain
+  unchanged from upstream.
+
+This package is distinct from cmd/apishare/third_party/opencode, which
+contains MIT-licensed OpenCode tool definitions.

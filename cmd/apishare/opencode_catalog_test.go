@@ -68,11 +68,12 @@ func TestOpenCodeAutomaticTierProtocols(t *testing.T) {
 		} else if r.URL.Path != "/inference/openai/v1/responses" {
 			t.Errorf("incorrect inferred endpoint: %s", r.URL.Path)
 		}
-		if r.Header.Get("Authorization") != "Bearer channel-key" {
+		if format == FormatAnthropic {
+			if r.Header.Get("x-api-key") != "channel-key" || r.Header.Get("Authorization") != "" {
+				t.Error("Messages used incorrect inference credentials")
+			}
+		} else if r.Header.Get("Authorization") != "Bearer channel-key" {
 			t.Error("inference endpoint omitted bearer credentials")
-		}
-		if format == FormatAnthropic && r.Header.Get("x-api-key") != "channel-key" {
-			t.Error("Messages omitted API-key compatibility header")
 		}
 		body, _ := io.ReadAll(r.Body)
 		var request map[string]any

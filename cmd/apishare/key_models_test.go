@@ -197,7 +197,7 @@ func TestKeyModelsRelayCannotBypassPermissions(t *testing.T) {
 	v1.POST("/messages", relayHandler(FormatAnthropic, false))
 	v1.POST("/embeddings", relayHandler(FormatOpenAIChat, true))
 	r.Group("/v1beta", keyAuth(), keyRateLimit()).POST("/models/*action", relayHandler(FormatGemini, false))
-	affinitySet("sid:model-permissions", u.ID)
+	affinitySet(scopedSessionKey(ak.ID, "sid:model-permissions"), u.ID)
 	for _, tc := range []struct{ path, body, errorType string }{
 		{"/v1/chat/completions", `{"model":"denied","messages":[{"role":"user","content":"hi"}]}`, "apishare_error"},
 		{"/v1/chat/completions", `{"model":"real-model","stream":true,"messages":[]}`, "apishare_error"},

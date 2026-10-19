@@ -295,7 +295,7 @@ func TestRealtimeHandshakeFailoverThroughSOCKSProxy(t *testing.T) {
 	settingsMu.Unlock()
 	t.Cleanup(func() { settingsMu.Lock(); settingsCache = previous; settingsMu.Unlock() })
 	header := http.Header{"Authorization": []string{"Bearer " + ak.Key}, "X-Session-Id": []string{"failover-voice"}}
-	skey := sessionKeyFromCanon("/v1/realtime", header, &canonReq{Model: fmt.Sprint(ak.ID) + ":voice-alias"})
+	skey := scopedSessionKey(ak.ID, sessionKeyFromCanon("/v1/realtime", header, &canonReq{Model: fmt.Sprint(ak.ID) + ":voice-alias"}))
 	affinitySet(skey, badUp.ID)
 	finished := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { router.ServeHTTP(w, r); close(finished) }))

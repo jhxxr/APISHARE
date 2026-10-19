@@ -392,7 +392,7 @@ func TestAuditNativeResponsesOperationsExcludeChatOnlyUpstreams(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1/responses/compact", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+key.Key)
 	req.Header.Set("X-Session-Id", "compact-session")
-	affinitySet(sessionKeyFromCanon("/v1/responses/compact", req.Header, cr), chatUp.ID)
+	affinitySet(scopedSessionKey(key.ID, sessionKeyFromCanon("/v1/responses/compact", req.Header, cr)), chatUp.ID)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != 200 || chatCalls != 0 || nativeCalls != 1 || rec.Body.String() != answer {

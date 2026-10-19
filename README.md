@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square" alt="License"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg?style=flat-square" alt="License"></a>
   <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.26+-00ADD8?style=flat-square&logo=go" alt="Go Version"></a>
   <a href="https://github.com/jhxxr/APISHARE/pkgs/container/apishare"><img src="https://img.shields.io/badge/Docker-GHCR-2496ED?style=flat-square&logo=docker" alt="Docker Support"></a>
   <a href="https://sqlite.org/"><img src="https://img.shields.io/badge/Storage-Pure_Go_SQLite_(WAL)-003B57?style=flat-square&logo=sqlite" alt="SQLite"></a>
@@ -38,7 +38,7 @@ API Share 是一个用 Go 编写的 AI 网关。它统一接收 OpenAI Chat Comp
 客户端只需要一个网关签发的 API Key，就可以用 Claude Code 驱动 DeepSeek、用 Codex CLI 驱动 Gemini，或者让任意 OpenAI 兼容客户端接入不同厂商的模型。
 
 > [!NOTE]
-> 本项目只对接官方 API 上游（OpenAI、Anthropic、Gemini、xAI、DeepSeek、GLM、Qwen 或私有部署的 vLLM / Ollama 等标准端点），不包含网页订阅逆向、TLS 指纹伪装或代理轮换逻辑。
+> 本项目只对接官方 API 上游（OpenAI、Anthropic、Gemini、xAI、DeepSeek、GLM、Qwen 或私有部署的 vLLM / Ollama 等标准端点）。OpenCode 免费模型流量会模拟官方客户端所用 Bun 运行时的 HTTP/1.1 请求格式与 TLS 握手特征，以通过官方免费入口的客户端校验；`/zen/go`、付费模型及其他上游不受影响。不包含网页订阅逆向或网页 Cookie 抓取。
 
 ---
 
@@ -48,7 +48,7 @@ API Share 是一个用 Go 编写的 AI 网关。它统一接收 OpenAI Chat Comp
 - **会话粘性** — 通过请求头或对话指纹把同一会话绑定到同一上游，提升 Prompt Cache 命中率。
 - **加权路由与故障转移** — 按权重分流，上游返回 `401 / 403 / 408 / 429 / 5xx / 529` 或网络异常时自动切换；连续故障触发指数退避冷却。
 - **计费与配额** — 每日同步 LiteLLM 价格库，支持每 Key 的 QPS、并发、共享额度与模型专属额度。
-- **独立代理池** — 每个上游可单独绑定 HTTP / HTTPS / SOCKS5 / SOCKS5h 代理。
+- **独立代理池** — 每个上游可单独绑定 HTTP / HTTPS / SOCKS5 / SOCKS5h 代理（均支持用户名密码），OpenCode 免费流量同样经所选代理出站。
 - **单二进制部署** — 纯 Go SQLite（WAL）与 `go:embed` 静态前端，无需 Redis、MySQL 或 Nginx。
 - **管理与监控** — 初始化向导、热重命名后台路径、公开状态页、调用日志与速度指标。
 
@@ -77,7 +77,7 @@ API Share 是一个用 Go 编写的 AI 网关。它统一接收 OpenAI Chat Comp
 | Anthropic Messages | `anthropic` | Claude 官方端点 |
 | Google Gemini | `gemini` | AI Studio 官方端点 |
 | Cline 免费模型 | `cline` | 账号登录、令牌刷新与免费模型发现 |
-| OpenCode 免费模型 | `opencode-free` | 自动发现免费模型并按模型选择原生协议 |
+| OpenCode 免费模型 | `opencode-free` | 自动发现免费模型、按模型选择原生协议，并对官方免费入口模拟 Bun TLS/HTTP 指纹 |
 
 渠道配置、Cline / OpenCode 登录流程与路由优先级见 **[上游渠道文档](docs/UPSTREAM_CHANNELS.md)**。
 
@@ -277,7 +277,11 @@ go test ./cmd/apishare -run TestCodexCLIResponsesToolLoop -v -count=1
 
 ## 📄 许可证
 
-本项目基于 [MIT License](LICENSE) 开源。
+Copyright (C) 2026 API Share contributors.
+
+本项目基于 [GNU General Public License v3.0 or later](LICENSE) 开源。
+
+`internal/bunhttp` 移植自 [opencode2api](https://github.com/jasonxu114514/opencode2api)（GPL-3.0-or-later，Copyright (C) Jason Xu），修改说明见 [internal/bunhttp/NOTICE](internal/bunhttp/NOTICE)。`cmd/apishare/third_party/opencode` 中的 OpenCode 工具定义仍分别遵循其 MIT 许可。
 
 前端内嵌的 Space Grotesk 与 Orbitron 字体遵循各自的 [SIL Open Font License](cmd/apishare/web/public/fonts/OFL.txt)。
 

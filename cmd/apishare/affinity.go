@@ -14,6 +14,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"time"
 )
@@ -72,4 +73,16 @@ func sessionKeyFromCanon(endpoint string, header http.Header, cr *canonReq) stri
 		return "sid:" + sid
 	}
 	return "fp:" + sessionFingerprint(endpoint, cr.Model, cr.InputText)
+}
+
+// scopedSessionKey makes routing affinity local to the gateway API key. Without
+// this, two callers whose conversations start with the same text share a
+// fingerprint and are routed to the same upstream key, proxy egress and
+// upstream session. The empty key ID keeps the unscoped form for callers that
+// do not have an authenticated key (tests and internal probes).
+func scopedSessionKey(apiKeyID int64, skey string) string {
+	if apiKeyID <= 0 {
+		return skey
+	}
+	return fmt.Sprintf("key:%d:%s", apiKeyID, skey)
 }

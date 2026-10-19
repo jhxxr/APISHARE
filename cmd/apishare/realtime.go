@@ -128,7 +128,7 @@ func realtimeWebSocket(c *gin.Context) {
 	}
 	task := &relayTask{format: FormatRealtime, endpoint: "/v1/realtime", model: model, apiKeyID: ak.ID, stream: true}
 	tried := map[int64]bool{}
-	skey := sessionKeyFromCanon(task.endpoint, c.Request.Header, &canonReq{Model: fmt.Sprint(ak.ID) + ":" + model})
+	skey := scopedSessionKey(ak.ID, sessionKeyFromCanon(task.endpoint, c.Request.Header, &canonReq{Model: fmt.Sprint(ak.ID) + ":" + model}))
 	var upstream *websocket.Conn
 	var up *Upstream
 	var info relayInfo

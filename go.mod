@@ -3,9 +3,12 @@ module apishare
 go 1.26.2
 
 require (
+	github.com/andybalholm/brotli v1.1.1
 	github.com/coder/websocket v1.8.15
 	github.com/gin-gonic/gin v1.12.0
+	github.com/klauspost/compress v1.18.0
 	github.com/pkoukk/tiktoken-go v0.1.8
+	github.com/refraction-networking/utls v1.8.2
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	golang.org/x/crypto v0.57.0
 	golang.org/x/net v0.58.0

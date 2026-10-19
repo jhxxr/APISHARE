@@ -376,7 +376,7 @@ func TestStructuredOutputRoutingAndSafeFailover(t *testing.T) {
 			req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(string(task.body)))
 			req.Header.Set("Authorization", "Bearer "+key.Key)
 			req.Header.Set("X-Session-Id", "structured-route")
-			affinitySet(sessionKeyFromCanon("/v1/messages", req.Header, task.canon), firstUp.ID)
+			affinitySet(scopedSessionKey(key.ID, sessionKeyFromCanon("/v1/messages", req.Header, task.canon)), firstUp.ID)
 			rec := httptest.NewRecorder()
 			router.ServeHTTP(rec, req)
 			if scenario == "invalid-with-disabled-fallback" {

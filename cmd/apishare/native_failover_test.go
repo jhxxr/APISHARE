@@ -88,7 +88,7 @@ func TestNativeInitialStreamFailureRetriesAnotherUpstream(t *testing.T) {
 				}
 				req := httptest.NewRequest("POST", path, strings.NewReader(string(task.body)))
 				req.Header.Set("X-Session-Id", "native-failover")
-				affinitySet("sid:native-failover", first.ID)
+				affinitySet(scopedSessionKey(key.ID, "sid:native-failover"), first.ID)
 				rec := httptest.NewRecorder()
 				router.ServeHTTP(rec, req)
 				if failedCalls.Load() != 1 || goodCalls.Load() != 1 || rec.Code != 200 || rec.Body.String() != fixtureSSE(format) {

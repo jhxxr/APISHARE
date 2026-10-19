@@ -48,7 +48,7 @@ func upstreamModelCacheKeyForProxy(u *Upstream, p *OutboundProxy) modelCacheKey 
 	}
 	connection, _ := json.Marshal([]any{u.Type, u.BaseURL, u.APIKey, proxyConnection, u.HeaderOverrides, clientHeaderVersionFingerprint(u.HeaderOverrides)})
 	if u.isOpenCode() {
-		connection = append(connection, []byte(openCodeUserAgent())...)
+		connection = append(connection, []byte(openCodeV2UserAgent())...)
 		connection = append(connection, []byte(u.OpenAIProtocol+":"+u.openCodeTier())...)
 	}
 	return modelCacheKey{u.ID, sha256.Sum256(connection)}
@@ -221,7 +221,7 @@ func probeUpstreamModelListWithClient(ctx context.Context, upType, baseURL, apiK
 			if err != nil {
 				return nil, err
 			}
-			setOpenCodeHeaders(req, apiKey, FormatOpenAIChat, session, nil)
+			setOpenCodeHeaders(req, apiKey, FormatOpenAIChat, session, nil, nil, nil)
 		case "anthropic":
 			req.Header.Set("x-api-key", apiKey)
 			req.Header.Set("anthropic-version", "2023-06-01")

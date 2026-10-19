@@ -87,6 +87,9 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 	if cr.SessionID == "" {
 		cr.SessionID = str(m["conversation_id"])
 	}
+	if cr.SessionID == "" {
+		cr.SessionID = claudeCodeSessionID(str(object(m["metadata"])["user_id"]))
+	}
 	cr.Messages = nil
 	cr.System = ""
 	var systemForInput string

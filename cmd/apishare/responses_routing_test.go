@@ -61,7 +61,7 @@ func TestResponsesIncompatibleAffinityFallsBackToNative(t *testing.T) {
 			req := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(body))
 			req.Header.Set("Authorization", "Bearer "+key.Key)
 			req.Header.Set("X-Session-Id", "responses-route")
-			affinitySet(sessionKeyFromCanon("/v1/responses", req.Header, cr), chatUp.ID)
+			affinitySet(scopedSessionKey(key.ID, sessionKeyFromCanon("/v1/responses", req.Header, cr)), chatUp.ID)
 			rec := httptest.NewRecorder()
 			router.ServeHTTP(rec, req)
 			want := 400

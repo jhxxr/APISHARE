@@ -57,7 +57,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha
           labels: |
-            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.licenses=GPL-3.0-or-later
 
       - name: Build and publish image
         uses: docker/build-push-action@v6

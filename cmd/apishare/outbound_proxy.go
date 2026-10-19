@@ -12,6 +12,8 @@ import (
 	"sync"
 	"unicode/utf8"
 
+	"apishare/internal/bunhttp"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -109,18 +111,48 @@ var proxyTransports = struct {
 	m map[int64]proxyTransportEntry
 }{m: make(map[int64]proxyTransportEntry)}
 
+// Bun-compatible clients are cached separately because their TLS/HTTP shape
+// is only used by free OpenCode traffic. The base client and its TLS
+// certificate policy participate in the key so a test or administrator change
+// cannot silently reuse an incompatible transport.
+type bunTransportEntry struct {
+	proxyFingerprint [32]byte
+	base             *http.Client
+	tlsPolicy        string
+	transport        *bunhttp.BunTransport
+}
+
+var bunTransports = struct {
+	sync.Mutex
+	m map[int64]bunTransportEntry
+}{m: make(map[int64]bunTransportEntry)}
+
 func proxyFingerprint(p *OutboundProxy) [32]byte {
 	data, _ := json.Marshal([]any{p.ID, p.URL, p.Username, p.Password, p.Enabled})
 	return sha256.Sum256(data)
 }
 
+func bunTLSPolicy(base *http.Client) string {
+	config := bunTLSConfigFor(base)
+	if config == nil {
+		return ""
+	}
+	return fmt.Sprintf("%p|%t", config.RootCAs, config.InsecureSkipVerify)
+}
+
 func closeProxyTransport(id int64) {
 	proxyTransports.Lock()
-	defer proxyTransports.Unlock()
 	if entry, ok := proxyTransports.m[id]; ok {
 		entry.transport.CloseIdleConnections()
 		delete(proxyTransports.m, id)
 	}
+	proxyTransports.Unlock()
+	bunTransports.Lock()
+	if entry, ok := bunTransports.m[id]; ok {
+		entry.transport.CloseIdleConnections()
+		delete(bunTransports.m, id)
+	}
+	bunTransports.Unlock()
 }
 
 // Clone the established client settings, keeping streaming without a total
@@ -170,6 +202,57 @@ func clientForProxyConfig(base *http.Client, p *OutboundProxy) (*http.Client, er
 		transport.Proxy = http.ProxyURL(endpoint)
 		entry = proxyTransportEntry{fingerprint: fingerprint, transport: transport}
 		proxyTransports.m[p.ID] = entry
+	}
+	client := *base
+	client.Transport = entry.transport
+	return &client, nil
+}
+
+// clientForOpenCodeFree returns the client used for free OpenCode traffic on
+// the official /zen and /inference gates. It keeps the base client's timeout
+// and redirect policy but swaps in the Bun-compatible TLS/HTTP transport.
+// proxyID 0 follows the deployment's HTTP(S)_PROXY / NO_PROXY settings.
+func clientForOpenCodeFree(base *http.Client, proxyID int64) (*http.Client, error) {
+	if proxyID < 0 {
+		return nil, errors.New("请选择有效的代理")
+	}
+	var proxy *OutboundProxy
+	if proxyID != 0 {
+		p, err := dbGetOutboundProxy(proxyID)
+		if err != nil {
+			return nil, errors.New("所选代理不存在或无法读取")
+		}
+		config := *p
+		proxy = &config
+		if !proxy.Enabled {
+			return nil, errors.New("所选代理已停用")
+		}
+		if err := normalizeProxyEndpoint(proxy); err != nil {
+			return nil, err
+		}
+	}
+	fingerprint := proxyFingerprint(proxy)
+	policy := bunTLSPolicy(base)
+	bunTransports.Lock()
+	defer bunTransports.Unlock()
+	entry, exists := bunTransports.m[proxyID]
+	if !exists || entry.proxyFingerprint != fingerprint || entry.base != base || entry.tlsPolicy != policy {
+		if exists {
+			entry.transport.CloseIdleConnections()
+		}
+		var endpoint *url.URL
+		if proxy != nil {
+			endpoint, _ = url.Parse(proxy.URL)
+			if proxy.Username != "" {
+				endpoint.User = url.UserPassword(proxy.Username, proxy.Password)
+			}
+		}
+		transport, err := newBunFingerprintTransport(relayNetwork, endpoint, bunTLSConfigFor(base))
+		if err != nil {
+			return nil, err
+		}
+		entry = bunTransportEntry{proxyFingerprint: fingerprint, base: base, tlsPolicy: policy, transport: transport}
+		bunTransports.m[proxyID] = entry
 	}
 	client := *base
 	client.Transport = entry.transport

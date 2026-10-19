@@ -147,7 +147,7 @@ func TestIdleUpstreamFailsOverWithoutReplacingStartedStreams(t *testing.T) {
 			if err := dbInsertKey(key); err != nil {
 				t.Fatal(err)
 			}
-			affinitySet("sid:idle-check", first.ID)
+			affinitySet(scopedSessionKey(key.ID, "sid:idle-check"), first.ID)
 			r := gin.New()
 			r.POST("/v1/chat/completions", func(c *gin.Context) { c.Set("apiKey", *key) }, relayHandler(FormatOpenAIChat, false))
 			req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(fmt.Sprintf(`{"model":"review-idle","stream":%v,"messages":[{"role":"user","content":"hi"}]}`, stream)))

@@ -127,9 +127,12 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 	if clineTask != "" {
 		req.Header.Set("X-Task-ID", clineTask)
 	}
+	fingerprint := openCodeFreeFingerprintRequest(up, req, model)
 	if stream || freeShaped {
 		req.Header.Set("Accept", "text/event-stream")
-		req.Header.Set("Accept-Encoding", "identity")
+		if !fingerprint {
+			req.Header.Set("Accept-Encoding", "identity")
+		}
 	}
 	switch up.Type {
 	case "opencode", openCodeFreeType:
@@ -137,7 +140,7 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 		if err != nil {
 			return nil, 0, err
 		}
-		setOpenCodeHeaders(req, up.openCodeAPIKey(), format, session, nil)
+		setOpenCodeHeaders(req, up.openCodeAPIKey(), format, session, nil, nil, body)
 	case "anthropic":
 		req.Header.Set("x-api-key", up.APIKey)
 		req.Header.Set("anthropic-version", "2023-06-01")
@@ -150,7 +153,12 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 	if err := up.applyHeaders(req, nil); err != nil {
 		return nil, 0, err
 	}
-	client, err := clientForUpstream(modelTestClient, up.ProxyID)
+	var client *http.Client
+	if fingerprint {
+		client, err = clientForOpenCodeFree(modelTestClient, up.ProxyID)
+	} else {
+		client, err = clientForUpstream(modelTestClient, up.ProxyID)
+	}
 	if err != nil {
 		return nil, 0, err
 	}

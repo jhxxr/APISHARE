@@ -768,7 +768,7 @@ func TestFixedOpenAIProtocolKeepsEmbeddingsNative(t *testing.T) {
 	if err := dbInsertUpstream(up); err != nil {
 		t.Fatal(err)
 	}
-	affinitySet("sid:embedding-protocol", wrong.ID)
+	affinitySet(scopedSessionKey(key.ID, "sid:embedding-protocol"), wrong.ID)
 	r := gin.New()
 	r.POST("/v1/embeddings", func(c *gin.Context) { c.Set("apiKey", *key) }, relayHandler(FormatOpenAIChat, true))
 	req := httptest.NewRequest("POST", "/v1/embeddings", strings.NewReader(body))
