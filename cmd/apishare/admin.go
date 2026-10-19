@@ -510,6 +510,7 @@ func registerAdminRoutes(r *gin.Engine) {
 	})
 
 	registerModelTestRoutes(auth)
+	registerModelOverviewRoutes(auth)
 
 	auth.POST("/upstreams/:id/test", func(c *gin.Context) {
 		id, _ := strconv.ParseInt(c.Param("id"), 10, 64)

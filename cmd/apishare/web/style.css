@@ -307,6 +307,14 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline
 .provider-icon.gemini { background: #edf1fc; color: #4263a9; border-color: #d2dcf3; }
 .provider-icon .icon { width: 21px; height: 21px; }
 .provider-cell { display: flex; align-items: center; gap: 10px; min-width: 160px; }
+.model-sources-cell { min-width: 240px; max-width: 460px; }
+.model-source-list { display: flex; flex-direction: column; gap: 8px; }
+.model-source { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-soft); }
+.model-source .provider-icon { width: 28px; height: 28px; font-size: 12px; }
+.model-source > span:nth-child(2) { min-width: 0; flex: 1; }
+.model-source strong { display: block; font-size: 12px; font-weight: 500; overflow-wrap: anywhere; }
+.model-source small { display: block; margin-top: 2px; color: var(--muted); font: 10px/1.7 var(--mono); overflow-wrap: anywhere; }
+#modelsOverviewTable td { vertical-align: top; }
 .endpoint-cell { min-width: 180px; max-width: 300px; }
 .endpoint-cell > span { display: block; overflow-wrap: anywhere; font: 10px/1.8 var(--mono); color: #4d5f77; }
 .endpoint-cell small { display: block; color: var(--muted); font: 10px/1.7 var(--mono); margin-top: 3px; }
@@ -744,17 +752,18 @@ kbd { padding: 2px 4px; border: 1px solid var(--border-strong); border-radius: 3
   .routing-grid .switch-row, .routing-grid .inline-note { margin-top: 0; }
 }
 @media (max-width: 600px) {
-  #keysTable, #upsTable, #proxiesTable { display: block; min-width: 0; }
-  #keysTable thead, #upsTable thead, #proxiesTable thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
-  #keysTable tbody, #upsTable tbody, #proxiesTable tbody { display: block; }
-  #keysTable tr, #upsTable tr, #proxiesTable tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; padding: 18px 16px; border-top: 1px solid var(--border); }
-  #keysTable td, #upsTable td, #proxiesTable td { display: block; min-width: 0; padding: 0; border: 0; font-size: 13px; overflow-wrap: anywhere; }
-  #keysTable td::before, #upsTable td::before, #proxiesTable td::before { content: attr(data-label); display: block; margin-bottom: 6px; color: var(--muted); font-size: 11px; }
-  #keysTable td:first-child, #upsTable td:first-child, #proxiesTable td:first-child, #keysTable td:nth-child(2), #upsTable td:nth-child(2), #proxiesTable td:nth-child(2), #keysTable td:last-child, #upsTable td:last-child, #proxiesTable td:last-child { grid-column: 1 / -1; }
-  #keysTable td:first-child::before, #upsTable td:first-child::before, #proxiesTable td:first-child::before, #keysTable td:last-child::before, #upsTable td:last-child::before, #proxiesTable td:last-child::before { display: none; }
+  #keysTable, #upsTable, #proxiesTable, #modelsOverviewTable { display: block; min-width: 0; }
+  #keysTable thead, #upsTable thead, #proxiesTable thead, #modelsOverviewTable thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+  #keysTable tbody, #upsTable tbody, #proxiesTable tbody, #modelsOverviewTable tbody { display: block; }
+  #keysTable tr, #upsTable tr, #proxiesTable tr, #modelsOverviewTable tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; padding: 18px 16px; border-top: 1px solid var(--border); }
+  #keysTable td, #upsTable td, #proxiesTable td, #modelsOverviewTable td { display: block; min-width: 0; padding: 0; border: 0; font-size: 13px; overflow-wrap: anywhere; }
+  #keysTable td::before, #upsTable td::before, #proxiesTable td::before, #modelsOverviewTable td::before { content: attr(data-label); display: block; margin-bottom: 6px; color: var(--muted); font-size: 11px; }
+  #keysTable td:first-child, #upsTable td:first-child, #proxiesTable td:first-child, #modelsOverviewTable td:first-child, #keysTable td:nth-child(2), #upsTable td:nth-child(2), #proxiesTable td:nth-child(2), #keysTable td:last-child, #upsTable td:last-child, #proxiesTable td:last-child { grid-column: 1 / -1; }
+  #keysTable td:first-child::before, #upsTable td:first-child::before, #proxiesTable td:first-child::before, #modelsOverviewTable td:first-child::before, #keysTable td:last-child::before, #upsTable td:last-child::before, #proxiesTable td:last-child::before { display: none; }
   #keysTable td:last-child, #upsTable td:last-child, #proxiesTable td:last-child { padding-top: 12px; border-top: 1px solid var(--border); }
-  #keysTable td[colspan], #upsTable td[colspan], #proxiesTable td[colspan] { grid-column: 1 / -1; border: 0; padding: 0; }
-  #keysTable .quota-cell, #upsTable .provider-cell, #upsTable .endpoint-cell, #proxiesTable .endpoint-cell { min-width: 0; max-width: none; }
+  #modelsOverviewTable td:nth-child(2) { grid-column: 1 / -1; }
+  #keysTable td[colspan], #upsTable td[colspan], #proxiesTable td[colspan], #modelsOverviewTable td[colspan] { grid-column: 1 / -1; border: 0; padding: 0; }
+  #keysTable .quota-cell, #upsTable .provider-cell, #upsTable .endpoint-cell, #proxiesTable .endpoint-cell, #modelsOverviewTable .model-sources-cell { min-width: 0; max-width: none; }
   #keysTable .row-actions, #upsTable .row-actions, #proxiesTable .row-actions { justify-content: flex-start; }
   #proxiesTable .row-actions > button { min-width: 44px; min-height: 44px; }
   main { padding: 22px 16px; }

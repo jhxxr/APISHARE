@@ -38,7 +38,7 @@ function editorOpenAIProtocol() {
   if (isOpenCodeType($("editType").value)) return $("editOpenCodeProtocol").value || "auto";
   return { "openai-chat": "chat", "openai-responses": "responses" }[$("editType").value] || "auto";
 }
-const tabNames = { dashboard: "概览", keys: "API 密钥", upstreams: "上游服务", proxies: "代理配置", logs: "调用日志", announcements: "公告管理", settings: "工作空间设置", deployment: "部署配置" };
+const tabNames = { dashboard: "概览", keys: "API 密钥", upstreams: "上游服务", models: "模型总览", proxies: "代理配置", logs: "调用日志", announcements: "公告管理", settings: "工作空间设置", deployment: "部署配置" };
 const validTab = (name) => Object.hasOwn(tabNames, name);
 let token = localStorage.getItem(TOKEN_KEY) || "";
 let activeTab = "dashboard";
@@ -226,6 +226,7 @@ async function loadCurrentTab() {
   if (activeTab === "dashboard") return Promise.all([loadStats(), loadRecent()]);
   if (activeTab === "keys") return loadKeys();
   if (activeTab === "upstreams") return loadUpstreams();
+  if (activeTab === "models") return loadModelOverview();
   if (activeTab === "proxies") return loadProxies();
   if (activeTab === "logs") return loadLogs(logsPage);
   if (activeTab === "announcements") return loadAnnouncements();

@@ -63,6 +63,7 @@
         <button data-tab="dashboard" class="tab active" aria-current="page"><svg class="icon"><use href="#i-grid"/></svg><span>概览</span></button>
         <button data-tab="keys" class="tab"><svg class="icon"><use href="#i-key"/></svg><span>API 密钥</span><span id="navKeyCount" class="nav-count">—</span></button>
         <button data-tab="upstreams" class="tab"><svg class="icon"><use href="#i-layers"/></svg><span>上游服务</span><span id="navUpCount" class="nav-count">—</span></button>
+        <button data-tab="models" class="tab"><svg class="icon"><use href="#i-spark"/></svg><span>模型总览</span><span id="navModelCount" class="nav-count">—</span></button>
         <button data-tab="proxies" class="tab"><svg class="icon"><use href="#i-link"/></svg><span>代理配置</span></button>
         <button data-tab="logs" class="tab"><svg class="icon"><use href="#i-activity"/></svg><span>调用日志</span></button>
         <button data-tab="announcements" class="tab"><svg class="icon"><use href="#i-megaphone"/></svg><span>公告管理</span></button>
@@ -112,6 +113,13 @@
           <div class="upstream-summary"><div><span class="summary-icon"><svg class="icon"><use href="#i-layers"/></svg></span><span><strong id="upstreamTotal">—</strong><small>全部上游</small></span></div><div><span class="summary-icon green"><svg class="icon"><use href="#i-check"/></svg></span><span><strong id="upstreamHealthy">—</strong><small>健康且启用</small></span></div><div><span class="summary-icon orange"><svg class="icon"><use href="#i-token"/></svg></span><span><strong id="upstreamModelCount">—</strong><small>白名单模型</small></span></div><p>一个入口，<br><span>连接更多可能。</span></p></div>
           <div class="card-block list-card"><div class="list-toolbar"><div class="list-title"><h2>上游服务</h2><span id="upstreamListCount" class="count-pill">—</span></div><div class="toolbar-filters"><label class="search-field"><svg class="icon"><use href="#i-search"/></svg><input id="upstreamSearch" placeholder="搜索名称、模型或地址…" aria-label="搜索上游" oninput="renderUpstreams()"></label><select id="upstreamTypeFilter" aria-label="按上游格式筛选" onchange="renderUpstreams()"><option value="">所有格式</option><option value="openai-chat">OpenAI Chat Completions</option><option value="openai-responses">OpenAI Responses</option><option value="opencode-free">OpenCode 免费模型</option><option value="cline">Cline 免费模型</option><option value="anthropic">Anthropic Messages</option><option value="gemini">Gemini generateContent</option><option value="openai-auto">OpenAI · 旧配置</option><option value="opencode">OpenCode · 旧配置</option></select></div></div><div class="table-wrap"><table class="tbl upstream-table" id="upsTable"><thead><tr><th scope="col">上游服务</th><th scope="col">连接地址</th><th scope="col">模型 / 权重</th><th scope="col">健康状态</th><th scope="col">启用</th><th scope="col" class="actions-heading">操作</th></tr></thead><tbody></tbody></table></div></div>
           <div class="inline-note"><svg class="icon"><use href="#i-info"/></svg> 同一会话优先使用相同上游；连接故障时，自动尝试其他可用服务。</div>
+        </section>
+
+        <section id="tab-models" class="panel hidden">
+          <div class="page-heading"><div><span class="eyebrow">MODELS & UPTIME</span><h1>模型总览</h1><p>查看每个模型的上游来源与 24 小时可用状态。</p></div><span id="modelOverviewUpdated" class="heading-meta"></span></div>
+          <div class="upstream-summary"><div><span class="summary-icon"><svg class="icon"><use href="#i-spark"/></svg></span><span><strong id="modelTotal">—</strong><small>全部模型</small></span></div><div><span class="summary-icon green"><svg class="icon"><use href="#i-check"/></svg></span><span><strong id="modelOperational">—</strong><small>运行正常</small></span></div><div><span class="summary-icon orange"><svg class="icon"><use href="#i-activity"/></svg></span><span><strong id="modelIncident">—</strong><small>最近调用失败</small></span></div><p>按模型查看<br><span>来源上游与实时状态。</span></p></div>
+          <div class="card-block list-card"><div class="list-toolbar"><div class="list-title"><h2>模型列表</h2><span id="modelListCount" class="count-pill">—</span></div><div class="toolbar-filters"><label class="search-field"><svg class="icon"><use href="#i-search"/></svg><input id="modelSearch" placeholder="搜索模型、上游或类型…" aria-label="搜索模型总览" oninput="renderModelOverview()"></label><select id="modelStatusFilter" aria-label="按模型状态筛选" onchange="renderModelOverview()"><option value="">全部状态</option><option value="operational">运行正常</option><option value="incident">最近调用失败</option><option value="idle">暂无近期调用</option></select></div></div><div class="table-wrap"><table class="tbl upstream-table" id="modelsOverviewTable"><thead><tr><th scope="col">模型</th><th scope="col">来源上游</th><th scope="col">24H 成功率</th><th scope="col">24H 调用</th><th scope="col">平均速度</th><th scope="col">状态</th></tr></thead><tbody><tr><td colspan="6" class="table-message">正在加载模型总览…</td></tr></tbody></table></div></div>
+          <div class="inline-note"><svg class="icon"><use href="#i-info"/></svg> 数据来自 24 小时调用记录与当前上游配置；通配上游的模型列表在后台刷新，未就绪时会提示正在加载。</div>
         </section>
 
         <section id="tab-proxies" class="panel hidden">
@@ -332,6 +340,7 @@
   <script src="static/keys.js"></script>
   <script src="static/announcements.js"></script>
   <script src="static/models.js"></script>
+  <script src="static/model-overview.js"></script>
   <script src="static/model-test.js"></script>
   <script src="static/cline-auth.js"></script>
   <script src="static/app.js"></script>
