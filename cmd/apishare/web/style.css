@@ -227,6 +227,14 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline
 .table-empty .btn { min-height: 35px; font-size: 12px; }
 .cell-stack strong { display: block; font-size: 12px; font-weight: 500; overflow-wrap: anywhere; }
 .cell-stack small { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
+.weight-line { display: flex; align-items: center; gap: 7px; margin-top: 7px; color: var(--muted); font-size: 10px; }
+.weight-stepper { display: inline-flex; align-items: center; height: 26px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); overflow: hidden; }
+.weight-stepper button { display: inline-flex; align-items: center; justify-content: center; width: 25px; height: 100%; border: 0; border-radius: 0; background: transparent; color: var(--muted); }
+.weight-stepper button:hover:not(:disabled) { background: var(--panel-soft); color: var(--text); }
+.weight-stepper button.weight-inc { color: var(--accent); }
+.weight-stepper button.weight-inc:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent-hover); }
+.weight-stepper .icon { width: 12px; height: 12px; stroke-width: 2; }
+.weight-stepper .weight-value { display: inline-flex; align-items: center; justify-content: center; min-width: 27px; height: 100%; padding: 0 4px; border-left: 1px solid var(--border); border-right: 1px solid var(--border); color: var(--text); font: 500 11px/1 var(--mono); font-variant-numeric: tabular-nums; }
 .row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 5px; white-space: nowrap; }
 .row-actions .text-btn { padding: 5px 8px; border-radius: 5px; color: var(--text); }
 .row-actions .text-btn:hover { background: var(--panel-soft); color: var(--accent); }

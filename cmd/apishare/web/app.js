@@ -44,6 +44,7 @@ let token = localStorage.getItem(TOKEN_KEY) || "";
 let activeTab = "dashboard";
 let logsPage = 1;
 let keysCache = [], upsCache = [], logsCache = [];
+const weightDrafts = new Map(), weightSaving = new Set();
 let statsCache = null, chartMetric = "calls", actionResolve = null, actionInputType = null;
 let settingsReady = false;
 const requestVersions = {};
@@ -393,6 +394,41 @@ async function deleteKey(id) {
 /* Upstream list */
 function parseAllowlist(value) { return [...new Set((value || "").split(/[,，\r\n]/).map((model) => model.trim()).filter(Boolean))]; }
 function providerIcon(type) { const provider = isOpenCodeType(type) ? "opencode" : type; return '<span class="provider-icon ' + esc(provider) + '" aria-hidden="true">' + ({ openai: "O", opencode: "OC", cline: "CL", anthropic: "A", gemini: "G" }[provider] || "API") + '</span>'; }
+function upstreamWeight(item) { return weightDrafts.has(item.id) ? weightDrafts.get(item.id) : Number(item.weight) || 0; }
+function weightStepper(item) {
+  const weight = upstreamWeight(item);
+  return '<div class="weight-line"><span>权重</span><span class="weight-stepper" role="group" aria-label="调整权重"><button type="button" class="weight-dec" onclick="changeUpstreamWeight(' + item.id + ', -1, this)" aria-label="降低权重"' + (weight <= 0 ? " disabled" : "") + '>' + icon("minus") + '</button><span class="weight-value" aria-live="polite">' + weight + '</span><button type="button" class="weight-inc" onclick="changeUpstreamWeight(' + item.id + ', 1, this)" aria-label="提高权重">' + icon("plus") + '</button></span></div>';
+}
+function changeUpstreamWeight(id, delta, button) {
+  const item = upsCache.find((upstream) => upstream.id === id);
+  if (!item) return;
+  const current = upstreamWeight(item), weight = Math.max(0, current + delta);
+  if (weight === current) return;
+  weightDrafts.set(id, weight);
+  const stepper = button.closest(".weight-stepper");
+  if (stepper) {
+    stepper.querySelector(".weight-value").textContent = weight;
+    stepper.querySelector(".weight-dec").disabled = weight <= 0;
+  }
+  flushUpstreamWeight(id);
+}
+async function flushUpstreamWeight(id) {
+  if (weightSaving.has(id)) return;
+  weightSaving.add(id);
+  try {
+    while (weightDrafts.has(id)) {
+      const target = weightDrafts.get(id);
+      await api("api/upstreams/" + id, { method: "PATCH", body: JSON.stringify({ weight: target }) });
+      const item = upsCache.find((upstream) => upstream.id === id);
+      if (item) item.weight = target;
+      if (weightDrafts.get(id) === target) weightDrafts.delete(id);
+    }
+  } catch (error) {
+    weightDrafts.delete(id);
+    reportError(error, "权重保存失败");
+    renderUpstreams();
+  } finally { weightSaving.delete(id); }
+}
 async function loadUpstreams(quiet = false) {
   const version = requestVersions.upstreams = (requestVersions.upstreams || 0) + 1;
   try {
@@ -411,7 +447,7 @@ function renderUpstreams() {
   $("upstreamHealthy").textContent = upsCache.filter((item) => item.enabled && item.healthy).length;
   $("upstreamModelCount").textContent = new Set(upsCache.flatMap((item) => parseAllowlist(item.models))).size;
   $("upstreamListCount").textContent = list.length + (list.length !== upsCache.length ? " / " + upsCache.length : "");
-  $("upsTable").querySelector("tbody").innerHTML = list.map((item) => '<tr><td><div class="provider-cell">' + providerIcon(item.type) + '<span class="cell-stack"><strong>' + esc(item.name || "未命名上游") + '</strong><small>' + esc(upstreamFormatNames[upstreamFormat(item)] || item.type) + ' · #' + item.id + '</small></span></div></td><td class="endpoint-cell"><span>' + esc(item.base_url) + '</span><small>' + esc(item.key_masked) + '</small><small>代理：' + esc(upstreamProxyLabel(item.proxy_id)) + '</small></td><td class="cell-stack"><strong>' + (parseAllowlist(item.models).length ? parseAllowlist(item.models).length + " 个模型" : "全部模型") + '</strong><small>权重 ' + item.weight + '</small></td><td><span class="badge ' + (item.healthy ? "on" : "warn") + '">' + (item.healthy ? "健康" : "冷却中") + '</span>' + (item.fails ? '<span class="cell-stack"><small>连续失败 ' + item.fails + ' 次</small></span>' : "") + '</td><td><button class="toggle-btn" role="switch" aria-checked="' + !!item.enabled + '" aria-label="' + (item.enabled ? "停用 " : "启用 ") + esc(item.name) + '" onclick="toggleUpstream(' + item.id + ", " + !item.enabled + ', this)"><span></span></button></td><td><div class="row-actions"><button class="text-btn" onclick="openEditUpstream(' + item.id + ')" aria-label="编辑 ' + esc(item.name) + '">' + icon("edit") + '编辑</button><button class="text-btn" onclick="duplicateUpstream(' + item.id + ')" aria-label="复制 ' + esc(item.name) + '">' + icon("copy") + '复制</button><button class="text-btn" onclick="openModelTest(' + item.id + ')" aria-label="测试模型 ' + esc(item.name) + '">测试模型</button><button class="icon-btn" onclick="testUpstream(' + item.id + ', this)" aria-label="测试 ' + esc(item.name) + '" title="测试连接">' + icon("activity") + '</button><button class="icon-btn danger" onclick="deleteUpstream(' + item.id + ')" aria-label="删除 ' + esc(item.name) + '" title="删除上游">' + icon("trash") + '</button></div></td></tr>').join("") || emptyRow(6, query || type ? "没有匹配的上游" : "连接你的第一个上游", query || type ? "调整搜索条件或接口类型。" : "支持 OpenAI Chat Completions、Responses、OpenCode 免费模型、Cline 免费模型、Anthropic 与 Gemini 接口。", query || type ? "" : "openCreateUpstream()", "添加上游");
+  $("upsTable").querySelector("tbody").innerHTML = list.map((item) => '<tr><td><div class="provider-cell">' + providerIcon(item.type) + '<span class="cell-stack"><strong>' + esc(item.name || "未命名上游") + '</strong><small>' + esc(upstreamFormatNames[upstreamFormat(item)] || item.type) + ' · #' + item.id + '</small></span></div></td><td class="endpoint-cell"><span>' + esc(item.base_url) + '</span><small>' + esc(item.key_masked) + '</small><small>代理：' + esc(upstreamProxyLabel(item.proxy_id)) + '</small></td><td class="cell-stack"><strong>' + (parseAllowlist(item.models).length ? parseAllowlist(item.models).length + " 个模型" : "全部模型") + '</strong>' + weightStepper(item) + '</td><td><span class="badge ' + (item.healthy ? "on" : "warn") + '">' + (item.healthy ? "健康" : "冷却中") + '</span>' + (item.fails ? '<span class="cell-stack"><small>连续失败 ' + item.fails + ' 次</small></span>' : "") + '</td><td><button class="toggle-btn" role="switch" aria-checked="' + !!item.enabled + '" aria-label="' + (item.enabled ? "停用 " : "启用 ") + esc(item.name) + '" onclick="toggleUpstream(' + item.id + ", " + !item.enabled + ', this)"><span></span></button></td><td><div class="row-actions"><button class="text-btn" onclick="openEditUpstream(' + item.id + ')" aria-label="编辑 ' + esc(item.name) + '">' + icon("edit") + '编辑</button><button class="text-btn" onclick="duplicateUpstream(' + item.id + ')" aria-label="复制 ' + esc(item.name) + '">' + icon("copy") + '复制</button><button class="text-btn" onclick="openModelTest(' + item.id + ')" aria-label="测试模型 ' + esc(item.name) + '">测试模型</button><button class="icon-btn" onclick="testUpstream(' + item.id + ', this)" aria-label="测试 ' + esc(item.name) + '" title="测试连接">' + icon("activity") + '</button><button class="icon-btn danger" onclick="deleteUpstream(' + item.id + ')" aria-label="删除 ' + esc(item.name) + '" title="删除上游">' + icon("trash") + '</button></div></td></tr>').join("") || emptyRow(6, query || type ? "没有匹配的上游" : "连接你的第一个上游", query || type ? "调整搜索条件或接口类型。" : "支持 OpenAI Chat Completions、Responses、OpenCode 免费模型、Cline 免费模型、Anthropic 与 Gemini 接口。", query || type ? "" : "openCreateUpstream()", "添加上游");
   labelTableCells("upsTable");
 }
 async function toggleUpstream(id, enabled, button) {
