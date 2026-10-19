@@ -12,17 +12,44 @@ function fmtModelTPS(value) {
   return value === null || value === undefined ? "—" : Number(value).toFixed(1) + " tok/s";
 }
 
+// A model can be served by many upstreams, so each source is a compact chip and
+// only the first few stay visible; the rest open on demand instead of stretching
+// the row down the page.
+const modelSourceVisible = 4;
+
 function modelSourceStatus(source) {
-  if (!source.configured) return '<span class="badge off">历史来源</span>';
-  if (!source.healthy) return '<span class="badge warn">冷却中</span>';
-  if (source.rate_limited) return '<span class="badge warn">限流冷却</span>';
-  return '<span class="badge on">可用</span>';
+  if (!source.healthy) return '<span class="model-source-state warn" title="冷却中"><span class="sr-only">冷却中</span></span><span class="model-source-note">冷却</span>';
+  if (source.rate_limited) return '<span class="model-source-state warn" title="限流冷却"><span class="sr-only">限流冷却</span></span><span class="model-source-note">限流</span>';
+  return '<span class="model-source-state on" title="可用"><span class="sr-only">可用</span></span>';
 }
 
-function modelSourceTitle(source) {
-  const parts = [source.name || ("上游 #" + source.upstream_id), source.type].filter(Boolean).join(" · ");
-  const mapping = source.upstream_model && source.upstream_model !== source.name ? " → " + source.upstream_model : "";
-  return parts + mapping + (source.explicit ? "" : " · 通配");
+function modelSourceDetail(source, model) {
+  return [
+    source.type,
+    source.upstream_model && source.upstream_model !== model ? "→ " + source.upstream_model : "",
+    source.explicit ? "显式" : "通配",
+    source.cooldown ? "冷却" : "",
+    source.rate_limited ? "限流" : "",
+  ].filter(Boolean).join(" · ");
+}
+
+function modelSourceChip(source, model, extra) {
+  const name = source.name || ("上游 #" + source.upstream_id);
+  const detail = modelSourceDetail(source, model);
+  const uptime = fmtModelRate(source.uptime_percent);
+  return '<span class="model-source' + (extra ? " model-source-extra" : "") + '" title="' + esc([name, detail, uptime].filter(Boolean).join(" · ")) + '">'
+    + providerIcon(source.type)
+    + '<span class="model-source-name">' + esc(name) + '</span>'
+    + '<span class="model-source-rate">' + (source.uptime_percent === null || source.uptime_percent === undefined ? "—" : Math.round(source.uptime_percent) + "%") + '</span>'
+    + modelSourceStatus(source) + '</span>';
+}
+
+function toggleModelSources(button) {
+  const list = button.closest(".model-source-list");
+  if (!list) return;
+  const expanded = list.classList.toggle("expanded");
+  button.setAttribute("aria-expanded", expanded ? "true" : "false");
+  button.textContent = expanded ? "收起" : button.dataset.more;
 }
 
 async function loadModelOverview(quiet = false) {
@@ -62,13 +89,14 @@ function renderModelOverview() {
   }
   $("modelsOverviewTable").querySelector("tbody").innerHTML = list.map((item) => {
     const sources = item.sources || [];
-    const configured = sources.filter((source) => source.configured);
+    const hidden = Math.max(0, sources.length - modelSourceVisible);
     const sourceCell = sources.length
-      ? '<div class="model-source-list">' + sources.map((source) =>
-        '<span class="model-source" title="' + esc(modelSourceTitle(source)) + '">' + providerIcon(source.type) + '<span><strong>' + esc(source.name || ("上游 #" + source.upstream_id)) + '</strong><small>' + esc([source.type, source.upstream_model && source.upstream_model !== item.model ? "→ " + source.upstream_model : "", source.explicit ? "显式" : "通配", source.cooldown ? "冷却" : "", source.rate_limited ? "限流" : "", source.configured ? "" : "已移除"].filter(Boolean).join(" · ") || "—") + ' · ' + fmtModelRate(source.uptime_percent) + '</small></span>' + modelSourceStatus(source) + '</span>'
-      ).join("") + "</div>"
+      ? '<div class="model-source-list">'
+        + sources.map((source, index) => modelSourceChip(source, item.model, index >= modelSourceVisible)).join("")
+        + (hidden ? '<button type="button" class="model-source-more" onclick="toggleModelSources(this)" aria-expanded="false" aria-label="展开其余 ' + hidden + ' 个来源" title="展开其余 ' + hidden + ' 个来源" data-more="+' + hidden + '">+' + hidden + "</button>" : "")
+        + "</div>"
       : '<span class="muted">暂无来源</span>';
-    return '<tr><td><div class="provider-cell">' + providerIcon((configured[0] || sources[0] || {}).type) + '<span class="cell-stack"><strong>' + esc(item.model) + '</strong><small>' + esc(item.family || "") + (item.last_call ? " · 最近 " + esc(fmtTime(item.last_call).slice(5)) : "") + '</small></span></div></td>'
+    return '<tr><td><div class="provider-cell">' + providerIcon((sources[0] || {}).type) + '<span class="cell-stack"><strong>' + esc(item.model) + '</strong><small>' + esc(item.family || "") + (item.last_call ? " · 最近 " + esc(fmtTime(item.last_call).slice(5)) : "") + '</small></span></div></td>'
       + '<td class="model-sources-cell">' + sourceCell + '</td>'
       + '<td><code>' + fmtModelRate(item.uptime_percent) + '</code><span class="cell-stack"><small>' + number(item.successes) + " / " + number(item.calls) + '</small></span></td>'
       + '<td><code>' + number(item.calls) + '</code></td>'

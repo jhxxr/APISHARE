@@ -19,7 +19,6 @@ type modelOverviewSource struct {
 	UpstreamID    int64    `json:"upstream_id"`
 	Name          string   `json:"name"`
 	Type          string   `json:"type"`
-	Configured    bool     `json:"configured"`
 	Explicit      bool     `json:"explicit"`
 	UpstreamModel string   `json:"upstream_model"`
 	Healthy       bool     `json:"healthy"`
@@ -101,6 +100,14 @@ func buildModelOverview() (*modelOverviewResponse, error) {
 		}
 		return source
 	}
+	// Only sources the current configuration can actually route to are listed.
+	// Calls recorded under an upstream that has since been removed, disabled or
+	// set to zero weight stay out, so every number on the page describes what
+	// can be used right now instead of mixing in retired channels.
+	serves := func(model string, upstreamID int64) bool {
+		u, ok := snapshot.byID[upstreamID]
+		return ok && u.Enabled && u.Weight > 0 && upstreamServesOverviewModel(&u, model)
+	}
 	modelsLoading := false
 	for i := range snapshot.upstreams {
 		u := &snapshot.upstreams[i]
@@ -113,7 +120,7 @@ func buildModelOverview() (*modelOverviewResponse, error) {
 				return
 			}
 			source := sourceFor(model, u.ID)
-			source.Name, source.Type, source.Configured = u.Name, u.Type, true
+			source.Name, source.Type = u.Name, u.Type
 			_, source.Explicit = u.servesModelExplicit(model)
 			source.UpstreamModel = u.mapModel(model)
 		}
@@ -141,6 +148,8 @@ func buildModelOverview() (*modelOverviewResponse, error) {
 	}
 	defer tx.Rollback()
 
+	// Only calls from sources the current configuration still serves are
+	// counted; rows from retired channels are dropped by serves below.
 	rows, err := tx.Query(`SELECT model,upstream_id,upstream_name,COUNT(*),
 		SUM(CASE WHEN status BETWEEN 200 AND 299 THEN 1 ELSE 0 END)
 		FROM call_logs WHERE unixepoch(created_at) BETWEEN ? AND ?
@@ -155,6 +164,9 @@ func buildModelOverview() (*modelOverviewResponse, error) {
 			rows.Close()
 			return nil, err
 		}
+		if !serves(model, upstreamID) {
+			continue
+		}
 		source := sourceFor(model, upstreamID)
 		if source.Name == "" {
 			source.Name = name
@@ -168,8 +180,8 @@ func buildModelOverview() (*modelOverviewResponse, error) {
 	}
 	rows.Close()
 
-	// Newest row per model/source, including calls from upstreams that have
-	// since been removed from the configuration.
+	// Newest row per model/source. Same filter as the call counts: an upstream
+	// that no longer serves the model must not decide its current status.
 	rows, err = tx.Query(`SELECT model,upstream_id,status,created_at FROM (
 		SELECT model,upstream_id,status,created_at,
 		 ROW_NUMBER() OVER (PARTITION BY model,upstream_id ORDER BY unixepoch(created_at) DESC,id DESC) AS position
@@ -185,6 +197,9 @@ func buildModelOverview() (*modelOverviewResponse, error) {
 		if err := rows.Scan(&model, &upstreamID, &status, &at); err != nil {
 			rows.Close()
 			return nil, err
+		}
+		if !serves(model, upstreamID) {
+			continue
 		}
 		source := sourceFor(model, upstreamID)
 		source.LastStatus, source.LastCall = status, at
@@ -213,6 +228,9 @@ func buildModelOverview() (*modelOverviewResponse, error) {
 			rows.Close()
 			return nil, err
 		}
+		if !serves(model, upstreamID) {
+			continue
+		}
 		sourceFor(model, upstreamID).AvgTPS = averageTPS(completion, generating)
 		sum := modelTPS[model]
 		sum[0] += completion
@@ -234,43 +252,32 @@ func buildModelOverview() (*modelOverviewResponse, error) {
 		item := modelOverviewItem{Model: model, Sources: make([]modelOverviewSource, 0, len(byID))}
 		fallback := ""
 		for upstreamID, source := range byID {
-			if u, ok := snapshot.byID[upstreamID]; ok {
-				if source.Name == "" {
-					source.Name = u.Name
-				}
-				source.Type = u.Type
-				if u.Enabled && u.Weight > 0 && upstreamServesOverviewModel(&u, model) {
-					source.Configured = true
-					if source.UpstreamModel == "" {
-						source.UpstreamModel = u.mapModel(model)
-						_, source.Explicit = u.servesModelExplicit(model)
-					}
-				}
-				source.Healthy = u.availableForRelay()
-				source.Cooldown = !healthAvailable(upstreamID)
-				source.RateLimited = u.openCodeRateLimit() != nil
-				source.Fails = u.relayFailures()
-			} else {
-				source.Healthy = false
-				source.Fails = healthFails(upstreamID)
-				source.Cooldown = !healthAvailable(upstreamID)
+			u := snapshot.byID[upstreamID]
+			if source.Name == "" {
+				source.Name = u.Name
 			}
+			source.Type = u.Type
+			if source.UpstreamModel == "" {
+				source.UpstreamModel = u.mapModel(model)
+				_, source.Explicit = u.servesModelExplicit(model)
+			}
+			source.Healthy = u.availableForRelay()
+			source.Cooldown = !healthAvailable(upstreamID)
+			source.RateLimited = u.openCodeRateLimit() != nil
+			source.Fails = u.relayFailures()
 			source.Uptime = requestUptime(source.Successes, source.Calls)
 			item.Calls += source.Calls
 			item.Successes += source.Successes
 			if source.Calls > 0 && modelCallAfter(source.LastCall, item.LastCall) {
 				item.LastCall, item.LastStatus = source.LastCall, source.LastStatus
 			}
-			if fallback == "" && source.Configured {
+			if fallback == "" {
 				fallback = source.Type
 			}
 			item.Sources = append(item.Sources, *source)
 		}
 		sort.Slice(item.Sources, func(i, j int) bool {
 			a, b := item.Sources[i], item.Sources[j]
-			if a.Configured != b.Configured {
-				return a.Configured
-			}
 			if a.Name != b.Name {
 				return a.Name < b.Name
 			}
