@@ -1,0 +1,154 @@
+/* Usage history follows the same compact console vocabulary as providers. */
+#tab-logs { gap: 16px; }
+#tab-logs .page-heading { margin-bottom: 2px; }
+#tab-logs .page-heading p { display: none; }
+.log-heading-actions { display: flex; align-items: center; gap: 8px; }
+#tab-logs .log-heading-actions .btn { min-height: 32px; padding: 5px 12px; border-color: var(--border); border-radius: 12px; }
+.log-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 16px; }
+.log-date-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; min-width: 0; }
+#tab-logs .log-period-arrow { width: 32px; height: 32px; border: 1px solid var(--border); border-radius: 11px; background: transparent; color: var(--text); }
+.previous .icon { transform: rotate(180deg); }
+.log-date-range { display: flex; align-items: center; gap: 4px; padding: 0 8px; min-width: 0; border: 1px solid var(--border); border-radius: 9px; box-shadow: 0 1px 2px rgb(34 43 52 / 5%); }
+#tab-logs .log-date-range input { width: 162px; min-height: 34px; height: 34px; padding: 4px 1px; border: 0; border-radius: 3px; background: transparent; font: 11px var(--font); color: var(--text); }
+.log-date-range > span { color: var(--muted); font-size: 12px; }
+#tab-logs .log-date-range input:focus { box-shadow: none; outline: 1px solid var(--accent); outline-offset: 0; }
+.log-periods { display: flex; align-items: center; gap: 3px; }
+.log-periods button { min-height: 32px; padding: 5px 12px; border: 0; border-radius: 12px; background: transparent; color: var(--text); font-size: 12px; white-space: nowrap; }
+.log-periods button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+.log-search-controls { display: flex; align-items: center; gap: 8px; flex: 1; justify-content: flex-end; min-width: 300px; }
+#tab-logs .log-search-controls .search-field { width: min(100%, 320px); flex: 1; min-width: 170px; }
+#tab-logs .log-search-controls input { background: #f0eeee; border-color: var(--border); border-radius: 9px; min-height: 35px; font-size: 12px; box-shadow: 0 1px 2px rgb(34 43 52 / 6%); }
+#tab-logs .log-search-controls .btn { min-height: 33px; padding: 5px 11px; border-color: var(--border); border-radius: 11px; }
+#logFilterButton[aria-expanded="true"] { background: var(--panel-soft); color: var(--accent); }
+.log-advanced-filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) auto; align-items: end; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
+.log-advanced-filters .field { gap: 5px; }
+#tab-logs .log-advanced-filters input, #tab-logs .log-advanced-filters select { min-height: 36px; padding: 7px 9px; border-color: var(--border-strong); font-size: 12px; }
+.log-quick-filters { display: flex; align-items: center; justify-content: space-between; gap: 10px 20px; min-height: 36px; }
+.log-quick-filters > div { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.log-quick-filters button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 28px; padding: 4px 10px; border: 1px solid #dcd9d7; border-radius: 20px; background: var(--panel); color: var(--text); font-size: 11px; white-space: nowrap; }
+.log-quick-filters button .icon { width: 13px; height: 13px; color: var(--muted); }
+.log-quick-filters button[aria-pressed="true"] { background: var(--accent-soft); border-color: #e7b9a6; color: var(--accent); }
+.log-quick-filters button[aria-pressed="true"] .icon { color: var(--accent); }
+#logTotal { flex: 0 0 auto; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.log-table-shell { padding: 4px; border-radius: 12px; background: #eeeceb; }
+.log-table-shell .table-wrap { border-radius: 8px; }
+#tab-logs #logsTable { width: 100%; table-layout: fixed; }
+#tab-logs #logsTable th { padding: 11px 14px; border: 0; color: var(--muted); background: #eeeceb; font-size: 11px; font-weight: 400; }
+#tab-logs #logsTable td { height: 65px; padding: 10px 14px; border: 0; background: var(--panel); vertical-align: middle; font-size: 12px; font-variant-numeric: tabular-nums; }
+#tab-logs #logsTable tbody tr:hover td { background: #fcfaf8; }
+#logsTable [data-log-column="time"] { width: 100px; }
+#logsTable [data-log-column="model"] { width: 170px; }
+#logsTable [data-log-column="upstream"] { width: 155px; }
+#logsTable [data-log-column="key"] { width: 115px; }
+#logsTable [data-log-column="tokens"] { width: 135px; }
+#logsTable [data-log-column="performance"] { width: 145px; }
+#logsTable [data-log-column="cost"] { width: 100px; }
+#logsTable [data-log-column="status"] { width: 65px; }
+.log-cell-button { display: block; max-width: 100%; padding: 0; min-height: 24px; border: 0; border-radius: 3px; background: transparent; color: var(--text); text-align: left; font-size: 12px; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-cell-button:hover { color: var(--accent); }
+#logsTable td > small { display: block; color: var(--muted); font-size: 10px; line-height: 1.6; }
+#logsTable .log-time { font-size: 11px; }
+#logsTable .log-model { display: flex; align-items: center; gap: 7px; width: 100%; }
+#logsTable .log-model > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#logsTable .provider-icon { flex: 0 0 auto; width: 20px; height: 20px; border-radius: 5px; font: 600 10px var(--font); }
+.log-endpoint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-token-count, .log-cost { color: #284b66; font-size: 11px; font-variant-numeric: tabular-nums; }
+#logsTable td > .log-cache { display: flex; align-items: center; gap: 4px; }
+.log-cache .icon { width: 11px; height: 11px; }
+.log-performance { font-size: 11px; color: #284b66; }
+.log-performance > span { color: var(--muted); }
+#logsTable .log-estimate { width: fit-content; padding: 0 4px; border-radius: 4px; background: var(--amber-soft); color: var(--amber); }
+.log-status-button { display: inline-flex; align-items: center; justify-content: center; width: 100%; min-height: 30px; padding: 0; border: 0; border-radius: 5px; background: transparent; }
+#logsTable .log-status-button .badge { display: block; min-width: 45px; padding: 2px 6px; border: 0; border-radius: 4px; text-align: center; font: 500 11px/1.6 var(--font); }
+#logsTable .log-status-button:hover .badge { outline: 1px solid currentColor; }
+.log-summary-line { padding: 12px 14px; background: var(--panel); border-top: 1px solid var(--border); color: var(--muted); font-size: 11px; }
+#tab-logs .pager { padding: 10px 12px; border-top: 0; }
+#tab-logs .pager > div { gap: 8px; }
+#tab-logs .pager .icon-btn { width: 30px; height: 30px; border: 1px solid var(--border); border-radius: 8px; }
+#tab-logs .log-page-size select { width: 100px; min-height: 30px; padding: 4px 8px; border-color: var(--border); border-radius: 8px; background: transparent; font-size: 11px; }
+.log-page-note { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; color: var(--muted); font-size: 10px; }
+.log-columns-menu { position: fixed; inset: auto; margin: 0; width: 176px; padding: 10px; border: 1px solid var(--border); border-radius: 11px; background: var(--panel); color: var(--text); box-shadow: 0 8px 30px rgb(34 43 52 / 12%); }
+.log-columns-menu > strong { display: block; padding: 5px; margin-bottom: 4px; font-size: 12px; }
+.log-columns-menu label { display: flex; align-items: center; gap: 9px; min-height: 32px; padding: 5px; border-radius: 5px; font-size: 12px; cursor: pointer; }
+.log-columns-menu label:hover { background: var(--panel-soft); }
+.admin-console .log-detail-dialog { inset: 0 0 0 auto; width: min(620px, 100vw); height: 100dvh; max-width: 100vw; max-height: 100dvh; margin: 0 0 0 auto; padding: 0; border: 0; border-left: 1px solid var(--border); border-radius: 0; background: var(--panel); color: var(--text); box-shadow: -12px 0 48px rgb(34 43 52 / 8%); }
+.log-detail-dialog[open] { display: flex; flex-direction: column; }
+.log-detail-dialog::backdrop { background: rgb(34 43 52 / 20%); }
+.log-detail-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 26px; }
+.log-detail-header .eyebrow { color: var(--muted); font-size: 10px; }
+.log-detail-header h2 { margin-top: 5px; font-size: 23px; font-weight: 600; }
+.log-detail-header p { margin-top: 5px; color: var(--muted); font-size: 12px; }
+.log-detail-tabs { display: flex; gap: 8px; padding: 0 26px 16px; border-bottom: 1px solid var(--border); }
+.log-detail-tabs button { min-height: 34px; padding: 6px 12px; border: 0; border-radius: 8px; background: transparent; font-size: 12px; }
+.log-detail-tabs button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+.log-detail-body { flex: 1; min-height: 0; padding: 24px 26px; overflow-y: auto; overscroll-behavior: contain; }
+.log-detail-status { display: flex; align-items: center; gap: 10px; margin-bottom: 24px; }
+.log-detail-status strong { font-size: 14px; font-weight: 500; }
+.log-detail-fields { margin: 0; display: grid; gap: 0; }
+.log-detail-fields > div { display: grid; grid-template-columns: 115px minmax(0, 1fr); gap: 16px; padding: 13px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.log-detail-fields dt { color: var(--muted); }
+.log-detail-fields dd { margin: 0; overflow-wrap: anywhere; }
+.log-detail-body pre { margin: 0; padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); font: 11px/1.9 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.log-detail-section + .log-detail-section { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--border); }
+.log-detail-section h3, .log-error-box h3 { margin: 0 0 16px; font-size: 14px; font-weight: 600; }
+.log-detail-numbers { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 18px; }
+.log-detail-numbers > div { padding: 14px; background: var(--bg); border-radius: 10px; }
+.log-detail-numbers span { display: block; color: var(--muted); font-size: 12px; }
+.log-detail-numbers strong { display: block; margin-top: 6px; font: 600 22px var(--font); }
+.log-detail-body details { padding: 12px 0; font-size: 12px; }
+.log-detail-body details summary { margin-bottom: 9px; color: var(--muted); }
+.log-detail-body .cell-stack small { padding: 5px 0; font-size: 12px; }
+.log-detail-cost { margin-bottom: 12px; font: 600 26px var(--font); }
+.log-error-box { margin-top: 28px; }
+.log-error-box pre { color: var(--red); background: var(--red-soft); }
+.log-detail-footer { display: flex; justify-content: space-between; gap: 12px; padding: 16px 26px; border-top: 1px solid var(--border); }
+@media (max-width: 1500px) {
+  .log-toolbar { align-items: stretch; }
+  .log-search-controls { flex-basis: 100%; }
+  #tab-logs .log-search-controls .search-field { max-width: none; width: auto; }
+}
+@media (max-width: 1024px) {
+  .log-advanced-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .log-quick-filters { align-items: flex-start; }
+}
+@media (max-width: 768px) {
+  #tab-logs .log-heading-actions .btn, #tab-logs .log-search-controls .btn, .log-periods button { min-height: 40px; }
+  #tab-logs .log-period-arrow { width: 36px; height: 40px; }
+  .log-quick-filters button { min-height: 36px; }
+  #tab-logs #logsTable:has(.table-empty) { min-width: 0 !important; table-layout: auto; }
+  #tab-logs .log-search-controls input { min-height: 40px; }
+  .log-columns-menu label { min-height: 40px; }
+}
+@media (max-width: 600px) {
+  #tab-logs { gap: 14px; }
+  #tab-logs .page-heading { flex-wrap: nowrap; gap: 12px; }
+  #tab-logs .page-heading h1 { font-size: 21px; }
+  .log-heading-actions { gap: 5px; }
+  #tab-logs .log-heading-actions .btn { padding-inline: 9px; gap: 5px; }
+  .log-date-controls { display: grid; grid-template-columns: 36px minmax(0, 1fr) 36px; width: 100%; gap: 8px; }
+  .log-date-range { grid-column: 1 / -1; grid-row: 1; justify-content: space-between; padding: 0 7px; }
+  #tab-logs .log-date-range input { width: calc(50% - 12px); height: 40px; min-height: 40px; font-size: 12px; }
+  .log-periods { grid-column: 2; grid-row: 2; justify-content: center; }
+  .log-date-controls > .previous { grid-column: 1; grid-row: 2; }
+  .log-date-controls > .log-period-arrow:not(.previous) { grid-column: 3; grid-row: 2; }
+  .log-search-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; min-width: 0; gap: 8px; }
+  #tab-logs .log-search-controls .search-field { grid-column: 1 / -1; min-width: 0; }
+  #logFilterButton { justify-self: start; }
+  #logColumnsButton { justify-self: end; }
+  .log-quick-filters { flex-wrap: wrap; gap: 8px; }
+  #logTotal { margin-left: auto; }
+  .log-advanced-filters { padding: 13px; gap: 12px; }
+  #tab-logs .log-advanced-filters input, #tab-logs .log-advanced-filters select { min-height: 40px; font-size: 14px; }
+  #tab-logs .pager { flex-wrap: wrap; padding: 10px; gap: 10px; }
+  #tab-logs .pager > div { margin-left: auto; }
+  #tab-logs .pager .icon-btn { width: 40px; height: 40px; }
+  #tab-logs .log-page-size select { min-height: 40px; }
+  .log-summary-line { padding: 12px; line-height: 1.8; }
+  .log-detail-header { padding: 22px 18px 18px; }
+  .log-detail-tabs { padding: 0 18px 14px; gap: 4px; }
+  .log-detail-tabs button { min-height: 40px; padding-inline: 11px; }
+  .log-detail-body { padding: 20px 18px; }
+  .log-detail-fields > div { grid-template-columns: 90px minmax(0, 1fr); gap: 12px; }
+  .log-detail-footer { padding: 14px 18px max(14px, env(safe-area-inset-bottom)); }
+  .log-detail-footer .btn { min-height: 44px; }
+}

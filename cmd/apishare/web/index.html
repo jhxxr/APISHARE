@@ -3,14 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f6f8fb">
+  <meta name="theme-color" content="#f5f4f4">
   <title>API Share · 工作空间</title>
   <link rel="icon" type="image/png" sizes="32x32" href="/public/static/brand/apishare-favicon-v2.png">
   <link rel="icon" type="image/png" sizes="192x192" href="/public/static/brand/apishare-icon-v2.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/public/static/brand/apishare-touch-icon-v2.png">
   <link rel="stylesheet" href="static/style.css">
+  <link rel="stylesheet" href="static/console.css">
+  <link rel="stylesheet" href="static/upstreams.css">
+  <link rel="stylesheet" href="static/logs.css">
+  <link rel="stylesheet" href="static/dashboard.css">
+  <link rel="stylesheet" href="/public/static/model-icons.css">
 </head>
-<body>
+<body class="admin-console">
   <a class="skip-link" href="#mainContent">跳到主要内容</a>
   <svg class="icon-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
     <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 2v20M2 12h20M5 5l14 14M5 19L19 5M8 3l8 18M3 8l18 8M3 16l18-8M8 21l8-18"/></symbol>
@@ -18,6 +23,9 @@
     <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="9" r="5"/><path d="m12 12 9 9m-3-3 3-3m-6 0 3-3"/></symbol>
     <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 10 5-10 5L2 8l10-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/></symbol>
     <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></symbol>
+    <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 20s-7.2-4.6-9.4-8.6A5.6 5.6 0 0 1 12 5a5.6 5.6 0 0 1 9.4 6.4C19.2 15.4 12 20 12 20Z"/></symbol>
+    <symbol id="i-dollar" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 6v12M15 9.2c0-1.2-1.3-2.2-3-2.2s-3 .8-3 2 1.3 1.8 3 2.1 3 .9 3 2.1-1.3 2-3 2-3-1-3-2.2"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 9a6 6 0 1 0-12 0c0 6-2 7-2 7h16s-2-1-2-7"/><path d="M10 20h4"/></symbol>
     <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h5m4 0h7M4 17h9m4 0h3"/><circle cx="11" cy="7" r="2"/><circle cx="15" cy="17" r="2"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
     <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
@@ -40,6 +48,11 @@
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7"/></symbol>
     <symbol id="i-shield" viewBox="0 0 24 24"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z"/><path d="m8 12 3 3 5-6"/></symbol>
     <symbol id="i-megaphone" viewBox="0 0 24 24"><path d="m3 10 17-6v16L3 14v-4ZM7 15l2 6h4l-2-5M20 9l2-1m-2 7 2 1"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-sort" viewBox="0 0 24 24"><path d="M8 4v16m-4-4 4 4 4-4M16 20V4m-4 4 4-4 4 4"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-4-4 4 4 4-4M4 17v4h16v-4"/></symbol>
+    <symbol id="i-columns" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16m6-16v16"/></symbol>
   </svg>
 
   <div id="loginView" class="login-wrap hidden">
@@ -57,47 +70,168 @@
   <div id="appView" class="app-shell hidden">
     <button id="sidebarOverlay" class="sidebar-overlay hidden" type="button" aria-label="关闭导航" onclick="toggleSidebar(false)"></button>
     <aside id="sidebar" class="sidebar" aria-label="主导航">
-      <a class="brand" href="#dashboard" onclick="switchTab('dashboard'); return false;"><span class="brand-mark" aria-hidden="true"><img src="/public/static/brand/apishare-icon-v2.png" width="34" height="34" alt=""></span><span>API Share<span class="brand-caption">API GATEWAY CONSOLE</span></span></a>
-      <div class="workspace-switch"><span class="workspace-avatar">A</span><span><strong>我的工作空间</strong><small>管理员空间</small></span><span class="workspace-label">本地</span></div>
-      <p class="nav-label">工作空间</p>
-      <nav class="tabs">
-        <button data-tab="dashboard" class="tab active" aria-current="page"><svg class="icon"><use href="#i-grid"/></svg><span>概览</span></button>
-        <button data-tab="keys" class="tab"><svg class="icon"><use href="#i-key"/></svg><span>API 密钥</span><span id="navKeyCount" class="nav-count">—</span></button>
-        <button data-tab="upstreams" class="tab"><svg class="icon"><use href="#i-layers"/></svg><span>上游服务</span><span id="navUpCount" class="nav-count">—</span></button>
-        <button data-tab="models" class="tab"><svg class="icon"><use href="#i-spark"/></svg><span>模型总览</span><span id="navModelCount" class="nav-count">—</span></button>
-        <button data-tab="proxies" class="tab"><svg class="icon"><use href="#i-link"/></svg><span>代理配置</span></button>
+      <a class="brand" href="#dashboard" onclick="switchTab('dashboard'); return false;" title="API Share"><span class="brand-mark" aria-hidden="true"><img src="/public/static/brand/apishare-icon-v2.png" width="34" height="34" alt=""></span><span class="brand-name">API Share</span></a>
+      <nav class="tabs" aria-label="后台功能">
+        <button data-tab="dashboard" class="tab active" aria-current="page"><svg class="icon"><use href="#i-grid"/></svg><span>仪表盘</span></button>
         <button data-tab="logs" class="tab"><svg class="icon"><use href="#i-activity"/></svg><span>调用日志</span></button>
+        <button data-tab="keys" class="tab"><svg class="icon"><use href="#i-key"/></svg><span>API 密钥</span><span id="navKeyCount" class="nav-count">—</span></button>
+        <button data-tab="models" class="tab"><svg class="icon"><use href="#i-spark"/></svg><span>模型总览</span><span id="navModelCount" class="nav-count">—</span></button>
+        <div class="nav-divider"></div><p class="nav-label">服务管理</p>
+        <button data-tab="upstreams" class="tab"><svg class="icon"><use href="#i-layers"/></svg><span>上游服务</span><span id="navUpCount" class="nav-count">—</span></button>
+        <button data-tab="proxies" class="tab"><svg class="icon"><use href="#i-link"/></svg><span>代理配置</span></button>
+        <div class="nav-divider"></div><p class="nav-label">系统管理</p>
         <button data-tab="announcements" class="tab"><svg class="icon"><use href="#i-megaphone"/></svg><span>公告管理</span></button>
-        <div class="nav-divider"></div>
         <button data-tab="settings" class="tab"><svg class="icon"><use href="#i-sliders"/></svg><span>工作空间设置</span></button>
         <button data-tab="deployment" class="tab"><svg class="icon"><use href="#i-shield"/></svg><span>部署配置</span></button>
       </nav>
       <div class="sidebar-bottom">
-        <div class="sidebar-note"><svg class="icon"><use href="#i-link"/></svg><strong>一个入口，无限可能</strong><p>统一接入 OpenAI、Claude、Gemini 与更多模型。</p><button class="text-btn" onclick="copyEndpoint()">复制 OpenAI 地址 <svg class="icon"><use href="#i-copy"/></svg></button></div>
-        <div class="account"><span class="account-avatar">A</span><span><strong>Administrator</strong><small>工作空间管理员</small></span><button class="icon-btn" onclick="logout()" title="退出登录" aria-label="退出登录"><svg class="icon"><use href="#i-logout"/></svg></button></div>
+        <a class="sidebar-utility" href="/" target="_blank" rel="noopener" title="查看公开首页"><svg class="icon" aria-hidden="true"><use href="#i-eye"/></svg><span>查看公开首页</span><svg class="icon utility-arrow" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+        <button class="sidebar-utility" onclick="copyEndpoint()" title="复制 API 接入地址"><svg class="icon" aria-hidden="true"><use href="#i-copy"/></svg><span>复制接入地址</span></button>
+        <button class="sidebar-utility" onclick="logout()" title="退出登录"><svg class="icon" aria-hidden="true"><use href="#i-logout"/></svg><span>退出登录</span></button>
+        <div class="sidebar-version"><span class="status-dot"></span><span>API Share · Gateway Console</span></div>
       </div>
     </aside>
 
     <div class="workspace-main">
       <header class="topbar">
-        <div class="breadcrumb"><button class="icon-btn mobile-menu" onclick="toggleSidebar()" aria-label="打开导航" aria-controls="sidebar" aria-expanded="false"><svg class="icon"><use href="#i-menu"/></svg></button><span>工作空间</span><svg class="icon"><use href="#i-chevron"/></svg><strong id="pageCrumb">概览</strong></div>
-        <div class="topbar-actions"><span id="connectionStatus" class="connection-status"><span class="status-dot"></span><span>正在连接</span></span><button id="refreshButton" class="icon-btn" onclick="refreshCurrent()" title="刷新当前页面" aria-label="刷新当前页面"><svg class="icon"><use href="#i-refresh"/></svg></button></div>
+        <div class="breadcrumb"><button class="icon-btn mobile-menu" onclick="toggleSidebar()" aria-label="展开或收起侧栏" aria-controls="sidebar" aria-expanded="true" title="展开或收起侧栏"><svg class="icon"><use href="#i-menu"/></svg></button><span class="topbar-workspace">我的工作空间</span><svg class="icon crumb-divider"><use href="#i-chevron"/></svg><strong id="pageCrumb">仪表盘</strong></div>
+        <div class="topbar-actions"><span id="connectionStatus" class="connection-status"><span class="status-dot"></span><span>正在连接</span></span><button id="refreshButton" class="icon-btn" onclick="refreshCurrent()" title="刷新当前页面" aria-label="刷新当前页面"><svg class="icon"><use href="#i-refresh"/></svg></button><span class="topbar-divider" aria-hidden="true"></span><div class="topbar-account"><span class="account-avatar">A</span><span>Administrator</span></div></div>
       </header>
       <main id="mainContent" tabindex="-1">
-        <section id="tab-dashboard" class="panel">
-          <div class="public-preview-link"><a class="btn ghost" href="/" target="_blank" rel="noopener"><svg class="icon" aria-hidden="true"><use href="#i-eye"/></svg> 查看公开首页 <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></div><div class="page-heading dashboard-heading"><div><div class="eyebrow">WORKSPACE / OVERVIEW</div><h1>工作空间概览</h1><p>监控请求用量、管理服务连接，掌握网关运行情况。</p></div><button class="btn" onclick="openCreateUpstream()"><svg class="icon"><use href="#i-plus"/></svg> 连接新上游</button></div>
-          <div class="overview-date"><span id="todayLabel"></span><span class="muted">今日概况</span><span class="date-line"></span><span class="live-label"><span class="status-dot"></span> 以最新刷新为准</span></div>
-          <div class="cards">
-            <div class="stat-card"><div class="stat-top"><span>今日调用</span><svg class="icon"><use href="#i-activity"/></svg></div><div class="card-num" id="stCalls">—</div><div class="card-foot">成功完成的请求</div></div>
-            <div class="stat-card"><div class="stat-top"><span>今日费用</span><svg class="icon"><use href="#i-wallet"/></svg></div><div class="card-num" id="stCost">—</div><div class="card-foot">按模型用量计费 · USD</div></div>
-            <div class="stat-card"><div class="stat-top"><span>今日 Tokens</span><svg class="icon"><use href="#i-token"/></svg></div><div class="card-num" id="stTokens">—</div><div class="card-foot">输入与输出总用量</div></div>
-            <div class="stat-card resources-card"><div class="stat-top"><span>可用资源</span><svg class="icon"><use href="#i-layers"/></svg></div><div class="resource-nums"><span><strong id="stUps">—</strong><small>上游服务</small></span><span class="resource-divider"></span><span><strong id="stKeys">—</strong><small>API 密钥</small></span></div><div class="card-foot">当前启用的连接与密钥</div></div>
+        <section id="tab-dashboard" class="panel dashboard-panel">
+          <div class="page-heading dashboard-heading">
+            <div><h1>仪表盘</h1><p>工作空间的用量与服务概况</p></div>
+            <div class="heading-actions"><span id="todayLabel" class="heading-date"></span><button type="button" class="btn ghost" onclick="refreshCurrent()"><svg class="icon"><use href="#i-refresh"/></svg> 刷新数据</button></div>
           </div>
-          <div class="dashboard-grid">
-            <div class="card-block chart-card"><div class="block-heading"><div><h2>用量趋势</h2><p>过去 7 天的工作空间活动</p></div><div class="segmented" aria-label="趋势指标"><button class="active" data-chart="calls" onclick="setChartMetric('calls')" aria-pressed="true">调用次数</button><button data-chart="cost" onclick="setChartMetric('cost')" aria-pressed="false">费用</button></div></div><div class="chart-summary"><strong id="chartTotal">—</strong><span id="chartUnit">次调用</span><span id="chartRange" class="muted"></span></div><div id="dailyChart" class="chart" aria-label="过去七天用量趋势"></div><div class="chart-caption"><span class="legend-dot"></span><span id="chartLegend">成功调用</span><span id="chartNote" class="muted"></span></div></div>
-            <div class="card-block getting-started"><span class="guide-icon"><svg class="icon"><use href="#i-code"/></svg></span><h2>快速接入<br>你的模型服务</h2><p>连接上游、创建密钥，<br>使用统一地址发起调用。</p><button class="guide-step" onclick="switchTab('upstreams')"><span class="step-number">01</span><span><strong>连接上游服务</strong><small>支持四种常用接口格式</small></span><svg class="icon"><use href="#i-arrow"/></svg></button><button class="guide-step" onclick="switchTab('keys')"><span class="step-number">02</span><span><strong>创建 API 密钥</strong><small>为团队分配独立的访问权限</small></span><svg class="icon"><use href="#i-arrow"/></svg></button><button class="guide-step" onclick="copyEndpoint()"><span class="step-number">03</span><span><strong>开始你的第一次调用</strong><small>复制地址，接入 OpenAI 兼容工具</small></span><svg class="icon"><use href="#i-copy"/></svg></button></div>
+
+          <div class="dash-kpi-grid">
+            <article class="dash-kpi" data-kpi="rpm">
+              <div class="dash-kpi-head"><svg class="icon"><use href="#i-heart"/></svg><span>实时 RPM</span></div>
+              <div class="dash-kpi-main"><strong id="kpiRpm">—</strong><span class="dash-kpi-unit">/min</span></div>
+              <div class="dash-kpi-foot" id="kpiRpmDelta"></div>
+              <div class="dash-kpi-spark" id="kpiRpmSpark" aria-hidden="true"></div>
+            </article>
+            <article class="dash-kpi" data-kpi="cost">
+              <div class="dash-kpi-head"><svg class="icon"><use href="#i-dollar"/></svg><span>今日消费</span></div>
+              <div class="dash-kpi-main"><strong id="kpiCost">—</strong></div>
+              <div class="dash-kpi-foot" id="kpiCostDelta"></div>
+              <div class="dash-kpi-spark" id="kpiCostSpark" aria-hidden="true"></div>
+            </article>
+            <article class="dash-kpi" data-kpi="requests">
+              <div class="dash-kpi-head"><svg class="icon"><use href="#i-bell"/></svg><span>今日请求数</span></div>
+              <div class="dash-kpi-main"><strong id="kpiRequests">—</strong></div>
+              <div class="dash-kpi-foot" id="kpiRequestsDelta"></div>
+              <div class="dash-kpi-spark" id="kpiRequestsSpark" aria-hidden="true"></div>
+            </article>
+            <article class="dash-kpi" data-kpi="success">
+              <div class="dash-kpi-head"><svg class="icon"><use href="#i-check"/></svg><span>成功率 (24H)</span></div>
+              <div class="dash-kpi-main"><strong id="kpiSuccess">—</strong></div>
+              <div class="dash-kpi-foot" id="kpiSuccessDelta"></div>
+              <div class="dash-kpi-spark" id="kpiSuccessSpark" aria-hidden="true"></div>
+            </article>
+            <article class="dash-kpi dash-health" data-kpi="health">
+              <div class="dash-kpi-head"><svg class="icon"><use href="#i-activity"/></svg><span>系统健康</span></div>
+              <div class="dash-health-grid">
+                <div><span>RPM</span><strong id="healthRpm">—</strong></div>
+                <div><span>TPM</span><strong id="healthTpm">—</strong></div>
+                <div><span>错误率</span><strong id="healthError">—</strong></div>
+                <div><span>p50 延迟</span><strong id="healthP50">—</strong></div>
+              </div>
+            </article>
           </div>
-          <div class="card-block recent-card"><div class="block-heading"><div><h2>最近的调用</h2><p>最新的请求状态与用量记录</p></div><button class="text-btn" onclick="switchTab('logs')">查看全部 <svg class="icon"><use href="#i-arrow"/></svg></button></div><div class="table-wrap"><table class="tbl" id="recentTable"><thead><tr><th scope="col">模型</th><th scope="col">API 密钥</th><th scope="col">状态</th><th scope="col">Tokens</th><th scope="col">费用</th><th scope="col">时间</th></tr></thead><tbody><tr><td colspan="6" class="table-message">正在加载最近调用…</td></tr></tbody></table></div></div>
+
+          <div class="dash-main-grid">
+            <section class="dash-card dash-trend">
+              <header class="dash-card-head">
+                <h2>用量趋势</h2>
+                <div class="dash-segmented" role="group" aria-label="趋势指标">
+                  <button type="button" class="active" data-trend-metric="cost" onclick="setTrendMetric('cost')" aria-pressed="true">消费</button>
+                  <button type="button" data-trend-metric="calls" onclick="setTrendMetric('calls')" aria-pressed="false">请求数</button>
+                </div>
+              </header>
+              <div class="dash-trend-panel">
+                <div class="dash-trend-top">
+                  <div class="dash-tabs" role="tablist" aria-label="趋势维度">
+                    <button type="button" class="active" role="tab" aria-selected="true" data-trend-dim="overview" onclick="setTrendDimension('overview')">总览</button>
+                    <button type="button" role="tab" aria-selected="false" data-trend-dim="keys" onclick="setTrendDimension('keys')">密钥</button>
+                    <button type="button" role="tab" aria-selected="false" data-trend-dim="models" onclick="setTrendDimension('models')">模型</button>
+                    <button type="button" role="tab" aria-selected="false" data-trend-dim="upstreams" onclick="setTrendDimension('upstreams')">上游</button>
+                  </div>
+                  <div id="trendLegend" class="dash-legend"></div>
+                </div>
+                <div id="trendChart" class="dash-trend-chart" role="group" aria-label="最近 24 小时用量趋势"></div>
+                <div class="dash-trend-foot"><span><strong id="trendTotal">—</strong> <span id="trendTotalUnit">近 24 小时合计</span></span><span id="trendNote" class="dash-trend-note">最近 24 小时</span></div>
+              </div>
+            </section>
+
+            <section class="dash-card dash-cache">
+              <header class="dash-card-head">
+                <h2>缓存分析</h2>
+                <span class="dash-subtle">最近 24 小时</span>
+              </header>
+              <div class="dash-cache-main">
+                <div class="dash-donut">
+                  <svg viewBox="0 0 120 120" aria-hidden="true">
+                    <circle class="dash-ring-bg" cx="60" cy="60" r="48"></circle>
+                    <circle id="cacheRing" class="dash-ring-value" cx="60" cy="60" r="48"></circle>
+                  </svg>
+                  <div class="dash-donut-center"><strong id="cacheRatio">—</strong><span>缓存命中率 <svg class="icon" aria-hidden="true"><title>缓存读取 Token ÷（缓存读取 + 未缓存输入 + 缓存写入）</title><use href="#i-info"/></svg></span></div>
+                </div>
+                <ul class="dash-cache-list">
+                  <li><span class="dash-dot teal"></span><span>缓存读取</span><strong id="cacheRead">—</strong></li>
+                  <li><span class="dash-dot accent"></span><span>未缓存输入</span><strong id="cacheInput">—</strong></li>
+                  <li><span class="dash-dot gray"></span><span>缓存写入</span><strong id="cacheWrite">—</strong></li>
+                </ul>
+              </div>
+            </section>
+          </div>
+
+          <div class="dash-rank-grid">
+            <section class="dash-card dash-rank">
+              <header class="dash-card-head">
+                <h2>密钥排行</h2>
+                <div class="dash-segmented dash-segmented-small" role="group" aria-label="密钥排行指标">
+                  <button type="button" class="active" data-rank-dim="keys" data-rank-metric="cost" onclick="setRankMetric('keys','cost')" aria-pressed="true">消费</button>
+                  <button type="button" data-rank-dim="keys" data-rank-metric="calls" onclick="setRankMetric('keys','calls')" aria-pressed="false">请求数</button>
+                </div>
+              </header>
+              <div class="dash-rank-body">
+                <ol id="rankKeys" class="dash-rank-list"></ol>
+                <button type="button" class="dash-rank-link" onclick="switchTab('keys')">查看全部密钥 <svg class="icon"><use href="#i-arrow"/></svg></button>
+              </div>
+            </section>
+            <section class="dash-card dash-rank">
+              <header class="dash-card-head">
+                <h2>模型排行</h2>
+                <div class="dash-segmented dash-segmented-small" role="group" aria-label="模型排行指标">
+                  <button type="button" class="active" data-rank-dim="models" data-rank-metric="cost" onclick="setRankMetric('models','cost')" aria-pressed="true">消费</button>
+                  <button type="button" data-rank-dim="models" data-rank-metric="calls" onclick="setRankMetric('models','calls')" aria-pressed="false">请求数</button>
+                </div>
+              </header>
+              <div class="dash-rank-body">
+                <ol id="rankModels" class="dash-rank-list"></ol>
+                <button type="button" class="dash-rank-link" onclick="switchTab('models')">查看全部模型 <svg class="icon"><use href="#i-arrow"/></svg></button>
+              </div>
+            </section>
+            <section class="dash-card dash-rank">
+              <header class="dash-card-head">
+                <h2>上游排行</h2>
+                <div class="dash-segmented dash-segmented-small" role="group" aria-label="上游排行指标">
+                  <button type="button" class="active" data-rank-dim="upstreams" data-rank-metric="cost" onclick="setRankMetric('upstreams','cost')" aria-pressed="true">消费</button>
+                  <button type="button" data-rank-dim="upstreams" data-rank-metric="calls" onclick="setRankMetric('upstreams','calls')" aria-pressed="false">请求数</button>
+                </div>
+              </header>
+              <div class="dash-rank-body">
+                <ol id="rankUpstreams" class="dash-rank-list"></ol>
+                <button type="button" class="dash-rank-link" onclick="switchTab('upstreams')">查看全部上游 <svg class="icon"><use href="#i-arrow"/></svg></button>
+              </div>
+            </section>
+          </div>
+
+          <div class="dash-card dash-recent">
+            <header class="dash-card-head"><h2>最近的调用</h2><button type="button" class="text-btn" onclick="switchTab('logs')">查看全部 <svg class="icon"><use href="#i-arrow"/></svg></button></header>
+            <div class="table-wrap"><table class="tbl" id="recentTable"><thead><tr><th scope="col">模型</th><th scope="col">API 密钥</th><th scope="col">状态</th><th scope="col">Tokens</th><th scope="col">费用</th><th scope="col">时间</th></tr></thead><tbody><tr><td colspan="6" class="table-message">正在加载最近调用…</td></tr></tbody></table></div>
+          </div>
           <footer class="workspace-footer"><span>API Share / Gateway Console</span><span id="lastRefreshed">等待刷新</span></footer>
         </section>
 
@@ -110,10 +244,21 @@
         </section>
 
         <section id="tab-upstreams" class="panel hidden">
-          <div class="page-heading"><div><span class="eyebrow">MODELS & CONNECTIONS</span><h1>上游服务</h1><p>统一管理上游连接，让请求找到合适的模型。</p></div><button class="btn" onclick="openCreateUpstream()"><svg class="icon"><use href="#i-plus"/></svg> 添加上游</button></div>
-          <div class="upstream-summary"><div><span class="summary-icon"><svg class="icon"><use href="#i-layers"/></svg></span><span><strong id="upstreamTotal">—</strong><small>全部上游</small></span></div><div><span class="summary-icon green"><svg class="icon"><use href="#i-check"/></svg></span><span><strong id="upstreamHealthy">—</strong><small>健康且启用</small></span></div><div><span class="summary-icon orange"><svg class="icon"><use href="#i-token"/></svg></span><span><strong id="upstreamModelCount">—</strong><small>白名单模型</small></span></div><p>一个入口，<br><span>连接更多可能。</span></p></div>
-          <div class="card-block list-card"><div class="list-toolbar"><div class="list-title"><h2>上游服务</h2><span id="upstreamListCount" class="count-pill">—</span></div><div class="toolbar-filters"><label class="search-field"><svg class="icon"><use href="#i-search"/></svg><input id="upstreamSearch" placeholder="搜索名称、模型或地址…" aria-label="搜索上游" oninput="renderUpstreams()"></label><select id="upstreamTypeFilter" aria-label="按上游格式筛选" onchange="renderUpstreams()"><option value="">所有格式</option><option value="openai-chat">OpenAI Chat Completions</option><option value="openai-responses">OpenAI Responses</option><option value="opencode-free">OpenCode 免费模型</option><option value="cline">Cline 免费模型</option><option value="anthropic">Anthropic Messages</option><option value="gemini">Gemini generateContent</option><option value="openai-auto">OpenAI · 旧配置</option><option value="opencode">OpenCode · 旧配置</option></select></div></div><div class="table-wrap"><table class="tbl upstream-table" id="upsTable"><thead><tr><th scope="col">上游服务</th><th scope="col">连接地址</th><th scope="col">模型 / 权重</th><th scope="col">健康状态</th><th scope="col">启用</th><th scope="col" class="actions-heading">操作</th></tr></thead><tbody></tbody></table></div></div>
-          <div class="inline-note"><svg class="icon"><use href="#i-info"/></svg> 同一会话优先使用相同上游；连接故障时，自动尝试其他可用服务。</div>
+          <div class="page-heading"><div><h1>上游服务</h1><p>统一管理上游连接、用量与调度状态。</p></div><button class="btn" onclick="openCreateUpstream()"><svg class="icon"><use href="#i-plus"/></svg> 新建上游</button></div>
+          <nav class="upstream-resource-tabs" aria-label="服务资源"><button class="active" aria-current="page"><svg class="icon" aria-hidden="true"><use href="#i-key"/></svg> 上游 <span id="upstreamTotal">—</span></button><button onclick="switchTab('models')"><svg class="icon" aria-hidden="true"><use href="#i-token"/></svg> 模型总览 <span id="upstreamModelCount">—</span></button><button onclick="switchTab('proxies')"><svg class="icon" aria-hidden="true"><use href="#i-link"/></svg> 代理配置 <span id="upstreamProxyCount">—</span></button></nav>
+          <div class="upstream-metrics" aria-label="上游用量概况">
+            <div class="upstream-metric"><span><svg class="icon" aria-hidden="true"><use href="#i-activity"/></svg> 今日调用</span><strong id="upTodayCalls">—</strong><small id="upActiveNote">正在读取上游状态…</small></div>
+            <div class="upstream-metric"><span><svg class="icon" aria-hidden="true"><use href="#i-wallet"/></svg> 今日花费</span><strong id="upTodayCost">—</strong><small id="upCostNote">成功调用费用 · USD</small></div>
+            <div class="upstream-metric"><span><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg> 成功率 (7 天)</span><strong id="upSuccessRate">—</strong><small id="upFailureNote">近 7 天调用记录</small></div>
+            <div class="upstream-metric"><span><svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg> 首 Token 延迟</span><strong id="upFirstToken">—</strong><small>近 7 天成功请求的平均值</small></div>
+            <div class="upstream-metric"><span><svg class="icon" aria-hidden="true"><use href="#i-token"/></svg> 今日 Tokens</span><strong id="upTodayTokens">—</strong><small id="upTokenNote">输入与输出总用量</small></div>
+          </div>
+          <div class="upstream-filters"><label class="search-field"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><input id="upstreamSearch" type="search" placeholder="按上游名称 / 模型 / 地址搜索" aria-label="搜索上游" oninput="renderUpstreams()"></label><select id="upstreamStatusFilter" aria-label="按上游状态筛选" onchange="renderUpstreams()"><option value="">全部状态</option><option value="enabled">已启用</option><option value="disabled">已停用</option><option value="healthy">健康且启用</option><option value="cooling">冷却中</option></select><select id="upstreamTypeFilter" aria-label="按上游格式筛选" onchange="renderUpstreams()"><option value="">全部格式</option><option value="openai-chat">OpenAI Chat Completions</option><option value="openai-responses">OpenAI Responses</option><option value="opencode-free">OpenCode 免费模型</option><option value="cline">Cline 免费模型</option><option value="anthropic">Anthropic Messages</option><option value="gemini">Gemini generateContent</option><option value="openai-auto">OpenAI · 旧配置</option><option value="opencode">OpenCode · 旧配置</option></select><select id="upstreamSort" aria-label="上游排序依据" onchange="renderUpstreams()"><option value="priority">优先级</option><option value="name">名称</option><option value="calls">今日调用</option><option value="cost">今日花费</option><option value="weight">权重</option></select><button id="upstreamSortDirection" class="icon-btn" onclick="toggleUpstreamSort()" aria-label="当前升序，点击切换为降序" title="切换排序方向"><svg class="icon" aria-hidden="true"><use href="#i-sort"/></svg></button></div>
+          <div class="upstream-list-meta"><span id="upstreamListCount" role="status">正在加载上游…</span><div class="upstream-view-switch" aria-label="列表显示方式"><button data-upstream-view="table" aria-pressed="true" onclick="setUpstreamView('table')">表格</button><button data-upstream-view="cards" aria-pressed="false" onclick="setUpstreamView('cards')">卡片</button></div></div>
+          <div id="upstreamBulkBar" class="upstream-bulk-bar hidden"><span id="upstreamSelectedCount"></span><button class="text-btn" onclick="setBulkUpstreamEnabled(true)">批量启用</button><button class="text-btn" onclick="setBulkUpstreamEnabled(false)">批量停用</button><button class="text-btn" onclick="clearUpstreamSelection()">取消选择</button></div>
+          <div id="upstreamTableView" class="upstream-table-shell"><div class="table-wrap"><table class="tbl upstream-table" id="upsTable"><thead><tr><th scope="col" class="upstream-select-cell"><input id="upstreamSelectAll" type="checkbox" aria-label="选择当前筛选的全部上游" onchange="selectAllUpstreams(this.checked)"></th><th scope="col">启用</th><th scope="col">上游 / 密钥</th><th scope="col">模型</th><th scope="col">健康</th><th scope="col">今日统计</th><th scope="col">用量 (7D)</th><th scope="col">调度</th><th scope="col" class="actions-heading">操作</th></tr></thead><tbody></tbody></table></div></div>
+          <div id="upstreamCardsView" class="upstream-card-grid hidden"></div>
+          <div class="upstream-page-note"><span><svg class="icon" aria-hidden="true"><use href="#i-info"/></svg> 健康条显示最近 200 分钟的调用结果，每格 10 分钟；灰色表示暂无调用。</span><span id="upstreamOverviewUpdated">统计基于保留的调用明细</span></div>
         </section>
 
         <section id="tab-models" class="panel hidden">
@@ -165,8 +310,13 @@
         </section>
 
         <section id="tab-logs" class="panel hidden">
-          <div class="page-heading"><div><span class="eyebrow">ACTIVITY & USAGE</span><h1>调用日志</h1><p>查看请求状态、模型用量与费用，了解每一次连接。</p></div><span id="logTotal" class="heading-meta"></span></div>
-          <div class="card-block list-card"><div class="list-toolbar"><div class="list-title"><h2>调用记录</h2><span class="muted">每页 50 条</span></div><label class="search-field"><svg class="icon"><use href="#i-search"/></svg><input id="logSearch" placeholder="搜索本页模型、密钥或上游…" aria-label="搜索本页日志" oninput="renderLogs()"></label></div><div class="table-wrap"><table class="tbl small" id="logsTable"><thead><tr><th scope="col">时间</th><th scope="col">密钥 / 上游</th><th scope="col">模型</th><th scope="col">状态</th><th scope="col">输入 / 输出</th><th scope="col">费用</th><th scope="col">速度</th><th scope="col">错误</th></tr></thead><tbody></tbody></table></div><div class="pager"><span id="logRange" class="muted"></span><div><button id="logPrev" class="btn mini ghost" onclick="loadLogs(logsPage - 1)">上一页</button><span id="logPage">1</span><button id="logNext" class="btn mini ghost" onclick="loadLogs(logsPage + 1)">下一页</button></div></div></div>
+          <div class="page-heading"><div><h1>请求记录</h1><p>查看每一次调用的用量、性能与计费明细。</p></div><div class="log-heading-actions"><button id="logExportButton" class="btn ghost" onclick="exportLogs()"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg> 导出</button><button id="logRefreshButton" class="btn ghost" onclick="refreshLogs()"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg> 刷新</button></div></div>
+          <div class="log-toolbar"><div class="log-date-controls"><button class="icon-btn log-period-arrow previous" onclick="shiftLogPeriod(-1)" aria-label="上一周期" title="上一周期"><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></button><div class="log-date-range" role="group" aria-label="请求记录时间范围"><input id="logStart" type="datetime-local" aria-label="开始时间（北京时间）" onchange="changeLogDates()"><span aria-hidden="true">—</span><input id="logEnd" type="datetime-local" aria-label="结束时间（北京时间）" onchange="changeLogDates()"></div><button class="icon-btn log-period-arrow" onclick="shiftLogPeriod(1)" aria-label="下一周期" title="下一周期"><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></button><div class="log-periods" aria-label="时间快捷选择"><button data-log-period="today" aria-pressed="true" onclick="setLogPeriod('today')">本日</button><button data-log-period="week" aria-pressed="false" onclick="setLogPeriod('week')">本周</button><button data-log-period="month" aria-pressed="false" onclick="setLogPeriod('month')">本月</button></div></div><div class="log-search-controls"><label class="search-field"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><input id="logSearch" type="search" placeholder="搜索模型 / 密钥 / 上游 / 记录 ID" aria-label="搜索全部调用记录" oninput="scheduleLogSearch()"></label><button id="logFilterButton" class="btn ghost" onclick="toggleLogFilters()" aria-controls="logAdvancedFilters" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="#i-sliders"/></svg> 筛选</button><button id="logColumnsButton" class="btn ghost" onclick="toggleLogColumns(this)" aria-haspopup="true" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="#i-columns"/></svg> 列</button></div></div>
+          <p id="logDateError" class="form-error hidden" role="alert"></p>
+          <div id="logAdvancedFilters" class="log-advanced-filters hidden"><label class="field"><span>请求状态</span><select id="logStatusFilter" onchange="loadLogs(1)"><option value="">全部状态</option><option value="success">请求成功</option><option value="failed">请求失败</option></select></label><label class="field"><span>API 密钥</span><select id="logKeyFilter" onchange="loadLogs(1)"><option value="">全部密钥</option></select></label><label class="field"><span>上游服务</span><select id="logUpstreamFilter" onchange="loadLogs(1)"><option value="">全部上游</option></select></label><label class="field"><span>模型 ID</span><input id="logModelFilter" placeholder="精确模型 ID" onchange="loadLogs(1)"></label><button class="text-btn" onclick="resetLogFilters()">重置筛选</button></div>
+          <div class="log-quick-filters"><div role="group" aria-label="快捷筛选"><button data-log-feature="failed" aria-pressed="false" onclick="toggleLogFeature('failed')"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg> 最终失败</button><button data-log-feature="slow" aria-pressed="false" onclick="toggleLogFeature('slow')" title="总耗时至少 5 秒"><svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg> 慢请求</button><button data-log-feature="cache" aria-pressed="false" onclick="toggleLogFeature('cache')"><svg class="icon" aria-hidden="true"><use href="#i-layers"/></svg> 提示缓存命中</button><button data-log-feature="reasoning" aria-pressed="false" onclick="toggleLogFeature('reasoning')"><svg class="icon" aria-hidden="true"><use href="#i-spark"/></svg> 有推理用量</button></div><span id="logTotal" role="status">正在读取记录…</span></div>
+          <div class="log-table-shell"><div class="table-wrap"><table class="tbl" id="logsTable"><thead><tr><th scope="col" data-log-column="time">时间</th><th scope="col" data-log-column="model">模型</th><th scope="col" data-log-column="upstream">上游</th><th scope="col" data-log-column="key">密钥</th><th scope="col" data-log-column="tokens">Tokens</th><th scope="col" data-log-column="performance">性能</th><th scope="col" data-log-column="cost">费用</th><th scope="col" data-log-column="status">状态</th></tr></thead><tbody></tbody></table></div><div class="log-summary-line" id="logQuerySummary"></div><div class="pager"><span id="logRange" class="muted"></span><div><label class="log-page-size"><span class="sr-only">每页记录数</span><select id="logPageSize" aria-label="每页记录数" onchange="loadLogs(1)"><option value="50">50 条 / 页</option><option value="100">100 条 / 页</option><option value="200">200 条 / 页</option></select></label><button id="logPrev" class="icon-btn previous" onclick="loadLogs(logsPage - 1)" aria-label="上一页"><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></button><span id="logPage">1</span><button id="logNext" class="icon-btn" onclick="loadLogs(logsPage + 1)" aria-label="下一页"><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></button></div></div></div>
+          <div class="log-page-note"><span>北京时间 UTC+8 · 点击时间、模型、性能或状态查看请求详情</span><span id="logUpdated">记录来自保留的调用明细</span></div>
         </section>
 
         <section id="tab-settings" class="panel hidden">
@@ -274,7 +424,7 @@
             </div>
             <datalist id="requestModelOptions"></datalist><datalist id="upstreamModelOptions"></datalist>
           </section>
-          <section id="editorRouting" class="editor-section"><div class="editor-section-heading"><span>05</span><div><h3>调度策略</h3><p>决定这条连接如何参与请求分配。</p></div></div><div class="routing-grid"><label class="field"><span>分配权重</span><input id="editWeight" type="number" min="0" step="1" value="1" required><small>权重越高，分配的请求越多。</small></label><label id="editEnabledRow" class="switch-row"><span><strong>启用此上游</strong><small>允许接收新的请求</small></span><input id="editEnabled" type="checkbox" class="switch-input" checked><span class="switch-track"></span></label><div id="createEnabledNote" class="inline-note hidden"><svg class="icon"><use href="#i-check"/></svg> 创建后自动启用</div></div></section>
+          <section id="editorRouting" class="editor-section"><div class="editor-section-heading"><span>05</span><div><h3>调度策略</h3><p>决定这条连接如何参与请求分配。</p></div></div><div class="routing-grid"><label class="field"><span>优先级</span><input id="editPriority" type="number" min="0" step="1" value="0" required><small>数值越小越优先（0 最高）。只从当前最高优先级层选择：主力 0，备用 1，应急 2。</small></label><label class="field"><span>分配权重</span><input id="editWeight" type="number" min="0" step="1" value="1" required><small>同一优先级内，权重越高分配的请求越多。</small></label><label id="editEnabledRow" class="switch-row"><span><strong>启用此上游</strong><small>允许接收新的请求</small></span><input id="editEnabled" type="checkbox" class="switch-input" checked><span class="switch-track"></span></label><div id="createEnabledNote" class="inline-note hidden"><svg class="icon"><use href="#i-check"/></svg> 创建后自动启用</div></div></section>
           <p id="editorError" class="form-error editor-error hidden" role="alert"></p>
         </div>
       </div>
@@ -334,6 +484,7 @@
 
   <dialog id="actionDialog" class="action-dialog" aria-labelledby="actionHeading"><form id="actionForm"><div class="action-dialog-header"><span class="section-icon"><svg class="icon"><use href="#i-info"/></svg></span><button type="button" class="icon-btn" onclick="resolveAction(false)" aria-label="关闭对话框"><svg class="icon"><use href="#i-close"/></svg></button></div><h2 id="actionHeading"></h2><p id="actionDescription"></p><label id="actionInputField" class="field hidden"><span id="actionInputLabel">共享额度 · USD</span><input id="actionInput" type="number" min="0" step="0.01" required></label><div class="form-actions"><button type="button" class="btn ghost" onclick="resolveAction(false)">取消</button><button id="actionConfirm" type="submit" class="btn">确认</button></div></form></dialog>
   <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="false"></div>
+  <script src="/public/static/model-icons.js"></script>
   <script src="/public/static/clipboard.js"></script>
   <script src="static/deployment.js"></script>
   <script src="static/proxies.js"></script>
@@ -344,6 +495,11 @@
   <script src="static/model-overview.js"></script>
   <script src="static/model-test.js"></script>
   <script src="static/cline-auth.js"></script>
+  <div id="upstreamActionMenu" class="upstream-action-menu" popover aria-label="上游操作"></div>
+  <div id="logColumnsMenu" class="log-columns-menu" popover aria-label="选择记录表格的列"></div>
+  <dialog id="logDetailDialog" class="log-detail-dialog" aria-labelledby="logDetailTitle"><header class="log-detail-header"><div><span class="eyebrow">REQUEST DETAILS</span><h2 id="logDetailTitle">请求详情</h2><p id="logDetailSubtitle"></p></div><button class="icon-btn" onclick="closeLogDetails()" aria-label="关闭请求详情"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></header><div class="log-detail-tabs" aria-label="详情视图"><button data-log-detail-tab="overview" aria-pressed="true" onclick="setLogDetailTab('overview')">概览</button><button data-log-detail-tab="billing" aria-pressed="false" onclick="setLogDetailTab('billing')">用量与计费</button><button data-log-detail-tab="raw" aria-pressed="false" onclick="setLogDetailTab('raw')">原始记录</button></div><div id="logDetailBody" class="log-detail-body"></div><footer class="log-detail-footer"><button class="btn ghost" onclick="copyLogRecord()"><svg class="icon" aria-hidden="true"><use href="#i-copy"/></svg> 复制记录</button><button class="btn" onclick="closeLogDetails()">关闭</button></footer></dialog>
+  <script src="static/upstreams.js"></script>
+  <script src="static/logs.js"></script>
   <script src="static/app.js"></script>
 </body>
 </html>

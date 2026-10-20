@@ -16,7 +16,8 @@ function renderModelChips() {
       editProbe.selected.delete(model);
       syncEditModels(); renderEditProbeList(); $("editModelInput").focus();
     });
-    chip.append(text, button); box.append(chip);
+    const brand = document.createElement("span"); brand.innerHTML = modelIcon(model);
+    chip.append(brand.firstElementChild, text, button); box.append(chip);
   });
   $("editModelInput").placeholder = editProbe.selected.size ? "继续添加模型…" : "输入模型名，按回车添加";
   $("selectedModelCount").textContent = editProbe.selected.size ? "已添加 " + editProbe.selected.size + " 个模型" : "留空允许全部模型";
@@ -123,10 +124,14 @@ function appendModelMapRow(source = "", target = "", focus = true) {
     field.setAttribute("list", list); field.setAttribute("aria-label", label);
     field.setAttribute("aria-describedby", "modelMapHint modelMapError");
     field.placeholder = side === "source" ? "选择或输入请求模型" : "选择或输入上游模型";
-    field.addEventListener("input", () => { validateModelMap(); updateEditorDirty(); });
+    const avatar = document.createElement("span"); avatar.className = "model-input-avatar";
+    const updateAvatar = () => { avatar.innerHTML = modelIcon(field.value); };
+    updateAvatar();
+    field.addEventListener("input", () => { updateAvatar(); validateModelMap(); updateEditorDirty(); });
     const wrapper = document.createElement("label"); wrapper.className = "model-map-field model-map-" + side + "-field";
     const caption = document.createElement("span"); caption.className = "model-map-mobile-label"; caption.textContent = label;
-    wrapper.append(caption, field); row.append(wrapper);
+    const identity = document.createElement("span"); identity.className = "model-input-identity";
+    identity.append(avatar, field); wrapper.append(caption, identity); row.append(wrapper);
     if (side === "source") { const arrow = document.createElement("span"); arrow.className = "model-map-arrow"; arrow.textContent = "→"; arrow.setAttribute("aria-hidden", "true"); row.append(arrow); }
   }
   const remove = document.createElement("button"); remove.type = "button"; remove.className = "icon-btn danger";

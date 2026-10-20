@@ -1,0 +1,38 @@
+.model-brand-icon.provider-icon { display: inline-grid; place-items: center; flex: 0 0 auto; width: 32px; height: 32px; padding: 4px; border: 1px solid var(--border, #e5e3e2); border-radius: 8px; background: var(--panel, #fff); color: var(--muted, #627587); vertical-align: middle; }
+.model-brand-icon img, .model-brand-icon > svg { display: block; width: 100%; height: 100%; max-width: 100%; max-height: 100%; object-fit: contain; }
+.model-source .model-brand-icon { width: 20px; height: 20px; padding: 2px; border-radius: 5px; }
+.model-symbol-title { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.model-symbol-title > .model-brand-icon { width: 22px; height: 22px; padding: 2px; border-radius: 5px; }
+.model-chip .model-brand-icon { width: 20px; height: 20px; padding: 2px; border-radius: 5px; }
+.model-test-option-brand { display: inline-flex; flex: 0 0 auto; align-items: center; }
+.model-test-option-brand .model-brand-icon { width: 26px; height: 26px; padding: 3px; }
+.family-symbol .model-brand-icon { width: 100%; height: 100%; padding: 7px; border: 0; border-radius: inherit; background: var(--panel, #fff); }
+.model-name h3 { min-width: 0; }
+.log-model .model-brand-icon.provider-icon { padding: 1px; border: 0; background: transparent; }
+.editor-provider-brand { display: inline-flex; flex: 0 0 auto; }
+.editor-provider-brand > .model-brand-icon { width: 38px; height: 38px; padding: 6px; }
+.cell-stack strong.model-symbol-title { display: inline-flex; align-items: center; }
+.model-identity-label { display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; vertical-align: middle; }
+.model-identity-label > .model-brand-icon.provider-icon { width: 22px; height: 22px; padding: 2px; border-radius: 5px; }
+.model-identity-label > .model-label-text { min-width: 0; white-space: normal; overflow-wrap: anywhere; color: inherit; font: inherit; }
+.dash-rank-name .model-identity-label { display: flex; }
+.dash-rank-name .model-label-text { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.probe-box label > .model-identity-label { flex: 1; }
+.probe-box label:has(> .model-identity-label) { align-items: center; }
+.model-input-identity { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.model-input-identity > input { flex: 1; min-width: 0; }
+.model-input-avatar { display: inline-flex; flex: none; }
+.model-input-avatar > .model-brand-icon { width: 26px; height: 26px; padding: 3px; }
+.model-test-trigger-value .model-identity-label { display: flex; }
+.model-test-trigger-value .model-label-text { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.key-quota-details .model-identity-label { display: inline-flex; }
+.key-quota-details .model-brand-icon { display: inline-grid; }
+.model-test-mapping-badge .model-identity-label { max-width: calc(100% - 12px); }
+.model-test-mapping-badge .model-label-text { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.model-test-mapping-badge .model-brand-icon.provider-icon,
+.model-test-option-main small .model-brand-icon.provider-icon { width: 18px; height: 18px; padding: 1px; }
+.today-models > #todayModels { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; }
+.today-models .model-brand-icon.provider-icon { background: var(--surface, #fff); }
+#historyHeading .model-brand-icon.provider-icon { width: 32px; height: 32px; padding: 4px; }
+/* The upstream Kimi color artwork has a white wordmark. */
+.model-brand-icon.provider-icon[data-brand="kimi"] { background: #171717; border-color: #171717; }

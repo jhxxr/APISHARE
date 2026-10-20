@@ -106,14 +106,18 @@ func (u *Upstream) mapModel(clientModel string) string {
 	return clientModel
 }
 
-// pickUpstream 在健康且服务该模型的候选中按优先级分层后加权随机选择。
+// pickUpstream 在健康且服务该模型的候选中选择上游：
 //
-// 跨格式转换设计：候选不限于客户端原生格式的上游——只要某个上游（任意格式）
-// 服务该模型就可以入选，按以下优先级取最优层：
-//  1. 原生格式 + 显式白名单命中   （格式对、模型也对，最佳）
-//  2. 其他格式 + 显式白名单命中   （模型对，需要跨格式转换）
-//  3. 原生格式 + 通配             （格式对，模型是否真支持由上游裁决）
-//  4. 其他格式 + 通配             （兜底）
+//  1. 用户优先级：只从当前可用候选中 priority 最小的一层选择（数值越小越优先，
+//     0 最高）。低优先级渠道天然作为备用，仅在更高层不可用时接入流量。
+//  2. 格式与白名单层级：同一优先级内按以下顺序取最优层（跨格式转换设计：
+//     候选不限于客户端原生格式的上游——只要某个上游（任意格式）服务该模型
+//     就可以入选）：
+//     1) 原生格式 + 显式白名单命中   （格式对、模型也对，最佳）
+//     2) 其他格式 + 显式白名单命中   （模型对，需要跨格式转换）
+//     3) 原生格式 + 通配             （格式对，模型是否真支持由上游裁决）
+//     4) 其他格式 + 通配             （兜底）
+//  3. 权重：同一优先级、同一格式层内按 weight 加权随机。
 //
 // nativeOnly=true 时（如 embeddings）只考虑原生类型。
 //
@@ -133,9 +137,13 @@ func pickUpstream(format clientFormat, model string, exclude map[int64]bool, nat
 	}
 	var best []Upstream
 	var limited *openCodeRateLimitError
+	bestPriority := int(^uint(0) >> 1)
 	bestTier := 99
 	for _, u := range snapshot.upstreams {
 		if !u.Enabled || exclude[u.ID] || u.Weight <= 0 {
+			continue
+		}
+		if u.Priority > bestPriority {
 			continue
 		}
 		serves, explicit := u.servesModelExplicit(model)
@@ -183,13 +191,17 @@ func pickUpstream(format clientFormat, model string, exclude map[int64]bool, nat
 				}
 			}
 		}
-		if tier < bestTier {
+		if u.Priority < bestPriority {
+			bestPriority = u.Priority
 			bestTier = tier
 			best = best[:0]
+		} else if tier < bestTier {
+			bestTier = tier
+			best = best[:0]
+		} else if tier > bestTier {
+			continue
 		}
-		if tier == bestTier {
-			best = append(best, u)
-		}
+		best = append(best, u)
 	}
 	if len(best) == 0 {
 		if limited != nil {

@@ -1,6 +1,7 @@
 /* Site-wide telemetry and separately authenticated, read-only key balances. */
 const $ = id => document.getElementById(id);
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+const modelLabel = (model, family = "") => window.APIShareModelIcons.labelHTML(model, family);
 const fmt = value => Number(value || 0).toLocaleString("zh-CN");
 const compact = value => { value=Number(value||0);return value>=1e8?(value/1e8).toFixed(1)+"亿":value>=1e6?(value/1e6).toFixed(1)+"M":value>=1e4?(value/1e4).toFixed(1)+"万":fmt(value); };
 const money = value => {
@@ -128,7 +129,7 @@ function relativeTime(value) {
 }
 function renderFirstScreen() {
  const names=overview.models.map(model=>model.model),shown=names.slice(0,4);
- $("todayModels").textContent=shown.length?shown.join("、")+(names.length>4?" 等 "+names.length+" 个模型":""):overview.models_loading?"模型列表更新中":"暂无可用模型";
+ $("todayModels").innerHTML=shown.length?shown.map(model=>modelLabel(model)).join("")+(names.length>4?" 等 "+names.length+" 个模型":""):overview.models_loading?"模型列表更新中":"暂无可用模型";
  $("todayModels").title=names.join("、");
  const total=tokens(overview.summary);
  $("heroTitle").setAttribute("aria-label","全站累计 "+fmt(total)+" Token");
@@ -188,7 +189,7 @@ function renderUsage() {
  overview.usage.forEach(model=>models.set(model.model,model));
  const list=[...models.values()].sort((a,b)=>b.calls-a.calls||a.model.localeCompare(b.model));
  const highest=Math.max(...list.map(model=>model.calls),1);
- $("usageList").innerHTML=list.length?list.map(model=>'<div class="usage-row"><div class="usage-row-top"><strong>'+esc(model.model)+'</strong><span>'+fmt(model.calls)+' 次</span></div><div class="usage-track" aria-hidden="true"><span style="width:'+(model.calls/highest*100).toFixed(2)+'%"></span></div><p class="usage-row-detail">成功 '+fmt(model.successes)+' 次 · '+compact(tokens(model))+' Tokens</p></div>').join(""):'<p class="loading-note">暂无模型调用记录</p>';
+ $("usageList").innerHTML=list.length?list.map(model=>'<div class="usage-row"><div class="usage-row-top"><strong>'+modelLabel(model.model)+'</strong><span>'+fmt(model.calls)+' 次</span></div><div class="usage-track" aria-hidden="true"><span style="width:'+(model.calls/highest*100).toFixed(2)+'%"></span></div><p class="usage-row-detail">成功 '+fmt(model.successes)+' 次 · '+compact(tokens(model))+' Tokens</p></div>').join(""):'<p class="loading-note">暂无模型调用记录</p>';
  $("usageRest").textContent=list.length?"全站统计 · 按累计调用次数排序":"";
  window.pageMotion?.drawUsage();
 }
@@ -313,7 +314,7 @@ function renderModels() {
  });
  $("modelsGrid").innerHTML=list.map(m=>{
   const unavailable=denied(m);
-  const familyTag=({Anthropic:"C",Google:"G",OpenAI:"O",DeepSeek:"D",xAI:"X",Qwen:"Q",GLM:"Z"})[m.family]||"AI";
+  const familyTag=window.APIShareModelIcons.html(m.model,m.family);
   const track=minute?'<div class="minute-track" data-model="'+esc(m.model)+'" tabindex="0" role="region" aria-label="'+esc(m.model)+' 的 24 小时分钟轨迹，可横向滚动"><canvas class="minute-canvas" aria-hidden="true"></canvas></div>':'<div class="uptime-bars" style="--history-buckets:'+m.history.length+'" aria-hidden="true">'+m.history.map(d=>'<span class="interval-bar '+(!d.calls?"":d.successes===d.calls?"success":!d.successes?"failure":"partial")+'" title="'+esc(intervalTitle(d))+'"></span>').join("")+'</div>';
   return '<article class="model-card state-'+m.status+(unavailable?" is-unavailable":"")+'" data-motion-key="'+esc(m.model)+'"><div class="model-identity"><span class="family-symbol" aria-hidden="true">'+familyTag+'</span><div class="model-name"><span class="family">'+esc(m.family)+'</span><h3>'+esc(m.model)+'</h3><span class="model-state"><i class="dot"></i>'+statusText[m.status]+'</span>'+(unavailable?'<span class="unavailable-tag">当前密钥不可用</span>':'')+'</div></div><div class="model-timeline">'+track+'<div class="history-labels"><span>'+esc(historyTime(m.history[0].start))+'</span><span>'+esc(historyTime(m.history.at(-1).end))+'</span></div></div><div class="model-uptime '+(m.uptime_percent===null?'no-results':'has-results')+'"><strong>'+rate(m.uptime_percent)+'</strong><span>24 小时请求成功率</span><span class="model-speed'+(m.avg_tps==null?" is-empty":"")+'" title="'+(m.avg_tps==null?"最近 24 小时没有可测量的输出速度样本":"按输出 Token ÷ 生成时长加权平均")+'">平均 '+speed(m.avg_tps)+'</span></div><div class="model-consumption"><div><strong title="'+fmt(tokens(m))+' Tokens">'+compact(tokens(m))+'</strong><span>Tokens</span></div><div><strong>'+ fmt(m.calls)+'</strong><span>次调用</span></div><span class="last-call">'+relativeTime(m.last_call)+'</span></div><button class="model-history" type="button" data-model="'+esc(m.model)+'" aria-label="查看 '+esc(m.model)+' 的 24 小时调用历史">'+svg("clock")+'<span>调用历史</span></button>'+renderModelQuota(m)+'</article>';
  }).join("")||'<div class="empty-state">'+svg("layers")+'<h3>'+(query||status?"没有匹配的模型":overview.models_loading?"模型列表正在更新":"模型服务即将上线")+'</h3><p>'+(query||status?"试试其他模型名称或状态。":"模型准备就绪后，将在这里展示服务状态。")+'</p></div>';
@@ -324,7 +325,7 @@ function renderModels() {
 function showHistory(model) {
  const m=overview?.models.find(m=>m.model===model);if(!m)return;
  historyModel=model;
- $("historyHeading").textContent=m.model;
+ $("historyHeading").innerHTML=modelLabel(m.model,m.family);
  const minute=overview.history_interval==="minute";
  $("historyDescription").textContent="最近 24 小时的真实调用，按"+(minute?"分钟":"小时")+"汇总。灰色时段表示没有调用。"+(minute?"选择时段可查看这 24 小时内任意一小时的分钟记录。":"");
  $("historyHourControl").classList.toggle("hidden",!minute);

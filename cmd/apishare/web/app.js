@@ -3,6 +3,8 @@ const TOKEN_KEY = "apishare_token";
 const $ = (id) => document.getElementById(id);
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
 const icon = (name) => '<svg class="icon" aria-hidden="true"><use href="#i-' + name + '"/></svg>';
+const modelIcon = (model, family = "") => window.APIShareModelIcons.html(model, family);
+const modelLabel = (model, family = "") => window.APIShareModelIcons.labelHTML(model, family);
 const fmtUSD = (value) => {
   const amount = Number(value || 0), absolute = Math.abs(amount);
   if (!Number.isFinite(amount)) return "—";
@@ -38,14 +40,27 @@ function editorOpenAIProtocol() {
   if (isOpenCodeType($("editType").value)) return $("editOpenCodeProtocol").value || "auto";
   return { "openai-chat": "chat", "openai-responses": "responses" }[$("editType").value] || "auto";
 }
-const tabNames = { dashboard: "概览", keys: "API 密钥", upstreams: "上游服务", models: "模型总览", proxies: "代理配置", logs: "调用日志", announcements: "公告管理", settings: "工作空间设置", deployment: "部署配置" };
+const tabNames = { dashboard: "仪表盘", keys: "API 密钥", upstreams: "上游服务", models: "模型总览", proxies: "代理配置", logs: "调用日志", announcements: "公告管理", settings: "工作空间设置", deployment: "部署配置" };
+const tabIcons = { dashboard: "grid", keys: "key", upstreams: "layers", models: "spark", proxies: "link", logs: "activity", announcements: "megaphone", settings: "sliders", deployment: "shield" };
+document.body.classList.toggle("sidebar-collapsed", localStorage.getItem("apishare_sidebar_collapsed") === "true");
+document.querySelectorAll(".tab").forEach((button) => {
+  button.title = tabNames[button.dataset.tab];
+  button.setAttribute("aria-label", tabNames[button.dataset.tab]);
+});
+document.querySelectorAll(".panel > .page-heading").forEach((heading) => {
+  const glyph = document.createElement("span");
+  glyph.className = "page-heading-icon";
+  glyph.setAttribute("aria-hidden", "true");
+  glyph.innerHTML = icon(tabIcons[heading.closest(".panel").id.slice(4)] || "grid");
+  heading.firstElementChild.prepend(glyph);
+});
 const validTab = (name) => Object.hasOwn(tabNames, name);
 let token = localStorage.getItem(TOKEN_KEY) || "";
 let activeTab = "dashboard";
 let logsPage = 1;
 let keysCache = [], upsCache = [], logsCache = [];
 const weightDrafts = new Map(), weightSaving = new Set();
-let statsCache = null, chartMetric = "calls", actionResolve = null, actionInputType = null;
+let actionResolve = null, actionInputType = null;
 let settingsReady = false;
 const requestVersions = {};
 const editProbe = { id: null, models: [], selected: new Set(), initial: "", generation: 0, controller: null, saving: false, closing: false };
@@ -136,6 +151,8 @@ function dismissNewKey() { $("newKeyShow").classList.add("hidden"); $("newKeyVal
 
 /* Authentication and navigation */
 function showLogin() {
+  closeLogDetails();
+  $("logColumnsMenu").hidePopover();
   resetAnnouncementComposer();
   if ($("keyModelsDialog").open) { savingKeyModels = false; closeKeyModels(); }
   if ($("actionDialog").open) resolveAction(false);
@@ -197,9 +214,20 @@ function syncSidebar() {
   document.querySelector(".skip-link").inert = open;
   $("sidebarOverlay").classList.toggle("hidden", !open);
   document.body.classList.toggle("nav-open", open);
-  document.querySelector(".mobile-menu").setAttribute("aria-expanded", String(open));
+  document.querySelector(".mobile-menu").setAttribute("aria-expanded", String(mobile ? open : !document.body.classList.contains("sidebar-collapsed")));
 }
 function toggleSidebar(open) {
+  if (!matchMedia("(max-width: 768px)").matches) {
+    if (typeof open !== "boolean") {
+      const collapsed = document.body.classList.toggle("sidebar-collapsed");
+      localStorage.setItem("apishare_sidebar_collapsed", String(collapsed));
+      // Re-measure the chart when the sidebar's width transition finishes.
+      setTimeout(() => { if (activeTab === "dashboard") renderTrendChart(); }, 200);
+    }
+    $("sidebar").classList.remove("is-open");
+    syncSidebar();
+    return;
+  }
   const next = typeof open === "boolean" ? open : !$("sidebar").classList.contains("is-open");
   const restoreFocus = !next && $("sidebar").contains(document.activeElement) && matchMedia("(max-width: 768px)").matches;
   $("sidebar").classList.toggle("is-open", next);
@@ -257,77 +285,290 @@ function addDays(date, offset) {
   const [year, month, day] = date.split("-").map(Number);
   return new Date(Date.UTC(year, month - 1, day + offset)).toISOString().slice(0, 10);
 }
+let dashboardCache = null, trendMetric = "cost", trendDimension = "overview";
+const rankMetrics = { keys: "cost", models: "cost", upstreams: "cost" };
+const rankListIDs = { keys: "rankKeys", models: "rankModels", upstreams: "rankUpstreams" };
+const rankPalette = ["#b45d8a", "#c95b3e", "#159a95", "#7d8fa0"];
+const trendPalette = ["#159a95", "#d65a37", "#7d8fa0"];
+
+function fmtMoney(value) {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount)) return "—";
+  return Math.abs(amount) > 0 && Math.abs(amount) < 0.01 ? "$" + amount.toFixed(4) : "$" + amount.toFixed(2);
+}
+function fmtCompact(value) {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount)) return "—";
+  const absolute = Math.abs(amount);
+  if (absolute >= 1e9) return (amount / 1e9).toFixed(1).replace(/\.0$/, "") + "B";
+  if (absolute >= 1e6) return (amount / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
+  if (absolute >= 1e3) return (amount / 1e3).toFixed(1).replace(/\.0$/, "") + "K";
+  return number(Math.round(amount));
+}
+function fmtWide(value) {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount)) return "—";
+  const absolute = Math.abs(amount);
+  if (absolute >= 1e8) return (amount / 1e8).toFixed(1).replace(/\.0$/, "") + "亿";
+  if (absolute >= 1e4) return (amount / 1e4).toFixed(1).replace(/\.0$/, "") + "万";
+  return number(Math.round(amount));
+}
+function fmtRate(value) {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount)) return "—";
+  return amount >= 10 ? number(Math.round(amount)) : amount.toFixed(1).replace(/\.0$/, "");
+}
+function dashLatency(ms) {
+  const value = Number(ms) || 0;
+  if (value <= 0) return "—";
+  return value < 1000 ? Math.round(value) + " ms" : (value / 1000).toFixed(2) + " s";
+}
+function dashDelta(value, title = "") {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '<span class="dash-delta flat"' + (title ? ' title="' + esc(title) + '"' : "") + '>—</span>';
+  const amount = Number(value);
+  const className = amount > 0.0001 ? "up" : amount < -0.0001 ? "down" : "flat";
+  const text = (amount > 0 ? "+" : "") + amount.toFixed(1) + "%";
+  return '<span class="dash-delta ' + className + '"' + (title ? ' title="' + esc(title) + '"' : "") + ">" + text + "</span>";
+}
+function dashSmoothPath(points) {
+  if (!points.length) return "";
+  let path = "M" + points[0][0].toFixed(1) + " " + points[0][1].toFixed(1);
+  if (points.length === 1) return path;
+  for (let i = 0; i < points.length - 1; i++) {
+    const previous = points[i - 1] || points[i], current = points[i], next = points[i + 1], after = points[i + 2] || next;
+    const c1x = current[0] + (next[0] - previous[0]) / 6, c1y = current[1] + (next[1] - previous[1]) / 6;
+    const c2x = next[0] - (after[0] - current[0]) / 6, c2y = next[1] - (after[1] - current[1]) / 6;
+    path += "C" + c1x.toFixed(1) + " " + c1y.toFixed(1) + " " + c2x.toFixed(1) + " " + c2y.toFixed(1) + " " + next[0].toFixed(1) + " " + next[1].toFixed(1);
+  }
+  return path;
+}
+function dashSparkline(values, id) {
+  const data = (Array.isArray(values) && values.length ? values : [0]).map((value) => Math.max(0, Number(value) || 0));
+  const max = Math.max(...data, 1e-9);
+  const points = data.map((value, index) => [2 + index * 96 / Math.max(1, data.length - 1), 37 - value / max * 34]);
+  const line = dashSmoothPath(points);
+  const last = points[points.length - 1], first = points[0];
+  const area = line + " L" + last[0].toFixed(1) + " 37 L" + first[0].toFixed(1) + " 37 Z";
+  return '<svg viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="' + id + '" x1="0" y1="0" x2="0" y2="1"><stop stop-color="currentColor" stop-opacity=".16"/><stop offset="1" stop-color="currentColor" stop-opacity="0"/></linearGradient></defs><path d="' + area + '" fill="url(#' + id + ')"/><path d="' + line + '" fill="none" stroke="currentColor" stroke-width="1.4" vector-effect="non-scaling-stroke"/></svg>';
+}
+function dashNiceMax(value) {
+  if (!(value > 0)) return 1;
+  const power = 10 ** Math.floor(Math.log10(value));
+  const normalized = value / power;
+  const step = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  return step * power;
+}
+function dashAxisLabel(value) {
+  if (trendMetric === "cost") {
+    if (value >= 10) return "$" + value.toFixed(0);
+    if (value >= 1) return "$" + value.toFixed(1).replace(/\.0$/, "");
+    return "$" + value.toFixed(2);
+  }
+  return fmtCompact(value);
+}
 async function loadStats() {
   const version = requestVersions.stats = (requestVersions.stats || 0) + 1;
   try {
-    const stats = await api("api/stats");
+    const data = await api("api/dashboard");
     if (version !== requestVersions.stats) return;
-    statsCache = stats;
-    $("stCalls").textContent = number(stats.today.calls);
-    $("stCost").textContent = fmtUSD(stats.today.cost_usd);
-    $("stTokens").textContent = number(stats.today.prompt_tokens + stats.today.completion_tokens);
-    $("stKeys").textContent = number(stats.enabled_keys);
-    $("stUps").textContent = number(stats.enabled_upstreams);
-    renderChart();
+    dashboardCache = data;
+    renderDashboardOverview();
     stampRefresh();
   } catch (error) {
-    $("dailyChart").innerHTML = '<div class="chart-empty">无法加载用量数据<br>点击右上角刷新重试</div>';
+    const chart = $("trendChart");
+    if (chart) chart.innerHTML = '<div class="dash-chart-empty">无法加载用量数据<br>点击右上角刷新重试</div>';
     reportError(error, "概览加载失败");
   }
 }
-function setChartMetric(metric) {
-  chartMetric = metric;
-  document.querySelectorAll("[data-chart]").forEach((button) => {
-    button.classList.toggle("active", button.dataset.chart === metric);
-    button.setAttribute("aria-pressed", String(button.dataset.chart === metric));
-  });
-  renderChart();
+function renderDashboardOverview() {
+  if (!dashboardCache) return;
+  renderDashboardKPI();
+  renderDashboardCache();
+  renderRankings();
+  renderTrendChart();
 }
-function renderChart() {
-  if (!statsCache) return;
-  const byDate = new Map((statsCache.daily || []).map((day) => [day.date, day]));
-  const today = dateKey(new Date());
-  const days = Array.from({ length: 7 }, (_, i) => {
-    const key = addDays(today, -6 + i);
-    return byDate.get(key) || { date: key, calls: 0, cost_usd: 0 };
+function renderDashboardKPI() {
+  const kpi = dashboardCache.kpi;
+  $("kpiRpm").textContent = fmtRate(kpi.rpm.value);
+  $("kpiRpmDelta").innerHTML = dashDelta(kpi.rpm.change, "最近 5 分钟均值，对比前 5 分钟");
+  $("kpiCost").textContent = fmtMoney(kpi.cost.value);
+  $("kpiCost").title = fmtUSD(kpi.cost.value);
+  $("kpiCostDelta").innerHTML = dashDelta(kpi.cost.change, "较昨日同期");
+  $("kpiRequests").textContent = fmtWide(kpi.requests.value);
+  $("kpiRequests").title = number(kpi.requests.value) + " 次请求";
+  $("kpiRequestsDelta").innerHTML = dashDelta(kpi.requests.change, "较昨日同期");
+  $("kpiSuccess").textContent = Number(kpi.success.value || 0).toFixed(2) + "%";
+  $("kpiSuccessDelta").innerHTML = dashDelta(kpi.success.change, "较前一个 24 小时");
+  $("healthRpm").textContent = fmtRate(kpi.health.rpm);
+  $("healthTpm").textContent = fmtCompact(kpi.health.tpm);
+  $("healthError").textContent = Number(kpi.health.error_rate || 0).toFixed(2) + "%";
+  $("healthP50").textContent = dashLatency(kpi.health.p50_ms);
+  $("kpiRpmSpark").innerHTML = dashSparkline(kpi.rpm.spark, "kpiSparkRpm");
+  $("kpiCostSpark").innerHTML = dashSparkline(kpi.cost.spark, "kpiSparkCost");
+  $("kpiRequestsSpark").innerHTML = dashSparkline(kpi.requests.spark, "kpiSparkRequests");
+  const trend = dashboardCache.trend;
+  let lastRate = 100;
+  const successValues = trend.labels.map((_, index) => {
+    if ((trend.calls[index] || 0) > 0) lastRate = Number(trend.success[index] || 0) / Number(trend.calls[index]) * 100;
+    return lastRate;
   });
-  const cost = chartMetric === "cost";
-  const values = days.map((day) => Number(cost ? day.cost_usd : day.calls) || 0);
-  const total = values.reduce((sum, value) => sum + value, 0);
-  $("chartTotal").textContent = cost ? fmtUSD(total) : number(total);
-  $("chartUnit").textContent = cost ? "USD · 7 日费用" : "次调用 · 7 日合计";
-  $("chartLegend").textContent = cost ? "调用费用（USD）" : "成功调用";
-  $("chartRange").textContent = days[0].date.slice(5).replace("-", "/") + " – " + days[6].date.slice(5).replace("-", "/");
-  $("chartNote").textContent = total === 0 ? "暂无" + (cost ? "计费用量" : "成功调用") : "聚焦图表查看每日数据";
-  const width = Math.max(280, $("dailyChart").clientWidth || 600);
-  const height = 220, left = cost ? 49 : 35, right = width - 15, top = 15, bottom = 182;
-  const largest = Math.max(...values, cost ? .003 : 3);
-  const power = 10 ** Math.floor(Math.log10(largest));
-  const maxValue = Math.ceil(largest / power) * power;
-  const points = values.map((value, i) => [left + i * (right - left) / 6, bottom - value / maxValue * (bottom - top)]);
-  const path = points.map(([x, y], i) => (i ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1)).join(" ");
-  let svg = '<svg viewBox="0 0 ' + width + " " + height + '" role="img" aria-label="' + esc(cost ? "近七日费用趋势" : "近七日成功调用趋势") + '">';
-  svg += '<title>' + esc(days.map((day, i) => day.date + "：" + (cost ? fmtUSD(values[i]) : number(values[i]) + " 次")).join("；")) + '</title>';
-  for (let i = 0; i < 4; i++) {
-    const y = bottom - i / 3 * (bottom - top), value = maxValue * i / 3;
-    const label = cost ? "$" + value.toFixed(maxValue < 1 ? 3 : 1) : number(Math.round(value));
-    svg += '<line class="chart-grid" x1="' + left + '" y1="' + y + '" x2="' + right + '" y2="' + y + '"/><text class="chart-axis" x="' + (left - 9) + '" y="' + (y + 3) + '" text-anchor="end">' + label + '</text>';
+  $("kpiSuccessSpark").innerHTML = dashSparkline(successValues, "kpiSparkSuccess");
+}
+function renderDashboardCache() {
+  const cache = dashboardCache.cache;
+  const ratio = Math.max(0, Math.min(100, Number(cache.ratio) || 0));
+  $("cacheRatio").textContent = ratio.toFixed(1) + "%";
+  const circumference = 2 * Math.PI * 48;
+  $("cacheRing").setAttribute("stroke-dasharray", (ratio / 100 * circumference).toFixed(1) + " " + circumference.toFixed(1));
+  $("cacheRead").textContent = fmtCompact(cache.read);
+  $("cacheInput").textContent = fmtCompact(cache.input);
+  $("cacheWrite").textContent = fmtCompact(cache.write);
+}
+function renderRankings() {
+  Object.keys(rankListIDs).forEach((dimension) => {
+    const metric = rankMetrics[dimension];
+    const list = (dashboardCache.rankings[dimension] || []).slice();
+    list.sort((left, right) => (Number(right[metric]) || 0) - (Number(left[metric]) || 0));
+    $(rankListIDs[dimension]).innerHTML = list.slice(0, 4).map((item, index) => {
+      const current = Number(item[metric]) || 0;
+      const previous = Number(metric === "cost" ? item.cost_prev : item.calls_prev) || 0;
+      const change = previous > 0 ? (current - previous) / previous * 100 : null;
+      const values = metric === "cost" ? item.series_cost : item.series_calls;
+      const color = rankPalette[index % rankPalette.length];
+      return '<li><span class="dash-rank-num">' + (index + 1) + '</span>'
+        + (dimension === "models" ? '' : '<span class="dash-rank-dot" style="background:' + color + '"></span>')
+        + '<span class="dash-rank-name" title="' + esc(item.name) + '">' + (dimension === "models" ? modelLabel(item.name) : esc(item.name)) + '</span>'
+        + '<span class="dash-rank-spark" style="color:' + color + '">' + dashSparkline(values, "rankSpark-" + dimension + "-" + index) + '</span>'
+        + '<span class="dash-rank-value"><strong>' + (metric === "cost" ? fmtMoney(current) : fmtWide(current)) + '</strong><small>' + dashDelta(change) + '</small></span></li>';
+    }).join("") || '<li class="dash-rank-empty">暂无可排行的调用记录</li>';
+  });
+}
+function dashboardTrendSeries() {
+  const trend = dashboardCache.trend;
+  if (trendDimension === "overview") {
+    return trendMetric === "cost"
+      ? [{ name: "缓存 Token 花费", color: trendPalette[0], values: trend.cached_cost || [] }, { name: "未缓存 Token 花费", color: trendPalette[1], values: trend.uncached_cost || [] }]
+      : [{ name: "成功请求", color: trendPalette[0], values: trend.success || [] }, { name: "失败请求", color: trendPalette[1], values: trend.failed || [] }];
   }
-  svg += '<path class="chart-area" d="' + path + " L" + right + " " + bottom + " L" + left + " " + bottom + ' Z"/><path class="chart-line" d="' + path + '"/>';
-  points.forEach(([x, y], i) => {
-    const label = days[i].date + " · " + (cost ? fmtUSD(values[i]) : number(values[i]) + " 次调用");
-    svg += '<circle class="chart-point" cx="' + x + '" cy="' + y + '" r="3"/><text class="chart-axis" x="' + x + '" y="209" text-anchor="middle">' + days[i].date.slice(5).replace("-", "/") + '</text><rect class="chart-hit" tabindex="0" role="img" aria-label="' + esc(label) + '" data-label="' + esc(label) + '" x="' + Math.max(left, x - (right - left) / 14) + '" y="0" width="' + (right - left) / 14 + '" height="190"><title>' + esc(label) + '</title></rect>';
+  const metric = trendMetric === "cost" ? "cost" : "calls";
+  const list = (dashboardCache.rankings[trendDimension] || []).slice();
+  list.sort((left, right) => (Number(right[metric]) || 0) - (Number(left[metric]) || 0));
+  return list.slice(0, 3).map((item, index) => ({
+    name: item.name || "未知",
+    color: trendPalette[index] || trendPalette[2],
+    values: (metric === "cost" ? item.series_cost : item.series_calls) || [],
+  }));
+}
+function renderTrendChart() {
+  if (!dashboardCache) return;
+  const chart = $("trendChart");
+  if (!chart) return;
+  const trend = dashboardCache.trend;
+  const labels = trend.labels || [];
+  const series = dashboardTrendSeries();
+  $("trendLegend").innerHTML = series.map((item) => '<span><i style="background:' + item.color + '"></i>' + esc(item.name) + "</span>").join("");
+  const seriesValues = series.map((item) => labels.map((_, index) => Math.max(0, Number(item.values[index]) || 0)));
+  const total = seriesValues.reduce((sum, values) => sum + values.reduce((part, value) => part + value, 0), 0);
+  $("trendTotal").textContent = trendMetric === "cost" ? fmtMoney(total) : fmtWide(total);
+  $("trendTotalUnit").textContent = trendDimension === "overview" ? (trendMetric === "cost" ? "近 24 小时消费" : "近 24 小时请求") : "Top 3 · 近 24 小时";
+  $("trendNote").textContent = "最近 24 小时";
+  if (!series.length || total <= 0) {
+    chart.innerHTML = '<div class="dash-chart-empty">最近 24 小时还没有调用记录<br>连接上游并创建密钥后会显示趋势</div>';
+    return;
+  }
+  const width = Math.max(320, chart.clientWidth || 640);
+  const height = 278, left = 52, right = width - 12, top = 12, bottom = 244;
+  const maxValue = dashNiceMax(Math.max(...seriesValues.flat()));
+  const yAt = (value) => bottom - value / maxValue * (bottom - top);
+  const xAt = (index) => left + index * (right - left) / Math.max(1, labels.length - 1);
+  let svg = '<svg viewBox="0 0 ' + width + " " + height + '" role="img" aria-label="' + esc("最近 24 小时" + (trendMetric === "cost" ? "消费" : "请求数") + "趋势") + '">';
+  svg += "<defs>";
+  series.forEach((item, index) => {
+    svg += '<linearGradient id="trendFill' + index + '" x1="0" y1="0" x2="0" y2="1"><stop stop-color="' + item.color + '" stop-opacity=".34"/><stop offset="1" stop-color="' + item.color + '" stop-opacity=".05"/></linearGradient>';
   });
-  $("dailyChart").innerHTML = svg + "</svg>";
-  $("dailyChart").querySelectorAll(".chart-hit").forEach((point) => {
-    ["focus", "mouseenter"].forEach((name) => point.addEventListener(name, () => { $("chartNote").textContent = point.dataset.label; }));
+  svg += "</defs>";
+  for (let index = 0; index <= 3; index++) {
+    const value = maxValue * index / 3, lineY = yAt(value);
+    svg += '<line class="chart-grid" x1="' + left + '" y1="' + lineY.toFixed(1) + '" x2="' + right + '" y2="' + lineY.toFixed(1) + '"/>'
+      + '<text class="chart-axis" x="' + (left - 9) + '" y="' + (lineY + 3).toFixed(1) + '" text-anchor="end">' + dashAxisLabel(value) + "</text>";
+  }
+  // Areas overlap from their own zero baseline, matching the reference console:
+  // only the first series stays fully visible, later ones tint the backdrop.
+  const areas = [], lines = [];
+  series.forEach((item, index) => {
+    const topPoints = seriesValues[index].map((value, point) => [xAt(point), yAt(value)]);
+    const topPath = dashSmoothPath(topPoints);
+    areas.push('<path d="' + topPath + " L" + right.toFixed(1) + " " + bottom + " L" + left.toFixed(1) + " " + bottom + ' Z" fill="url(#trendFill' + index + ')"/>');
+    lines.push('<path d="' + topPath + '" fill="none" stroke="' + item.color + '" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>');
   });
+  svg += areas.reverse().join("") + lines.reverse().join("");
+  svg += '<line class="trend-guide" x1="0" y1="' + top + '" x2="0" y2="' + bottom + '"/>';
+  const labelStep = width < 520 ? 4 : width < 760 ? 3 : 2;
+  for (let index = labels.length - 1; index >= 0; index -= labelStep) {
+    svg += '<text class="chart-axis" x="' + xAt(index).toFixed(1) + '" y="' + (height - 8) + '" text-anchor="middle">' + esc(labels[index]) + "</text>";
+  }
+  const hitWidth = (right - left) / Math.max(1, labels.length - 1);
+  labels.forEach((label, index) => {
+    const detail = series.map((item) => item.name + " " + (trendMetric === "cost" ? fmtMoney(item.values[index]) : fmtWide(item.values[index]))).join(" · ");
+    const text = label + " · " + detail;
+    let hitX = xAt(index) - hitWidth / 2, widthValue = hitWidth;
+    if (index === 0) { hitX = left; widthValue = hitWidth / 2; }
+    if (index === labels.length - 1) widthValue = hitWidth / 2;
+    svg += '<rect class="trend-hit" tabindex="0" role="img" aria-label="' + esc(text) + '" data-label="' + esc(text) + '" data-x="' + xAt(index).toFixed(1) + '" x="' + hitX.toFixed(1) + '" y="' + top + '" width="' + widthValue.toFixed(1) + '" height="' + (bottom - top) + '"></rect>';
+  });
+  chart.innerHTML = svg + "</svg>";
+  const guide = chart.querySelector(".trend-guide");
+  const note = $("trendNote");
+  chart.querySelectorAll(".trend-hit").forEach((hit) => {
+    const show = () => {
+      note.textContent = hit.dataset.label;
+      guide.setAttribute("x1", hit.dataset.x);
+      guide.setAttribute("x2", hit.dataset.x);
+      guide.style.opacity = "1";
+    };
+    hit.onmouseenter = show;
+    hit.onfocus = show;
+  });
+  chart.onmouseleave = () => {
+    note.textContent = "最近 24 小时";
+    if (guide) guide.style.opacity = "0";
+  };
+}
+function setTrendMetric(metric) {
+  if (metric !== "cost" && metric !== "calls") return;
+  trendMetric = metric;
+  document.querySelectorAll("[data-trend-metric]").forEach((button) => {
+    const active = button.dataset.trendMetric === metric;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  if (dashboardCache) renderTrendChart();
+}
+function setTrendDimension(dimension) {
+  if (dimension !== "overview" && !Object.hasOwn(rankListIDs, dimension)) return;
+  trendDimension = dimension;
+  document.querySelectorAll("[data-trend-dim]").forEach((button) => {
+    const active = button.dataset.trendDim === dimension;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  if (dashboardCache) renderTrendChart();
+}
+function setRankMetric(dimension, metric) {
+  if (!Object.hasOwn(rankMetrics, dimension) || (metric !== "cost" && metric !== "calls")) return;
+  rankMetrics[dimension] = metric;
+  document.querySelectorAll('[data-rank-dim="' + dimension + '"]').forEach((button) => {
+    const active = button.dataset.rankMetric === metric;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  if (dashboardCache) renderRankings();
 }
 async function loadRecent() {
   try {
     const result = await api("api/logs?page=1&size=5");
     $("recentTable").querySelector("tbody").innerHTML = result.items.length ? result.items.map((log) =>
-      '<tr><td><span class="cell-stack"><strong>' + esc(log.model) + '</strong><small>' + esc(log.upstream_name || "未分配上游") + '</small></span></td><td>' + esc(log.key_name) + '</td><td>' + statusBadge(log.status) + '</td><td>' + number(log.prompt_tokens + log.completion_tokens) + '</td><td><code>' + fmtUSD(log.cost_usd) + '</code></td><td class="timestamp">' + esc(fmtTime(log.created_at).slice(5)) + '</td></tr>'
+      '<tr><td><span class="cell-stack"><strong class="model-symbol-title">' + modelIcon(log.model) + esc(log.model) + '</strong><small>' + esc(log.upstream_name || "未分配上游") + '</small></span></td><td>' + esc(log.key_name) + '</td><td>' + statusBadge(log.status) + '</td><td>' + number(log.prompt_tokens + log.completion_tokens) + '</td><td><code>' + fmtUSD(log.cost_usd) + '</code></td><td class="timestamp">' + esc(fmtTime(log.created_at).slice(5)) + '</td></tr>'
     ).join("") : emptyRow(6, "还没有调用记录", "连接上游并创建密钥后，开始你的第一次调用。", "switchTab('upstreams')", "连接上游", "activity");
   } catch (error) { errorRow("recentTable", 6, error); }
 }
@@ -393,11 +634,11 @@ async function deleteKey(id) {
 
 /* Upstream list */
 function parseAllowlist(value) { return [...new Set((value || "").split(/[,，\r\n]/).map((model) => model.trim()).filter(Boolean))]; }
-function providerIcon(type) { const provider = isOpenCodeType(type) ? "opencode" : type; return '<span class="provider-icon ' + esc(provider) + '" aria-hidden="true">' + ({ openai: "O", opencode: "OC", cline: "CL", anthropic: "A", gemini: "G" }[provider] || "API") + '</span>'; }
+function providerIcon(type, baseURL = "") { return window.APIShareModelIcons.providerHTML(type, baseURL); }
 function upstreamWeight(item) { return weightDrafts.has(item.id) ? weightDrafts.get(item.id) : Number(item.weight) || 0; }
 function weightStepper(item) {
-  const weight = upstreamWeight(item);
-  return '<div class="weight-line"><span>权重</span><span class="weight-stepper" role="group" aria-label="调整权重"><button type="button" class="weight-dec" onclick="changeUpstreamWeight(' + item.id + ', -1, this)" aria-label="降低权重"' + (weight <= 0 ? " disabled" : "") + '>' + icon("minus") + '</button><span class="weight-value" aria-live="polite">' + weight + '</span><button type="button" class="weight-inc" onclick="changeUpstreamWeight(' + item.id + ', 1, this)" aria-label="提高权重">' + icon("plus") + '</button></span></div>';
+  const weight = upstreamWeight(item), priority = Number(item.priority) || 0;
+  return '<div class="weight-line"><span>优先级 ' + priority + '</span><span>权重</span><span class="weight-stepper" role="group" aria-label="调整权重"><button type="button" class="weight-dec" onclick="changeUpstreamWeight(' + item.id + ', -1, this)" aria-label="降低权重"' + (weight <= 0 ? " disabled" : "") + '>' + icon("minus") + '</button><span class="weight-value" aria-live="polite">' + weight + '</span><button type="button" class="weight-inc" onclick="changeUpstreamWeight(' + item.id + ', 1, this)" aria-label="提高权重">' + icon("plus") + '</button></span></div>';
 }
 function changeUpstreamWeight(id, delta, button) {
   const item = upsCache.find((upstream) => upstream.id === id);
@@ -432,23 +673,21 @@ async function flushUpstreamWeight(id) {
 async function loadUpstreams(quiet = false) {
   const version = requestVersions.upstreams = (requestVersions.upstreams || 0) + 1;
   try {
-    const [result] = await Promise.all([api("api/upstreams"), loadProxies(true)]);
+    const [result, overview] = await Promise.all([api("api/upstreams"), api("api/upstreams/overview").catch(() => null), loadProxies(true)]);
     if (version !== requestVersions.upstreams) return;
     upsCache = result || [];
+    upstreamOverviewCache = overview;
     $("navUpCount").textContent = upsCache.length;
     $("navUpCount").setAttribute("aria-label", upsCache.length + " 个上游");
     renderUpstreams(); stampRefresh();
-  } catch (error) { errorRow("upsTable", 6, error); if (!quiet) reportError(error, "上游加载失败"); }
-}
-function renderUpstreams() {
-  const query = $("upstreamSearch").value.trim().toLowerCase(), type = $("upstreamTypeFilter").value;
-  const list = upsCache.filter((item) => (!type || upstreamFormat(item) === type) && [item.name, item.base_url, item.models, item.type, upstreamFormatNames[upstreamFormat(item)]].join(" ").toLowerCase().includes(query));
-  $("upstreamTotal").textContent = upsCache.length;
-  $("upstreamHealthy").textContent = upsCache.filter((item) => item.enabled && item.healthy).length;
-  $("upstreamModelCount").textContent = new Set(upsCache.flatMap((item) => parseAllowlist(item.models))).size;
-  $("upstreamListCount").textContent = list.length + (list.length !== upsCache.length ? " / " + upsCache.length : "");
-  $("upsTable").querySelector("tbody").innerHTML = list.map((item) => '<tr><td><div class="provider-cell">' + providerIcon(item.type) + '<span class="cell-stack"><strong>' + esc(item.name || "未命名上游") + '</strong><small>' + esc(upstreamFormatNames[upstreamFormat(item)] || item.type) + ' · #' + item.id + '</small></span></div></td><td class="endpoint-cell"><span>' + esc(item.base_url) + '</span><small>' + esc(item.key_masked) + '</small><small>代理：' + esc(upstreamProxyLabel(item.proxy_id)) + '</small></td><td class="cell-stack"><strong>' + (parseAllowlist(item.models).length ? parseAllowlist(item.models).length + " 个模型" : "全部模型") + '</strong>' + weightStepper(item) + '</td><td><span class="badge ' + (item.healthy ? "on" : "warn") + '">' + (item.healthy ? "健康" : "冷却中") + '</span>' + (item.fails ? '<span class="cell-stack"><small>连续失败 ' + item.fails + ' 次</small></span>' : "") + '</td><td><button class="toggle-btn" role="switch" aria-checked="' + !!item.enabled + '" aria-label="' + (item.enabled ? "停用 " : "启用 ") + esc(item.name) + '" onclick="toggleUpstream(' + item.id + ", " + !item.enabled + ', this)"><span></span></button></td><td><div class="row-actions"><button class="text-btn" onclick="openEditUpstream(' + item.id + ')" aria-label="编辑 ' + esc(item.name) + '">' + icon("edit") + '编辑</button><button class="text-btn" onclick="duplicateUpstream(' + item.id + ')" aria-label="复制 ' + esc(item.name) + '">' + icon("copy") + '复制</button><button class="text-btn" onclick="openModelTest(' + item.id + ')" aria-label="测试模型 ' + esc(item.name) + '">测试模型</button><button class="icon-btn" onclick="testUpstream(' + item.id + ', this)" aria-label="测试 ' + esc(item.name) + '" title="测试连接">' + icon("activity") + '</button><button class="icon-btn danger" onclick="deleteUpstream(' + item.id + ')" aria-label="删除 ' + esc(item.name) + '" title="删除上游">' + icon("trash") + '</button></div></td></tr>').join("") || emptyRow(6, query || type ? "没有匹配的上游" : "连接你的第一个上游", query || type ? "调整搜索条件或接口类型。" : "支持 OpenAI Chat Completions、Responses、OpenCode 免费模型、Cline 免费模型、Anthropic 与 Gemini 接口。", query || type ? "" : "openCreateUpstream()", "添加上游");
-  labelTableCells("upsTable");
+  } catch (error) {
+    upstreamOverviewCache = null;
+    renderUpstreamMetrics();
+    $("upstreamListCount").textContent = "上游加载失败";
+    errorRow("upsTable", 9, error);
+    $("upstreamCardsView").innerHTML = '<div class="table-empty"><strong>加载失败</strong><p>' + esc(error.message) + '</p><button class="btn ghost" onclick="loadUpstreams()">重新加载</button></div>';
+    if (!quiet) reportError(error, "上游加载失败");
+  }
 }
 async function toggleUpstream(id, enabled, button) {
   button.disabled = true;
@@ -466,7 +705,7 @@ async function duplicateUpstream(id) {
   if (!item) { toast("未找到该上游，请刷新列表后重试", "error"); return; }
   const name = await askAction({
     title: "复制上游服务？",
-    description: "将“" + (item.name || "未命名上游") + "”的类型、地址、密钥、模型配置、请求头、代理与权重完整复制为一条新的上游，并沿用原启用状态。可以修改新上游的名称，创建后再按需调整其他配置。",
+    description: "将“" + (item.name || "未命名上游") + "”的类型、地址、密钥、模型配置、请求头、代理、优先级与权重完整复制为一条新的上游，并沿用原启用状态。可以修改新上游的名称，创建后再按需调整其他配置。",
     input: (item.name || "未命名上游") + " 副本",
     inputType: "text",
     inputLabel: "新上游名称",
@@ -491,7 +730,7 @@ async function testUpstream(id, button) {
 
 /* One editor for both creation and updates. */
 function editorValue() {
-  return JSON.stringify(["editName", "editType", "editOpenCodeTier", "editOpenCodeProtocol", "editBase", "editKey", "editProxy", "editHeaderOverrides", "editStructuredOutput", "editWeight", "editModels"].map((id) => $(id).value).concat($("editEnabled").checked, $("editModelInput").value, $("modelMapBatch").value, [modelMappingDirtyValue()]));
+  return JSON.stringify(["editName", "editType", "editOpenCodeTier", "editOpenCodeProtocol", "editBase", "editKey", "editProxy", "editHeaderOverrides", "editStructuredOutput", "editPriority", "editWeight", "editModels"].map((id) => $(id).value).concat($("editEnabled").checked, $("editModelInput").value, $("modelMapBatch").value, [modelMappingDirtyValue()]));
 }
 function editorDirty() { return $("editModal").open && editorValue() !== editProbe.initial; }
 function updateEditorDirty() {
@@ -520,7 +759,7 @@ async function openEditor(upstream) {
   $("legacyOpenAIFormatOption").disabled = format !== "openai-auto";
   $("legacyOpenCodeFormatOption").hidden = format !== "opencode";
   $("legacyOpenCodeFormatOption").disabled = format !== "opencode";
-  const values = { editName: upstream?.name || "", editType: format, editOpenCodeProtocol: isOpenCodeType(upstream?.type) ? upstream.openai_protocol || "auto" : "auto", editBase: upstream?.base_url || providerURLs.openai, editKey: "", editHeaderOverrides: upstream?.header_overrides || "", editStructuredOutput: upstream?.structured_output === "json_schema" ? "" : upstream?.structured_output || "", editWeight: upstream ? upstream.weight : 1, editModels: upstream?.models || "", editModelMap: upstream?.model_map || "" };
+  const values = { editName: upstream?.name || "", editType: format, editOpenCodeProtocol: isOpenCodeType(upstream?.type) ? upstream.openai_protocol || "auto" : "auto", editBase: upstream?.base_url || providerURLs.openai, editKey: "", editHeaderOverrides: upstream?.header_overrides || "", editStructuredOutput: upstream?.structured_output === "json_schema" ? "" : upstream?.structured_output || "", editPriority: upstream ? upstream.priority : 0, editWeight: upstream ? upstream.weight : 1, editModels: upstream?.models || "", editModelMap: upstream?.model_map || "" };
   Object.entries(values).forEach(([id, value]) => { $(id).value = value; $(id).setCustomValidity(""); $(id).removeAttribute("aria-invalid"); });
   $("editOpenCodeTier").value = upstream?.opencode_tier || ((upstream?.base_url || "").match(/\/go(?:\/|$)/) ? "go" : "zen");
   renderProxyOptions(upstream?.proxy_id || 0);
@@ -562,8 +801,8 @@ function updateEditorProvider(changed = true) {
   const knownURLs = [...Object.values(providerURLs), ...Object.values(openCodeURLs), "https://opencode.ai/inference", "https://opencode.ai/inference/go"];
   if (changed && (editProbe.id === null || freeOpenCode) && knownURLs.includes($("editBase").value.replace(/\/+$/, ""))) $("editBase").value = type === "opencode" ? openCodeURLs[$("editOpenCodeTier").value] : providerURLs[type];
   const iconType = isOpenCodeType(type) ? "opencode" : type;
-  $("editorProviderIcon").className = "provider-icon " + iconType;
-  $("editorProviderIcon").textContent = { openai: "O", opencode: "OC", cline: "CL", anthropic: "A", gemini: "G" }[iconType];
+  $("editorProviderIcon").className = "editor-provider-brand";
+  $("editorProviderIcon").innerHTML = providerIcon(iconType, $("editBase").value);
   $("editorProviderIcon").setAttribute("aria-hidden", "true");
   $("opencodeProtocolField").classList.toggle("hidden", !isOpenCodeType(type));
   $("opencodeTierField").classList.toggle("hidden", type !== "opencode");
@@ -657,7 +896,7 @@ function renderEditProbeList() {
   refreshModelSuggestions();
   const query = $("editProbeFilter").value.trim().toLowerCase();
   const models = editProbe.models.filter((model) => model.toLowerCase().includes(query));
-  $("editProbeList").innerHTML = models.map((model) => '<label><input type="checkbox" data-model="' + esc(model) + '" ' + (editProbe.selected.has(model) ? "checked" : "") + '><span>' + esc(model) + '</span></label>').join("") || '<span class="muted">没有匹配的模型</span>';
+  $("editProbeList").innerHTML = models.map((model) => '<label><input type="checkbox" data-model="' + esc(model) + '" ' + (editProbe.selected.has(model) ? "checked" : "") + '>' + modelLabel(model) + '</label>').join("") || '<span class="muted">没有匹配的模型</span>';
   $("editProbeCount").textContent = "已选 " + editProbe.selected.size + " · 可用 " + editProbe.models.length;
   $("editProbeList").querySelectorAll("input").forEach((checkbox) => checkbox.addEventListener("change", () => {
     if (checkbox.checked) editProbe.selected.add(checkbox.dataset.model); else editProbe.selected.delete(checkbox.dataset.model);
@@ -734,7 +973,7 @@ async function saveEditUpstream(event) {
     if (!["http:", "https:"].includes(new URL($("editBase").value).protocol)) throw new Error();
   } catch { $("editBase").setCustomValidity("请输入以 http:// 或 https:// 开头的服务地址"); jumpEditor("editorConnection"); $("editBase").reportValidity(); return false; }
   if (!$("upstreamEditorForm").reportValidity()) return false;
-  const body = { name: $("editName").value.trim(), type: editorUpstreamType(), base_url: $("editBase").value.trim().replace(/\/+$/, ""), proxy_id: Number($("editProxy").value), weight: Number($("editWeight").value), models: parseAllowlist($("editModels").value).join(","), model_map: $("editModelMap").value.trim(), header_overrides: $("editHeaderOverrides").value.trim(), structured_output: $("editStructuredOutput").value };
+  const body = { name: $("editName").value.trim(), type: editorUpstreamType(), base_url: $("editBase").value.trim().replace(/\/+$/, ""), proxy_id: Number($("editProxy").value), priority: Number($("editPriority").value), weight: Number($("editWeight").value), models: parseAllowlist($("editModels").value).join(","), model_map: $("editModelMap").value.trim(), header_overrides: $("editHeaderOverrides").value.trim(), structured_output: $("editStructuredOutput").value };
   body.openai_protocol = editorOpenAIProtocol();
   body.opencode_tier = editorUpstreamType() === "opencode-free" ? "zen" : editorUpstreamType() === "opencode" ? $("editOpenCodeTier").value : "";
   if (!creating) body.enabled = $("editEnabled").checked;
@@ -775,28 +1014,7 @@ $("editModal").addEventListener("click", (event) => {
   if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) closeEdit();
 });
 
-/* Logs */
-async function loadLogs(page = 1) {
-  const version = requestVersions.logs = (requestVersions.logs || 0) + 1;
-  $("logPrev").disabled = true; $("logNext").disabled = true;
-  try {
-    const result = await api("api/logs?page=" + Math.max(1, page) + "&size=50");
-    if (version !== requestVersions.logs) return;
-    logsPage = result.page; logsCache = result.items || [];
-    $("logPage").textContent = result.page;
-    $("logTotal").textContent = "共 " + number(result.total) + " 条调用";
-    $("logRange").textContent = result.total ? "第 " + ((result.page - 1) * 50 + 1) + "–" + Math.min(result.page * 50, result.total) + " 条，共 " + number(result.total) + " 条" : "暂无调用记录";
-    $("logPrev").disabled = result.page <= 1;
-    $("logNext").disabled = result.page * 50 >= result.total;
-    renderLogs(); stampRefresh();
-  } catch (error) { errorRow("logsTable", 8, error); reportError(error, "日志加载失败"); }
-}
-function renderLogs() {
-  const query = $("logSearch").value.trim().toLowerCase();
-  const logs = logsCache.filter((log) => [log.model, log.key_name, log.upstream_name, log.error].join(" ").toLowerCase().includes(query));
-  $("logsTable").querySelector("tbody").innerHTML = logs.map((log) => '<tr><td class="timestamp">' + esc(fmtTime(log.created_at)) + '</td><td class="cell-stack"><strong>' + esc(log.key_name) + '</strong><small>' + esc(log.upstream_name || "未分配") + '</small></td><td><code>' + esc(log.model) + '</code></td><td>' + statusBadge(log.status) + '</td><td><code>' + number(log.prompt_tokens) + " / " + number(log.completion_tokens) + '</code>' + logUsageDetails(log) + '</td><td><code>' + fmtUSD(log.cost_usd) + '</code>' + logCostDetails(log) + '</td>' + logSpeedCell(log) + '<td class="log-error">' + (log.error ? '<details><summary>查看错误</summary><p>' + esc(log.error) + '</p></details>' : '<span class="muted">—</span>') + '</td></tr>').join("") || emptyRow(8, query ? "本页没有匹配的日志" : "还没有调用记录", query ? "搜索仅作用于当前页，可以翻页继续查找。" : "网关接收到请求后，会在这里记录状态与用量。", "", "", "activity");
-}
-
+/* Log formatting is shared by the table and request detail drawer. */
 const fmtDuration = (ms) => ms >= 1000 ? (ms / 1000).toFixed(2) + "s" : Math.round(ms) + "ms";
 function logSpeedCell(log) {
   const first = Number(log.first_token_ms) || 0;
@@ -829,13 +1047,13 @@ function logCostDetails(log) {
   const cost = log.billing?.cost;
   if (!cost) return "";
   const rows = [["普通输入", cost.input], ["缓存读取", cost.cache_read], ["缓存创建", cost.cache_write], ["工具提示", cost.tool_prompt], ["正文输出", cost.output], ["推理", cost.reasoning]];
-  if (log.billing.usage.input_audio || log.billing.usage.output_audio || log.billing.usage.cache_read_audio) rows.push(["音频输入", cost.input_audio], ["音频缓存读取", cost.cache_read_audio], ["音频输出", cost.output_audio]);
+  if (log.billing.usage?.input_audio || log.billing.usage?.output_audio || log.billing.usage?.cache_read_audio) rows.push(["音频输入", cost.input_audio], ["音频缓存读取", cost.cache_read_audio], ["音频输出", cost.output_audio]);
   const billing = log.billing;
   const sources = { override: "手动覆盖", official: "官方定价", builtin: "内置兜底", default: "默认兜底", none: "未匹配价格" };
   const source = '<small>价格来源：' + esc(sources[billing.price_source] || billing.price_source || "未知") + '</small>';
-  const model = billing.pricing_model ? '<small>计价模型：' + esc(billing.pricing_model) + '</small>' : "";
-  const upstream = billing.upstream_model ? '<small>上游模型：' + esc(billing.upstream_model) + '</small>' : "";
-  const pool = billing.quota_pool ? '<small>扣费额度：' + (billing.quota_pool === "independent" ? '独立额度（' + esc(log.model) + '）' : "共享额度") + '</small>' : "";
+  const model = billing.pricing_model ? '<small>计价模型：' + modelLabel(billing.pricing_model) + '</small>' : "";
+  const upstream = billing.upstream_model ? '<small>上游模型：' + modelLabel(billing.upstream_model) + '</small>' : "";
+  const pool = billing.quota_pool ? '<small>扣费额度：' + (billing.quota_pool === "independent" ? '独立额度（' + modelLabel(log.model) + '）' : "共享额度") + '</small>' : "";
   const unpriced = billing.price_source === "none" || (billing.price_source === "default" && Object.values(billing.price || {}).every(value => value == null || value === 0));
   const notice = unpriced ? '<small>未匹配模型单价，当前按零价记录，请在设置中配置价格。</small>' : "";
   return '<details><summary>费用明细</summary><span class="cell-stack">' + rows.map(([name, value]) => '<small>' + name + '：' + fmtUSD(value || 0) + '</small>').join("") + source + model + upstream + pool + notice + '<small>按请求当时的价格计算</small></span></details>';
@@ -879,8 +1097,8 @@ async function lookupPrice() {
     const price = result.price;
     const cacheRead = price.cache_read ?? price.in;
     const cacheWrite = price.cache_write ?? price.in;
-    const model = result.pricing_model && result.pricing_model !== result.model ? result.model + "（按 " + result.pricing_model + " 计价）" : result.model;
-    $("lookupResult").textContent = model + " · 输入 $" + price.in + " · 输出 $" + price.out + " · 缓存读取 $" + cacheRead + " · 缓存创建 $" + cacheWrite + " · 1 小时缓存创建 $" + (price.cache_write_1h ?? cacheWrite) + " · 推理 $" + (price.reasoning ?? price.out) + " / 1M tokens · 来源：" + (sources[result.source] || result.source);
+    const displayModel = modelLabel(result.model) + (result.pricing_model && result.pricing_model !== result.model ? "（按 " + modelLabel(result.pricing_model) + " 计价）" : "");
+    $("lookupResult").innerHTML = displayModel + esc(" · 输入 $" + price.in + " · 输出 $" + price.out + " · 缓存读取 $" + cacheRead + " · 缓存创建 $" + cacheWrite + " · 1 小时缓存创建 $" + (price.cache_write_1h ?? cacheWrite) + " · 推理 $" + (price.reasoning ?? price.out) + " / 1M tokens · 来源：" + (sources[result.source] || result.source));
   } catch (error) { $("lookupResult").textContent = "查询失败：" + error.message; }
 }
 async function saveSettings(event) {
@@ -911,7 +1129,7 @@ async function saveSettings(event) {
 }
 
 /* Reusable accessible confirmation and quota dialogs. */
-function syncModalLock() { document.body.classList.toggle("modal-open", $("editModal").open || $("actionDialog").open || $("keyModelsDialog").open || $("modelTestDialog").open); }
+function syncModalLock() { document.body.classList.toggle("modal-open", $("editModal").open || $("actionDialog").open || $("keyModelsDialog").open || $("modelTestDialog").open || $("logDetailDialog").open); }
 function setPricingError(message) {
   $("pricingError").textContent = message;
   $("pricingError").classList.toggle("hidden", !message);
@@ -977,7 +1195,7 @@ window.addEventListener("beforeunload", (event) => { if (editorDirty() || deploy
 let resizeFrame = 0;
 window.addEventListener("resize", () => {
   if (resizeFrame) cancelAnimationFrame(resizeFrame);
-  resizeFrame = requestAnimationFrame(() => { resizeFrame = 0; syncSidebar(); if (activeTab === "dashboard") renderChart(); });
+  resizeFrame = requestAnimationFrame(() => { resizeFrame = 0; syncSidebar(); if (activeTab === "dashboard") renderTrendChart(); });
 });
 document.querySelectorAll("svg.icon").forEach((svg) => { svg.setAttribute("aria-hidden", "true"); svg.setAttribute("focusable", "false"); });
 $("todayLabel").textContent = new Date().toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai", month: "long", day: "numeric", weekday: "long" });
@@ -987,6 +1205,7 @@ initKeyModels();
 initModelEditor();
 initModelTest();
 initAnnouncements();
+initLogs();
 syncSidebar();
 (async function init() {
   if (!token) { showLogin(); return; }

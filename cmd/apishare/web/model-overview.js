@@ -96,7 +96,7 @@ function renderModelOverview() {
         + (hidden ? '<button type="button" class="model-source-more" onclick="toggleModelSources(this)" aria-expanded="false" aria-label="展开其余 ' + hidden + ' 个来源" title="展开其余 ' + hidden + ' 个来源" data-more="+' + hidden + '">+' + hidden + "</button>" : "")
         + "</div>"
       : '<span class="muted">暂无来源</span>';
-    return '<tr><td><div class="provider-cell">' + providerIcon((sources[0] || {}).type) + '<span class="cell-stack"><strong>' + esc(item.model) + '</strong><small>' + esc(item.family || "") + (item.last_call ? " · 最近 " + esc(fmtTime(item.last_call).slice(5)) : "") + '</small></span></div></td>'
+    return '<tr><td><div class="provider-cell">' + modelIcon(item.model, item.family) + '<span class="cell-stack"><strong>' + esc(item.model) + '</strong><small>' + esc(item.family || "") + (item.last_call ? " · 最近 " + esc(fmtTime(item.last_call).slice(5)) : "") + '</small></span></div></td>'
       + '<td class="model-sources-cell">' + sourceCell + '</td>'
       + '<td><code>' + fmtModelRate(item.uptime_percent) + '</code><span class="cell-stack"><small>' + number(item.successes) + " / " + number(item.calls) + '</small></span></td>'
       + '<td><code>' + number(item.calls) + '</code></td>'

@@ -3,6 +3,7 @@ package main
 import (
 	"compress/gzip"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,6 +13,34 @@ import (
 
 	"golang.org/x/net/html"
 )
+
+func TestModelBrandAssetsPublicAndVersioned(t *testing.T) {
+	r := deploymentTestRouter(t)
+	const folder = "web/public/brand/model-icons-1.95.1"
+	entries, err := fs.ReadDir(webFS, folder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".svg") {
+			continue
+		}
+		content, err := fs.ReadFile(webFS, folder+"/"+entry.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := "/public/static/brand/model-icons-1.95.1/" + entry.Name() + "?v=" + webAssetVersion(content)
+		response := deploymentRequest(r, "GET", path, "", "")
+		if response.Code != 200 || !strings.HasPrefix(response.Header().Get("Content-Type"), "image/svg+xml") || !strings.Contains(response.Header().Get("Cache-Control"), "immutable") {
+			t.Fatalf("brand icon unavailable: %s %d %v", path, response.Code, response.Header())
+		}
+		count++
+	}
+	if count != 26 {
+		t.Fatalf("brand icon count = %d", count)
+	}
+}
 
 func pageAssetURLs(page string) []string {
 	var urls []string

@@ -122,7 +122,8 @@ function renderKeyModelChips(prefix) {
       renderKeyModelPicker(prefix);
       $(prefix + "ModelInput").focus();
     });
-    chip.append(text, button);
+    const brand = document.createElement("span"); brand.innerHTML = modelIcon(model);
+    chip.append(brand.firstElementChild, text, button);
     box.append(chip);
   });
   $(prefix + "ModelInput").placeholder = selected.length ? "继续添加模型…" : "输入模型名，按回车添加";
@@ -137,7 +138,7 @@ function renderKeyModelPicker(prefix) {
   renderKeyModelChips(prefix);
   const query = $(prefix + "ModelSearch").value.trim().toLowerCase();
   const models = state.models.filter((model) => model.toLowerCase().includes(query));
-  $(prefix + "ModelList").innerHTML = models.map((model) => '<label><input type="checkbox" data-model="' + esc(model) + '" ' + (selected.has(model) ? "checked" : "") + '><span>' + esc(model) + '</span></label>').join("") || '<span class="muted">没有匹配的模型</span>';
+  $(prefix + "ModelList").innerHTML = models.map((model) => '<label><input type="checkbox" data-model="' + esc(model) + '" ' + (selected.has(model) ? "checked" : "") + '>' + modelLabel(model) + '</label>').join("") || '<span class="muted">没有匹配的模型</span>';
   $(prefix + "ModelList").querySelectorAll("input").forEach((checkbox) => checkbox.addEventListener("change", () => {
     const current = new Set(parseAllowlist($(prefix + "Models").value));
     if (checkbox.checked) current.add(checkbox.dataset.model); else current.delete(checkbox.dataset.model);
@@ -163,7 +164,7 @@ function renderKeyQuotaRows(prefix) {
   $(prefix + "AllShared").disabled = $(prefix + "AllIndependent").disabled = !models.length;
   $(prefix + "QuotaRows").innerHTML = models.map((model, index) => {
     const budget = keyQuotaDraft(prefix, model), rowID = prefix + "Budget" + index;
-    return '<div class="model-quota-row" data-model="' + esc(model) + '"><strong>' + esc(model) + '</strong><label class="field"><span class="sr-only">' + esc(model) + ' 的额度方式</span><select class="model-quota-mode" aria-controls="' + rowID + '"><option value="shared" ' + (!budget.independent ? "selected" : "") + '>使用共享额度</option><option value="independent" ' + (budget.independent ? "selected" : "") + '>独立额度</option></select></label><label id="' + rowID + '" class="field model-quota-amount ' + (budget.independent ? "" : "hidden") + '"><span class="sr-only">' + esc(model) + ' 的独立额度（USD）</span><input id="' + rowID + 'Amount" type="number" min="0" step="0.01" value="' + esc(budget.amount) + '" required ' + (budget.independent ? "" : "disabled") + '><small>已使用 ' + fmtUSD(budget.used) + ' · 0 表示不限</small></label></div>';
+    return '<div class="model-quota-row" data-model="' + esc(model) + '"><strong>' + modelLabel(model) + '</strong><label class="field"><span class="sr-only">' + esc(model) + ' 的额度方式</span><select class="model-quota-mode" aria-controls="' + rowID + '"><option value="shared" ' + (!budget.independent ? "selected" : "") + '>使用共享额度</option><option value="independent" ' + (budget.independent ? "selected" : "") + '>独立额度</option></select></label><label id="' + rowID + '" class="field model-quota-amount ' + (budget.independent ? "" : "hidden") + '"><span class="sr-only">' + esc(model) + ' 的独立额度（USD）</span><input id="' + rowID + 'Amount" type="number" min="0" step="0.01" value="' + esc(budget.amount) + '" required ' + (budget.independent ? "" : "disabled") + '><small>已使用 ' + fmtUSD(budget.used) + ' · 0 表示不限</small></label></div>';
   }).join("") || '<p class="quota-hint">绑定模型后，可以逐个选择额度方式。</p>';
   $(prefix + "QuotaRows").querySelectorAll(".model-quota-row").forEach((row) => {
     const model = row.dataset.model, budget = keyQuotaDraft(prefix, model);
@@ -197,7 +198,7 @@ function renderKeyQuotaSummary(key) {
   const sharedUsed = key.shared_used_usd || 0;
   const percentage = key.quota_usd > 0 ? Math.min(100, sharedUsed / key.quota_usd * 100) : 0;
   const shared = hasShared ? '<span>共享：' + fmtUSD(sharedUsed) + ' <span class="muted">/ ' + (key.quota_usd > 0 ? fmtUSD(key.quota_usd) : "不限") + '</span></span>' + (key.quota_usd > 0 ? '<div class="quota-track" role="meter" aria-label="共享额度使用" aria-valuenow="' + percentage + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + percentage + '%"></span></div>' : "") : "";
-  const independent = budgets.length ? '<details class="key-quota-details"><summary>独立额度 · ' + budgets.length + ' 个模型</summary>' + budgets.map((model) => { const budget = key.model_quotas[model]; return '<div><strong>' + esc(model) + '</strong><span>' + fmtUSD(budget.used_usd) + ' / ' + (budget.quota_usd > 0 ? fmtUSD(budget.quota_usd) : "不限") + '</span></div>'; }).join("") + '</details>' : "";
+  const independent = budgets.length ? '<details class="key-quota-details"><summary>独立额度 · ' + budgets.length + ' 个模型</summary>' + budgets.map((model) => { const budget = key.model_quotas[model]; return '<div><strong>' + modelLabel(model) + '</strong><span>' + fmtUSD(budget.used_usd) + ' / ' + (budget.quota_usd > 0 ? fmtUSD(budget.quota_usd) : "不限") + '</span></div>'; }).join("") + '</details>' : "";
   return shared + independent + '<small class="key-total-usage">累计使用 ' + fmtUSD(key.used_usd) + '</small>';
 }
 

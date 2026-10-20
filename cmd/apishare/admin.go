@@ -124,6 +124,8 @@ func registerAdminRoutes(r *gin.Engine) {
 	registerDeploymentRoutes(auth)
 	registerOutboundProxyRoutes(auth)
 	registerAnnouncementRoutes(auth)
+	registerUpstreamOverviewRoutes(auth)
+	registerDashboardRoutes(auth)
 
 	// ---------- API Keys ----------
 	auth.GET("/keys/models", func(c *gin.Context) {
@@ -312,6 +314,10 @@ func registerAdminRoutes(r *gin.Engine) {
 		if c.BindJSON(&u) != nil {
 			return
 		}
+		if u.Priority < 0 {
+			c.JSON(400, gin.H{"error": "priority must be zero or a positive integer"})
+			return
+		}
 		if !validUpstreamType(u.Type) {
 			c.JSON(400, gin.H{"error": "type must be openai, opencode-free, opencode, cline, anthropic or gemini"})
 			return
@@ -373,6 +379,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			Type             *string `json:"type"`
 			BaseURL          *string `json:"base_url"`
 			APIKey           *string `json:"api_key"`
+			Priority         *int    `json:"priority"`
 			Weight           *int    `json:"weight"`
 			Models           *string `json:"models"`
 			ModelMap         *string `json:"model_map"`
@@ -419,6 +426,13 @@ func registerAdminRoutes(r *gin.Engine) {
 		}
 		if req.APIKey != nil && strings.TrimSpace(*req.APIKey) != "" {
 			u.APIKey = *req.APIKey // 只有显式传入非空值才更新
+		}
+		if req.Priority != nil {
+			if *req.Priority < 0 {
+				c.JSON(400, gin.H{"error": "priority must be zero or a positive integer"})
+				return
+			}
+			u.Priority = *req.Priority
 		}
 		if req.Weight != nil {
 			u.Weight = *req.Weight
@@ -472,7 +486,7 @@ func registerAdminRoutes(r *gin.Engine) {
 		c.JSON(200, gin.H{"ok": true})
 	})
 
-	// 复制上游：接口类型、地址、密钥、模型配置、请求头、代理、权重与启用状态
+	// 复制上游：接口类型、地址、密钥、模型配置、请求头、代理、优先级、权重与启用状态
 	// 全部沿用，只有名称与创建时间不同。名称留空时自动使用“原名 + 副本”。
 	auth.POST("/upstreams/:id/duplicate", func(c *gin.Context) {
 		proxyConfigMu.Lock()
@@ -632,24 +646,7 @@ func registerAdminRoutes(r *gin.Engine) {
 
 	// ---------- Logs ----------
 	auth.GET("/logs", func(c *gin.Context) {
-		page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-		size, _ := strconv.Atoi(c.DefaultQuery("size", "50"))
-		if page < 1 {
-			page = 1
-		}
-		if size < 1 || size > 200 {
-			size = 50
-		}
-		logs, err := dbListLogs(size, (page-1)*size)
-		if err != nil {
-			c.JSON(500, gin.H{"error": err.Error()})
-			return
-		}
-		total, _ := dbCountLogs()
-		if logs == nil {
-			logs = []CallLog{}
-		}
-		c.JSON(200, gin.H{"total": total, "page": page, "size": size, "items": logs})
+		serveLogQuery(c)
 	})
 
 	// ---------- Stats ----------

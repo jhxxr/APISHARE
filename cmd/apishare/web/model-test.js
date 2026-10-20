@@ -81,10 +81,10 @@ function updateModelTestMeta() {
 function renderModelTestSelection() {
   const value = modelTest.selected;
   const label = $("modelTestPickerValue");
-  label.textContent = value || "选择测试模型";
+  if (value) label.innerHTML = modelLabel(value); else label.textContent = "选择测试模型";
   label.classList.toggle("is-placeholder", !value);
   const mapped = value && Object.hasOwn(modelTest.mapping, value) ? modelTest.mapping[value] : "";
-  $("modelTestMappingBadge").textContent = mapped ? "→ " + mapped : "";
+  $("modelTestMappingBadge").innerHTML = mapped ? "→ " + modelLabel(mapped) : "";
   $("modelTestMappingBadge").classList.toggle("hidden", !mapped);
   updateModelTestMeta();
 }
@@ -141,7 +141,7 @@ function appendModelTestOption(container, value, options = {}) {
   const name = document.createElement("span"); name.className = "model-test-option-name"; name.textContent = value;
   main.append(name);
   if (options.mapped) {
-    const mapped = document.createElement("small"); mapped.textContent = "→ " + options.mapped;
+    const mapped = document.createElement("small"); mapped.innerHTML = "→ " + modelLabel(options.mapped);
     main.append(mapped);
   } else if (options.custom) {
     const note = document.createElement("small"); note.textContent = "使用自定义模型名";
@@ -149,7 +149,8 @@ function appendModelTestOption(container, value, options = {}) {
   }
   const mark = document.createElement("span"); mark.className = "model-test-check";
   mark.innerHTML = icon(options.custom ? "plus" : "check");
-  button.append(main, mark);
+  const brand = document.createElement("span"); brand.className = "model-test-option-brand"; brand.innerHTML = modelIcon(value);
+  button.append(brand, main, mark);
   button.addEventListener("click", () => chooseModelTestModel(value));
   container.append(button);
   modelTest.options.push({ value, button });
@@ -329,7 +330,7 @@ async function submitModelTest(event) {
     });
     if (controller.signal.aborted) return;
     if (!result.ok) throw new Error((result.error || "模型测试失败") + "（耗时 " + result.latency_ms + " ms）");
-    $("modelTestSummary").textContent = "测试成功 · " + (result.stream ? "流式" : "非流式") + " · " + result.latency_ms + " ms · " + result.upstream_model + (result.input_tokens != null ? " · 输入 " + result.input_tokens + " Token" : "") + (result.output_tokens != null ? " · 输出 " + result.output_tokens + " Token" : "");
+    $("modelTestSummary").innerHTML = esc("测试成功 · " + (result.stream ? "流式" : "非流式") + " · " + result.latency_ms + " ms · ") + modelLabel(result.upstream_model) + esc((result.input_tokens != null ? " · 输入 " + result.input_tokens + " Token" : "") + (result.output_tokens != null ? " · 输出 " + result.output_tokens + " Token" : ""));
     $("modelTestReply").textContent = result.reply || "模型未返回文本。结束原因：" + (result.finish_reason || "未知") + "。可增加最大输出 Token 后重试。";
     $("modelTestThinking").textContent = result.thinking || "";
     $("modelTestThinkingDetails").classList.toggle("hidden", !result.thinking);

@@ -1,0 +1,140 @@
+{
+  "package": "@lobehub/icons-static-svg",
+  "version": "1.95.1",
+  "source": "https://github.com/lobehub/lobe-icons",
+  "distribution": "https://registry.npmjs.org/@lobehub/icons-static-svg/-/icons-static-svg-1.95.1.tgz",
+  "license": "MIT",
+  "notice": "Community-maintained brand artwork. Brand names and trademarks belong to their respective owners. Used for product identification. SVG files are unchanged from the package.",
+  "assets": [
+    {
+      "brand": "openai",
+      "file": "openai.svg",
+      "sha256": "a595df6b423920c67a7f8f73c063e4bfb72d415948097b6cac063a2366bb5186"
+    },
+    {
+      "brand": "claude",
+      "file": "claude-color.svg",
+      "sha256": "a3101f3047a119aa11825ad9369510f0c472428c8c52d420e31bc62db44a8364"
+    },
+    {
+      "brand": "anthropic",
+      "file": "anthropic.svg",
+      "sha256": "e833fdfa7e7187a86a05b870925067556a506dcd4239089aed73e1e58c9366a3"
+    },
+    {
+      "brand": "gemini",
+      "file": "gemini-color.svg",
+      "sha256": "8ab0a9bafec11f7e69bcb9fc4ffd8f1bc927d1ddcbbb6ff36dee5ae8b5a9d602"
+    },
+    {
+      "brand": "google",
+      "file": "google-color.svg",
+      "sha256": "4e6aa8892ef15a6b431f40f2c9045979bf7e2357524e7bbb89b353cf4f32a5ac"
+    },
+    {
+      "brand": "deepseek",
+      "file": "deepseek-color.svg",
+      "sha256": "deba5f98a5c1796e20fcac3149bcd7eb8a32f0bdd04d048819400b1f28bd1439"
+    },
+    {
+      "brand": "qwen",
+      "file": "qwen-color.svg",
+      "sha256": "77f5768c66d08ce1d3d14e73373975c1bc0454be88c81523ddd0ffd7e2974029"
+    },
+    {
+      "brand": "zai",
+      "file": "zai.svg",
+      "sha256": "e748cb5108ce37b116d7a5ba97d37e0ae97eadf6849b0de11afb248e244a01e1"
+    },
+    {
+      "brand": "moonshot",
+      "file": "moonshot.svg",
+      "sha256": "435f41b74e6a87639b6bf860e9628f20cbe7d6229bece412d548f4cea3081852"
+    },
+    {
+      "brand": "kimi",
+      "file": "kimi-color.svg",
+      "sha256": "74a7292aeb0220445d14c5d397d75760e2e8c6ed6a9e5fe4f3023471bf62a9ff"
+    },
+    {
+      "brand": "minimax",
+      "file": "minimax-color.svg",
+      "sha256": "7f7187fa6d9b341ac5f22f6c5a970523afb439dc45566d64eb4f4b9b604d6b01"
+    },
+    {
+      "brand": "grok",
+      "file": "grok.svg",
+      "sha256": "9175fc90c22655160231976c849f25a03b888d7cc0e04c5f1b987b659bb07c95"
+    },
+    {
+      "brand": "xai",
+      "file": "xai.svg",
+      "sha256": "89eb7de9f0d02a41cfecd9109e253d7fd3529e27467dee4254faa67f3ac21451"
+    },
+    {
+      "brand": "mistral",
+      "file": "mistral-color.svg",
+      "sha256": "722f74b289d95486b43662fe24fa883b333701296f618406cd0ed502299170b6"
+    },
+    {
+      "brand": "meta",
+      "file": "meta-color.svg",
+      "sha256": "adf9f2c1a646ccd3a37ca8c2e7e5985d64630cd633f4b95fba393d1d44e0578c"
+    },
+    {
+      "brand": "doubao",
+      "file": "doubao-color.svg",
+      "sha256": "3cd31ba03ae44b8c29561597a3b863809efecb13fcdfd08407a086df86a69b55"
+    },
+    {
+      "brand": "bytedance",
+      "file": "bytedance-color.svg",
+      "sha256": "3d37647be262c79b044e293bb1a4993202537e9f9ffdbd2bbe7e9fc5378d1005"
+    },
+    {
+      "brand": "hunyuan",
+      "file": "hunyuan-color.svg",
+      "sha256": "510e7bb438506b5aadfaf8b9551d1606efd5b4171161a64a64204c72a453658a"
+    },
+    {
+      "brand": "baichuan",
+      "file": "baichuan-color.svg",
+      "sha256": "7d49311206402734850ed9dc112759780429bb363dcee31eccb5a92f428532a6"
+    },
+    {
+      "brand": "yi",
+      "file": "yi-color.svg",
+      "sha256": "d78b1ce0eeb7a7d1a6132785dfa0218be48d6d1ccd3751ca3f9240a2e3b38756"
+    },
+    {
+      "brand": "cohere",
+      "file": "cohere-color.svg",
+      "sha256": "84d0ee3cbe66f030e5a18cb2c86da9166ab2137c7a98781693bb1fbf31e392b9"
+    },
+    {
+      "brand": "perplexity",
+      "file": "perplexity-color.svg",
+      "sha256": "8353f3ab20822f1a933224b0ea32cc39f0c32d5740f4af8c254b0f418e0a3a70"
+    },
+    {
+      "brand": "stepfun",
+      "file": "stepfun-color.svg",
+      "sha256": "f55afc0e6004c8854f76bd5bbcc0fce9fc0ed9316691d54fb02d088c24fab40d"
+    },
+    {
+      "brand": "nvidia",
+      "file": "nvidia-color.svg",
+      "sha256": "8c941e4eb8b782eccaaea1240c059d20be33ab8eda28d7c9ed9b53ac802fe683"
+    },
+    {
+      "brand": "cline",
+      "file": "cline.svg",
+      "sha256": "9003d2cdce82b016147b732abb4def60af55c348ba2cea2ba0b69a3c7d159b19"
+    },
+    {
+      "brand": "opencode",
+      "file": "opencode.svg",
+      "sha256": "7cfa6e9d6726f7c9fa26c7d9aef0dfec52d20a137380454340f30f12ccbfd302"
+    }
+  ]
+}

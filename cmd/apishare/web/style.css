@@ -596,7 +596,7 @@ dialog::backdrop { background: rgb(56 73 96 / 28%); backdrop-filter: blur(4px); 
 .client-version-status.error { color: var(--red); }
 .client-header-preview { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
 .client-header-preview code { color: var(--accent); font: 12px/1.8 var(--mono); }
-.routing-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 30px; align-items: start; }
+.routing-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr); gap: 24px; align-items: start; }
 .routing-grid .switch-row { margin-top: 22px; }
 .routing-grid .inline-note { margin-top: 25px; color: var(--green); }
 .editor-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 25px; background: #ffffff; border-top: 1px solid #e1e7ef; flex: 0 0 auto; }
