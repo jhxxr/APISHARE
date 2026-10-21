@@ -68,6 +68,7 @@ type PublicOverview struct {
 func registerPublic(r *gin.Engine) {
 	registerSetupRoutes(r)
 	registerKeyView(r)
+	registerSiteBrandingPublic(r)
 	sub, _ := fs.Sub(webFS, "web/public")
 	r.GET("/", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")

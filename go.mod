@@ -10,7 +10,9 @@ require (
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/refraction-networking/utls v1.8.2
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
+	github.com/sergeymakinen/go-ico v1.0.0
 	golang.org/x/crypto v0.57.0
+	golang.org/x/image v0.46.0
 	golang.org/x/net v0.58.0
 	golang.org/x/time v0.16.0
 	modernc.org/sqlite v1.60.1
@@ -42,6 +44,7 @@ require (
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/quic-go/quic-go v0.59.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+	github.com/sergeymakinen/go-bmp v1.0.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.1 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.5.0 // indirect

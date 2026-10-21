@@ -341,6 +341,29 @@ function renderHistoryRows() {
  $("historyRows").closest(".history-scroll").scrollTop=0;
 }
 function closeHistory() { $("historyDialog").close();historyModel=null;document.body.classList.remove("modal-open"); }
+function applyPublicBranding(branding) {
+ if(!branding)return;
+ const title=String(branding.title||"").trim()||"API Share";
+ document.documentElement.dataset.siteTitle=title;
+ document.querySelectorAll("[data-site-brand-name]").forEach(node=>{node.textContent=title;});
+ document.querySelectorAll("[data-site-brand-home]").forEach(node=>node.setAttribute("aria-label",title+" 首页"));
+ const icon=branding.icon_url||"";
+ document.querySelectorAll("[data-site-brand-logo]").forEach(image=>{
+  image.src=icon||image.dataset.defaultSrc||"/public/static/brand/apishare-icon-v2.png";
+ });
+ document.querySelectorAll("[data-site-brand-icon]").forEach(link=>{
+  link.setAttribute("href",icon||link.dataset.defaultHref||"/public/static/brand/apishare-favicon-v2.png");
+  link.setAttribute("type",icon?(branding.icon_type||"image/png"):"image/png");
+ });
+ if(branding.custom_title)document.title=title+" · 用量与模型状态";
+}
+async function loadPublicBranding() {
+ try {
+  const response=await fetch("/api/public/branding",{credentials:"omit",cache:"no-store"});
+  if(!response.ok)return;
+  applyPublicBranding(await response.json());
+ } catch {}
+}
 async function refresh() {
  if(refreshing)return;
  refreshing=true;$("refreshNow").disabled=true;$("refreshNow").setAttribute("aria-busy","true");
@@ -393,4 +416,5 @@ document.addEventListener("visibilitychange",()=>{if(!document.hidden&&autoUpdat
 setInterval(()=>{if(autoUpdate&&!document.hidden&&!publicDialogOpen())refresh();},30000);
 window.addEventListener("resize",()=>{finishHeroRoll();measureHeroType();},{passive:true});
 document.fonts?.ready.then(measureHeroType);
+loadPublicBranding();
 refresh();

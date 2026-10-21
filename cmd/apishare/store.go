@@ -828,9 +828,10 @@ func (price *Price) UnmarshalJSON(data []byte) error {
 }
 
 type AppSettings struct {
-	AffinityTTLMin    int  `json:"affinity_ttl_min"`
-	Retry             int  `json:"retry"`
-	InjectStreamUsage bool `json:"inject_stream_usage"`
+	AffinityTTLMin    int    `json:"affinity_ttl_min"`
+	Retry             int    `json:"retry"`
+	InjectStreamUsage bool   `json:"inject_stream_usage"`
+	SiteTitle         string `json:"site_title"` // 空字符串表示使用内置名称
 	// 调用明细保留天数：仅接受预设值 0（永久保留）/7（默认）/30/90/180/365，
 	// 超期的调用详情会先汇总进 call_log_daily 再删除，累计 Token、调用次数与费用不受影响。
 	LogRetentionDays   int              `json:"log_retention_days"`
@@ -887,6 +888,11 @@ func loadSettingsCache() error {
 			settingsCache.LogRetentionDays = n
 		}
 	}
+	if v, err := settingsGet("site_title"); err == nil {
+		if title, err := normalizeSiteTitle(v); err == nil {
+			settingsCache.SiteTitle = title
+		}
+	}
 	return nil
 }
 
@@ -918,6 +924,9 @@ func persistSettings(s AppSettings) error {
 		return err
 	}
 	if err := settingsSet("log_retention_days", fmt.Sprintf("%d", s.LogRetentionDays)); err != nil {
+		return err
+	}
+	if err := settingsSet("site_title", s.SiteTitle); err != nil {
 		return err
 	}
 	b, _ := json.Marshal(s.Pricing)

@@ -394,6 +394,14 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline
 .lookup-box { border-top: 1px solid var(--border); padding-top: 20px; }
 .lookup-result:not(:empty) { padding: 12px; margin-top: 12px; background: var(--panel-soft); border-radius: 7px; overflow-wrap: anywhere; }
 .settings-side { display: flex; flex-direction: column; gap: 21px; }
+.site-icon-field { display: flex; align-items: flex-start; gap: 14px; }
+.site-icon-preview { display: grid; place-items: center; width: 52px; height: 52px; flex: 0 0 auto; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: var(--panel-soft); }
+.site-icon-preview img { display: block; width: 44px; height: 44px; object-fit: contain; }
+.site-icon-copy { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.site-icon-copy strong { font-size: 12px; font-weight: 500; }
+.site-icon-copy small { color: var(--muted); font-size: 11px; line-height: 1.8; }
+.site-icon-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.site-icon-actions .btn, .site-icon-actions .text-btn { min-height: 36px; }
 .settings-save { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; }
 .settings-save p { color: var(--muted); font-size: 11px; }
 .password-card { display: flex; align-items: center; justify-content: space-between; gap: 28px; }

@@ -1,13 +1,13 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-site-title="{{SITE_TITLE}}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f6f8fb">
-  <title>API Share · 首次部署配置</title>
-  <link rel="icon" type="image/png" sizes="32x32" href="/public/static/brand/apishare-favicon-v2.png">
-  <link rel="icon" type="image/png" sizes="192x192" href="/public/static/brand/apishare-icon-v2.png">
-  <link rel="apple-touch-icon" sizes="180x180" href="/public/static/brand/apishare-touch-icon-v2.png">
+  <title>{{SITE_TITLE}} · 首次部署配置</title>
+  <link rel="icon" type="{{SITE_ICON_TYPE}}" sizes="32x32" href="{{SITE_ICON_FAVICON}}" data-site-brand-icon data-default-href="/public/static/brand/apishare-favicon-v2.png">
+  <link rel="icon" type="{{SITE_ICON_TYPE}}" sizes="192x192" href="{{SITE_ICON_LOGO}}" data-site-brand-icon data-default-href="/public/static/brand/apishare-icon-v2.png">
+  <link rel="apple-touch-icon" type="{{SITE_ICON_TYPE}}" sizes="180x180" href="{{SITE_ICON_TOUCH}}" data-site-brand-icon data-default-href="/public/static/brand/apishare-touch-icon-v2.png">
   <link rel="stylesheet" href="static/style.css">
 </head>
 <body class="setup-page">
@@ -40,7 +40,7 @@
     <symbol id="i-shield" viewBox="0 0 24 24"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z"/><path d="m8 12 3 3 5-6"/></symbol>
   </svg>
 
-  <header class="setup-header"><div class="login-brand"><span class="brand-mark" aria-hidden="true"><img src="/public/static/brand/apishare-icon-v2.png" width="34" height="34" alt=""></span><span>API Share</span></div><span class="setup-step">首次部署 · 创建管理员</span></header>
+  <header class="setup-header"><div class="login-brand"><span class="brand-mark" aria-hidden="true"><img src="{{SITE_ICON_LOGO}}" width="34" height="34" alt="" data-site-brand-logo data-default-src="/public/static/brand/apishare-icon-v2.png"></span><span data-site-brand-name>{{SITE_TITLE}}</span></div><span class="setup-step">首次部署 · 创建管理员</span></header>
   <main id="setupContent" class="setup-main" tabindex="-1">
         <section id="setupPanel" class="panel">
           <div class="page-heading deployment-heading"><div><span class="eyebrow">DEPLOYMENT CONFIGURATION</span><h1 id="deploymentTitle">完成部署配置</h1><p id="deploymentDescription">设置管理员密码与专属后台入口。</p></div><span class="deployment-badge"><svg class="icon"><use href="#i-check"/></svg> 服务已部署</span></div>

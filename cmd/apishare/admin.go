@@ -126,6 +126,7 @@ func registerAdminRoutes(r *gin.Engine) {
 	registerAnnouncementRoutes(auth)
 	registerUpstreamOverviewRoutes(auth)
 	registerDashboardRoutes(auth)
+	registerSiteBrandingAdmin(auth)
 
 	// ---------- API Keys ----------
 	auth.GET("/keys/models", func(c *gin.Context) {
@@ -736,6 +737,7 @@ func registerAdminRoutes(r *gin.Engine) {
 		}
 		autoPricing.RUnlock()
 		retention := retentionOption(s.LogRetentionDays)
+		siteIconURL, siteIconType := currentSiteIcon()
 		c.JSON(200, gin.H{
 			"affinity_ttl_min":     s.AffinityTTLMin,
 			"retry":                s.Retry,
@@ -747,6 +749,10 @@ func registerAdminRoutes(r *gin.Engine) {
 			"auto_pricing_enabled": s.AutoPricingEnabled,
 			"auto_pricing_url":     s.AutoPricingURL,
 			"auto_pricing":         autoInfo,
+			"site_title":           s.SiteTitle,
+			"site_icon_url":        siteIconURL,
+			"site_icon_type":       siteIconType,
+			"site_icon_custom":     siteIconURL != "",
 		})
 	})
 
@@ -760,6 +766,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			NewPassword        *string           `json:"new_password"`
 			AutoPricingEnabled *bool             `json:"auto_pricing_enabled"`
 			AutoPricingURL     *string           `json:"auto_pricing_url"`
+			SiteTitle          *string           `json:"site_title"`
 		}
 		if c.BindJSON(&req) != nil {
 			return
@@ -769,6 +776,14 @@ func registerAdminRoutes(r *gin.Engine) {
 			return
 		}
 		s := getSettings()
+		if req.SiteTitle != nil {
+			title, err := normalizeSiteTitle(*req.SiteTitle)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			s.SiteTitle = title
+		}
 		previousRetention := s.LogRetentionDays
 		retentionChanged := false
 		if req.AffinityTTLMin != nil && *req.AffinityTTLMin > 0 {
@@ -879,7 +894,7 @@ func serveAdminFile(c *gin.Context, sub fs.FS, name string) {
 		ct = "text/css; charset=utf-8"
 	case ".html":
 		ct = "text/html; charset=utf-8"
-		b = versionHTMLAssets(b, webFS)
+		b = injectSiteBranding(versionHTMLAssets(b, webFS))
 		c.Header("Cache-Control", "no-store")
 	}
 	// Unversioned assets must not acquire browser/CDN heuristic freshness.

@@ -1,11 +1,11 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-site-title="{{SITE_TITLE}}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#faf9f5">
   <meta name="description" content="查看全站 Token、模型调用量与 Uptime，输入密钥查看个人额度。">
-  <title>API 分发 · 用量与模型状态</title>
+  <title>{{PUBLIC_TITLE}} · 用量与模型状态</title>
   <script>
     (() => {
       if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -13,9 +13,9 @@
       document.documentElement.classList.add("intro-active");
     })();
   </script>
-  <link rel="icon" type="image/png" sizes="32x32" href="/public/static/brand/apishare-favicon-v2.png">
-  <link rel="icon" type="image/png" sizes="192x192" href="/public/static/brand/apishare-icon-v2.png">
-  <link rel="apple-touch-icon" sizes="180x180" href="/public/static/brand/apishare-touch-icon-v2.png">
+  <link rel="icon" type="{{SITE_ICON_TYPE}}" sizes="32x32" href="{{SITE_ICON_FAVICON}}" data-site-brand-icon data-default-href="/public/static/brand/apishare-favicon-v2.png">
+  <link rel="icon" type="{{SITE_ICON_TYPE}}" sizes="192x192" href="{{SITE_ICON_LOGO}}" data-site-brand-icon data-default-href="/public/static/brand/apishare-icon-v2.png">
+  <link rel="apple-touch-icon" type="{{SITE_ICON_TYPE}}" sizes="180x180" href="{{SITE_ICON_TOUCH}}" data-site-brand-icon data-default-href="/public/static/brand/apishare-touch-icon-v2.png">
   <link rel="stylesheet" href="/public/static/home.css">
   <link rel="stylesheet" href="/public/static/model-icons.css">
   <link rel="preload" href="/public/static/fonts/space-grotesk.ttf" as="font" type="font/ttf" crossorigin>
@@ -49,7 +49,7 @@
         <canvas id="particleScene" class="particle-scene"></canvas>
         <div class="scene-grain"></div>
       </div>
-      <a class="public-brand" href="/" aria-label="API Share 首页"><img src="/public/static/brand/apishare-icon-v2.png" width="44" height="44" alt=""><span>API Share</span></a>
+      <a class="public-brand" href="/" aria-label="{{SITE_TITLE}} 首页" data-site-brand-home><img src="{{SITE_ICON_LOGO}}" width="44" height="44" alt="" data-site-brand-logo data-default-src="/public/static/brand/apishare-icon-v2.png"><span data-site-brand-name>{{SITE_TITLE}}</span></a>
       <a id="announcementEntry" class="announcement-entry hidden" href="#announcements"><svg class="icon" aria-hidden="true"><use href="#megaphone"/></svg><span id="announcementEntryLabel">最新公告</span><strong id="announcementEntryTitle"></strong><svg class="icon" aria-hidden="true"><use href="#arrow"/></svg></a>
       <div class="hero-readout">
         <h1 id="heroTitle" class="token-total"><span class="token-prefix">全站累计 Token 用量</span><strong id="heroTokens" aria-hidden="true">—</strong></h1>

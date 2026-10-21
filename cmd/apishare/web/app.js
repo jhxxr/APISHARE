@@ -41,6 +41,7 @@ function editorOpenAIProtocol() {
   return { "openai-chat": "chat", "openai-responses": "responses" }[$("editType").value] || "auto";
 }
 const tabNames = { dashboard: "仪表盘", keys: "API 密钥", upstreams: "上游服务", models: "模型总览", proxies: "代理配置", logs: "调用日志", announcements: "公告管理", settings: "工作空间设置", deployment: "部署配置" };
+const siteTitle = () => document.documentElement.dataset.siteTitle || "API Share";
 const tabIcons = { dashboard: "grid", keys: "key", upstreams: "layers", models: "spark", proxies: "link", logs: "activity", announcements: "megaphone", settings: "sliders", deployment: "shield" };
 document.body.classList.toggle("sidebar-collapsed", localStorage.getItem("apishare_sidebar_collapsed") === "true");
 document.querySelectorAll(".tab").forEach((button) => {
@@ -96,8 +97,9 @@ function updateConnection(online) {
 }
 async function api(path, options = {}) {
   let response;
+  const formData = typeof FormData !== "undefined" && options.body instanceof FormData;
   try {
-    response = await fetch(path, { ...options, headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}), ...(options.headers || {}) } });
+    response = await fetch(path, { ...options, headers: { ...(formData ? {} : { "Content-Type": "application/json" }), ...(token ? { Authorization: "Bearer " + token } : {}), ...(options.headers || {}) } });
   } catch (error) {
     if (error.name === "AbortError") throw error;
     updateConnection(false);
@@ -245,7 +247,7 @@ async function switchTab(name, updateHistory = true) {
   });
   document.querySelectorAll(".panel").forEach((panel) => panel.classList.toggle("hidden", panel.id !== "tab-" + name));
   $("pageCrumb").textContent = tabNames[name];
-  document.title = "API Share · " + tabNames[name];
+  document.title = siteTitle() + " · " + tabNames[name];
   if (updateHistory && location.hash !== "#" + name) history.pushState(null, "", "#" + name);
   toggleSidebar(false);
   if (name !== "keys") dismissNewKey();
@@ -1060,6 +1062,55 @@ function logCostDetails(log) {
 }
 
 /* Settings */
+function applySiteTitle(title) {
+  title = String(title || "").trim() || "API Share";
+  document.documentElement.dataset.siteTitle = title;
+  document.querySelectorAll("[data-site-brand-name]").forEach((node) => { node.textContent = title; });
+  document.querySelectorAll("[data-site-brand-title]").forEach((node) => node.setAttribute("title", title));
+  document.querySelectorAll("[data-site-brand-home]").forEach((node) => node.setAttribute("aria-label", title + " 首页"));
+  const suffix = $("appView").classList.contains("hidden") ? "工作空间" : tabNames[activeTab];
+  document.title = title + " · " + suffix;
+}
+function applySiteIcon(url, type = "image/png") {
+  const custom = !!url;
+  document.querySelectorAll("[data-site-brand-logo]").forEach((image) => {
+    image.src = custom ? url : (image.dataset.defaultSrc || "/public/static/brand/apishare-icon-v2.png");
+  });
+  document.querySelectorAll("[data-site-brand-icon]").forEach((link) => {
+    link.setAttribute("href", custom ? url : (link.dataset.defaultHref || "/public/static/brand/apishare-favicon-v2.png"));
+    link.setAttribute("type", custom ? (type || "image/png") : "image/png");
+  });
+  const reset = $("resetSiteIcon");
+  if (reset) reset.classList.toggle("hidden", !custom);
+}
+function applySiteBranding(settings) {
+  applySiteTitle(settings.site_title || "");
+  applySiteIcon(settings.site_icon_url || "", settings.site_icon_type || "image/png");
+}
+async function uploadSiteIcon(input) {
+  const file = input.files && input.files[0];
+  input.value = "";
+  if (!file) return;
+  if (file.size > 512 * 1024) { toast("网站图标不能超过 512 KB", "error"); return; }
+  const allowed = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/x-icon", "image/vnd.microsoft.icon"];
+  if (file.type && !allowed.includes(file.type.toLowerCase())) { toast("请选择 PNG、JPG、GIF、WebP 或 ICO 图片", "error"); return; }
+  const form = new FormData();
+  form.append("icon", file);
+  input.disabled = true;
+  try {
+    const result = await api("api/settings/icon", { method: "POST", body: form });
+    applySiteIcon(result.site_icon_url || "", result.site_icon_type || "image/png");
+    toast("网站图标已更新");
+  } catch (error) { reportError(error, "图标上传失败"); } finally { input.disabled = false; }
+}
+async function resetSiteIcon() {
+  if (!(await askAction({ title: "恢复默认网站图标？", description: "当前上传的图标会被删除，浏览器标签与页面 Logo 将恢复为默认图标。", confirm: "恢复默认" }))) return;
+  try {
+    await api("api/settings/icon", { method: "DELETE" });
+    applySiteIcon("", "image/png");
+    toast("已恢复默认网站图标");
+  } catch (error) { reportError(error, "恢复默认图标失败"); }
+}
 async function loadSettings() {
   try {
     const settings = await api("api/settings");
@@ -1070,6 +1121,8 @@ async function loadSettings() {
     $("setAutoPricing").checked = !!settings.auto_pricing_enabled;
     $("setPricingURL").value = settings.auto_pricing_url || "";
     $("setPricing").value = JSON.stringify(settings.pricing, null, 2);
+    $("setSiteTitle").value = settings.site_title || "";
+    applySiteBranding(settings);
     setPricingError("");
     renderPricingStatus(settings.auto_pricing);
     settingsReady = true; stampRefresh();
@@ -1104,6 +1157,8 @@ async function lookupPrice() {
 async function saveSettings(event) {
   event.preventDefault();
   if (!settingsReady) { toast("设置尚未加载，请先刷新页面", "error"); return false; }
+  const siteTitleValue = $("setSiteTitle").value.trim();
+  if ([...siteTitleValue].length > 40) { toast("网站标题最多 40 个字", "error"); $("setSiteTitle").focus(); return false; }
   let pricing;
   try {
     pricing = JSON.parse($("setPricing").value);
@@ -1122,7 +1177,7 @@ async function saveSettings(event) {
   const button = event.currentTarget.querySelector('[type="submit"]');
   setBusy(button, true, "正在保存…");
   try {
-    await api("api/settings", { method: "PUT", body: JSON.stringify({ affinity_ttl_min: Number($("setTtl").value), retry: Number($("setRetry").value), inject_stream_usage: $("setInject").checked, log_retention_days: Number($("setLogRetention").value), auto_pricing_enabled: $("setAutoPricing").checked, auto_pricing_url: $("setPricingURL").value.trim(), pricing }) });
+    await api("api/settings", { method: "PUT", body: JSON.stringify({ affinity_ttl_min: Number($("setTtl").value), retry: Number($("setRetry").value), inject_stream_usage: $("setInject").checked, log_retention_days: Number($("setLogRetention").value), auto_pricing_enabled: $("setAutoPricing").checked, auto_pricing_url: $("setPricingURL").value.trim(), site_title: siteTitleValue, pricing }) });
     await loadSettings(); toast("工作空间设置已保存");
   } catch (error) { reportError(error, "保存失败"); } finally { setBusy(button, false); }
   return false;
