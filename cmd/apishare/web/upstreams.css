@@ -116,6 +116,23 @@
   #tab-upstreams .upstream-filters input, #tab-upstreams .upstream-filters select { min-height: 40px; height: 40px; }
 }
 @media (max-width: 600px) {
+  /* Reset desktop table dimensions before laying out each upstream as a grid. */
+  #tab-upstreams #upsTable { display: block; min-width: 0; table-layout: auto; }
+  #tab-upstreams #upsTable thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+  #tab-upstreams #upsTable tbody { display: block; }
+  #tab-upstreams #upsTable tbody > tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; padding: 16px; border-top: 1px solid var(--border); background: var(--panel); }
+  #tab-upstreams #upsTable tbody > tr:first-child { border-top: 0; }
+  #tab-upstreams #upsTable td { display: block; min-width: 0; height: auto; padding: 0; border: 0; font-size: 13px; overflow-wrap: anywhere; }
+  #tab-upstreams #upsTable td::before { content: attr(data-label); display: block; margin-bottom: 6px; color: var(--muted); font-size: 11px; }
+  #tab-upstreams #upsTable td:nth-child(2) { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+  #tab-upstreams #upsTable td:nth-child(2)::before { margin: 0; }
+  #tab-upstreams #upsTable td:nth-child(3), #tab-upstreams #upsTable td[colspan] { grid-column: 1 / -1; }
+  #tab-upstreams #upsTable .upstream-select-cell { display: flex; align-items: center; text-align: left; }
+  #tab-upstreams #upsTable .upstream-select-cell::before, #tab-upstreams #upsTable td:nth-child(3)::before, #tab-upstreams #upsTable td:last-child::before, #tab-upstreams #upsTable td[colspan]::before { display: none; }
+  #tab-upstreams #upsTable .upstream-health-bars { flex: 1 1 auto; width: auto; min-width: 0; }
+  #tab-upstreams #upsTable td:last-child { display: flex; align-items: flex-end; justify-content: flex-end; }
+  #tab-upstreams #upsTable .upstream-more { width: 44px; height: 44px; }
+  #tab-upstreams #upsTable .upstream-model-count, #tab-upstreams #upsTable .upstream-schedule { min-height: 44px; padding-inline: 8px; }
   .upstream-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .upstream-metric { min-height: 105px; padding: 14px; border-radius: 13px; }
   .upstream-metric:last-child { grid-column: 1 / -1; }
