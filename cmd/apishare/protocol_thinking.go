@@ -110,6 +110,23 @@ func protocolModelName(model string) string {
 	return model
 }
 
+// Effort-only protocols cannot enforce a fixed token cap. Approximate the
+// requested strength only when the client has not supplied an explicit effort;
+// keep the original budget for native forwarding and later failover attempts.
+func protocolReasoningEffort(target clientFormat, cr *canonReq) string {
+	if cr.ReasoningEffort != "" || cr.ThinkingBudget == nil || (target != FormatOpenAIChat && target != FormatOpenAIResponse) {
+		return cr.ReasoningEffort
+	}
+	switch budget := *cr.ThinkingBudget; {
+	case budget <= 1024:
+		return "low"
+	case budget <= 8192:
+		return "medium"
+	default:
+		return "high"
+	}
+}
+
 func applyProtocolThinking(target clientFormat, cr *canonReq, model string, body, geminiConfig map[string]any) error {
 	name := protocolModelName(model)
 	if cr.ThinkingBudget != nil {
@@ -139,6 +156,8 @@ func applyProtocolThinking(target clientFormat, cr *canonReq, model string, body
 				return fmt.Errorf("Anthropic thinking budget needs at least 1024 tokens and a larger explicit max_tokens")
 			}
 			body["thinking"] = map[string]any{"type": "enabled", "budget_tokens": budget}
+		case FormatOpenAIChat, FormatOpenAIResponse:
+			// renderProtocolRequest emits the approximated or explicit effort.
 		default:
 			return unsupported("fixed thinking token budget on an effort-only protocol")
 		}

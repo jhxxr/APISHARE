@@ -71,8 +71,10 @@ func TestOptimizationThinkingModesAndBudgetBoundaries(t *testing.T) {
 	if err != nil || object(object(request["generationConfig"])["thinkingConfig"])["thinkingBudget"] != json.Number("1024") {
 		t.Fatalf("fixed budget lost: %s / %v", wire, err)
 	}
-	if _, err := renderProtocolRequest(FormatOpenAIChat, fixed, "deepseek-v4-flash"); err == nil {
-		t.Fatal("fixed budget silently converted into effort")
+	wire, err = renderProtocolRequest(FormatOpenAIChat, fixed, "deepseek-v4-flash")
+	request, _ = decodeProtocolObject(wire)
+	if err != nil || request["reasoning_effort"] != "low" {
+		t.Fatalf("fixed budget did not convert into effort: %s / %v", wire, err)
 	}
 	if _, err := renderProtocolRequest(FormatGemini, disabled, "gemini-2.5-pro"); err == nil {
 		t.Fatal("always-on model received thinking-off")

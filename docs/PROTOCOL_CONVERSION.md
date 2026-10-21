@@ -49,6 +49,7 @@ Anthropic 规范 SSE 增量推送 (message_start -> content_block_delta -> messa
 ### 6. 深度思考 / Reasoning 隔离与档位自适应
 
 - 支持 Chat `reasoning_effort`、Responses `reasoning.effort` 与 Claude `output_config.effort` 的双向自适应映射（如 DeepSeek `xhigh -> max`, `medium -> high`）。
+- Messages / Gemini 的固定思考预算转入 Chat / Responses 时，若无显式 effort，则按预算近似映射：`≤1024 -> low`、`1025–8192 -> medium`、`>8192 -> high`，再适配上游声明的模型档位。该策略不保证精确的思考 Token 上限，不增大输出上限；原生请求及支持预算的目标仍保留固定预算。
 - 思维链明文缓存机制：针对返回的推理内容按 `Key + 客户端模型 + 上游 ID + 映射模型` 独立空间缓存（LRU 1024 项 / 8 MiB，TTL 7 天），多轮对话精准回放，杜绝密文伪装与跨租户泄露。
 
 ## 结构化输出

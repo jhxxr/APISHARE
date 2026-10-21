@@ -16,7 +16,7 @@ APISHARE 的兼容能力需要分两层看：原生请求保留供应商字段�
 
 原生流式请求遇到 JSON-only 上游时，四种协议都已增加 SSE 包装。Chat 按工具索引和 include_usage 生成块；Messages 顺序生成内容生命周期、签名和引用增量；Responses 保留原输出 ID、custom 原文、加密项及压缩项，生成内容、推理摘要、工具参数和终止事件；Gemini 发送原生完整响应帧。包装前验证终态、已识别工具参数和事件大小，失败时不提交响应头。上游已经一次性返回 JSON，这种包装不会缩短其首字延迟。
 
-思考配置单独保存模式和固定预算。显式 disabled 按 sub2api 的优先级覆盖 effort；Gemini thinkingLevel 可以转为 effort，符合型号范围的固定预算可在 Messages/Gemini 间保留。预算不会被变成档位，也不自动增大用户输出上限。没有显式 effort 的 adaptive 转入仅有 effort 的协议、不能关闭思考的型号、未知型号预算及显示策略等仍明确拒绝。[sub2api 优先级实现](https://github.com/Wei-Shaw/sub2api/blob/9c2cca9e627291bc719bada3d57de23b625a4180/backend/internal/pkg/apicompat/anthropic_to_responses.go)、[Claude 模式定义](https://platform.claude.com/docs/en/build-with-claude/thinking)、[Gemini 型号范围](https://ai.google.dev/gemini-api/docs/generate-content/thinking)
+思考配置单独保存模式和固定预算。显式 disabled 按 sub2api 的优先级覆盖 effort；Gemini thinkingLevel 可以转为 effort，符合型号范围的固定预算可在 Messages/Gemini 间保留。固定预算转入 Chat/Responses 时，优先使用显式 effort，否则按 `≤1024 -> low`、`1025–8192 -> medium`、`>8192 -> high` 近似映射，再适配上游模型档位；这不能保证精确的思考 Token 上限，也不自动增大用户输出上限。没有显式 effort 的 adaptive 转入仅有 effort 的协议、不能关闭思考的型号、未知型号预算及显示策略等仍明确拒绝。[sub2api 优先级实现](https://github.com/Wei-Shaw/sub2api/blob/9c2cca9e627291bc719bada3d57de23b625a4180/backend/internal/pkg/apicompat/anthropic_to_responses.go)、[Claude 模式定义](https://platform.claude.com/docs/en/build-with-claude/thinking)、[Gemini 型号范围](https://ai.google.dev/gemini-api/docs/generate-content/thinking)
 
 用量转换开始保留缓存读取、缓存创建、推理和 Gemini 工具提示 Token，按源协议换算总数。OpenAI 已含推理的输出不再次加推理；Gemini 候选输出之外的 thoughts 单独计入；Gemini 输入已含缓存，转为 Messages 时拆分为普通输入与缓存读取，不伪造缓存创建。累计分项覆盖，缺失分项保留，显式 0 覆盖旧值。流式与非流式使用同一转换器；缓存创建在 OpenAI details 中使用兼容网关扩展字段 cache_creation_tokens，不能当成官方 OpenAI 缓存写入计费定义。
 
@@ -66,7 +66,7 @@ APISHARE 的兼容能力需要分两层看：原生请求保留供应商字段�
 | 初始 input={} 后收到 partial_json | 已有转换修正，本次原生聚合同样采用“增量替换种子”，避免 `{}{...}`。[sub2api 问题 #6336](https://github.com/Wei-Shaw/sub2api/issues/6336) |
 | message_start 与 message_delta 用量 | 保留字段并按累计值覆盖；不累加每次累计的 output_tokens。本次原生聚合保留缓存分项。 |
 | thinking / signature_delta / redacted_thinking | 原生保留。明文 thinking 可以回放到 Chat 的推理字段；跨供应商签名与 redacted 数据不能伪造。[Claude 流协议](https://platform.claude.com/docs/en/build-with-claude/streaming) |
-| thinking 的 enabled/adaptive/budget_tokens | 本轮保留独立模式/预算；已知预算型号可转 Gemini 预算，adaptive + 明确 effort 可以转入 Chat/Responses。disabled 覆盖 effort；显示策略与不能等价映射的组合明确拒绝。 |
+| thinking 的 enabled/adaptive/budget_tokens | 保留独立模式/预算；已知预算型号可转 Gemini 预算，固定预算转 Chat/Responses 时近似映射为 effort，adaptive + 明确 effort 可以转入 Chat/Responses。disabled 覆盖 effort；显示策略与其他不能映射的组合明确拒绝。 |
 | tool_choice 与 disable_parallel_tool_use | 已有模式转换，本次补声明检查；向 Gemini 禁止并行没有等价保证，明确拒绝。 |
 | max_tokens / budget_tokens | 不自动注入未经模型验证的思考预算；需保持输出预算与思考预算一致。不能无条件复制 sub2api 的 Antigravity 特定预算补偿。 |
 | context_management、缓存控制、托管工具、文档/搜索结果块 | 原生保留；跨格式没有完整支持。Claude Code 禁用实验 beta 是现有绕过方式，context_management 尚未实现等价转换。 |

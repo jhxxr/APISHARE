@@ -382,9 +382,9 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	info.Usage.Source = wireFormat
 	native := wireFormat == task.format || task.nativeOnly
 	var effortLevels []string
-	// A fully parsed request without an effort field needs neither catalog
-	// lookup nor another JSON pass. Opaque native requests keep the old path.
-	if !task.nativeOnly && (task.canon == nil || task.canon.ConversionError != nil || task.canon.ReasoningEffort != "") {
+	// A fully parsed request without an explicit or derived effort needs neither
+	// catalog lookup nor another JSON pass. Opaque native requests keep the old path.
+	if !task.nativeOnly && (task.canon == nil || task.canon.ConversionError != nil || protocolReasoningEffort(wireFormat, task.canon) != "") {
 		effortLevels = upstreamReasoningEfforts(up, upModel)
 	}
 
@@ -410,7 +410,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		if task.format == FormatOpenAIResponse {
 			cr.Messages = replayResponseReasoning(cr.Messages, replayScope)
 		}
-		cr.ReasoningEffort = mapReasoningEffort(cr.ReasoningEffort, effortLevels)
+		cr.ReasoningEffort = mapReasoningEffort(protocolReasoningEffort(wireFormat, &cr), effortLevels)
 		reqBody, err = renderProtocolRequest(wireFormat, &cr, upModel, up.StructuredOutput)
 		if err != nil {
 			info.Status = http.StatusBadRequest

@@ -930,11 +930,12 @@ func renderProtocolRequest(format clientFormat, cr *canonReq, model string, outp
 		}
 	}
 	gc := map[string]any{}
+	reasoningEffort := protocolReasoningEffort(format, cr)
 	switch format {
 	case FormatAnthropic:
 		m["messages"] = msgs
-		if cr.ReasoningEffort != "" {
-			m["output_config"] = map[string]any{"effort": cr.ReasoningEffort}
+		if reasoningEffort != "" {
+			m["output_config"] = map[string]any{"effort": reasoningEffort}
 		}
 		m["max_tokens"] = cr.MaxTokens
 		if cr.MaxTokens <= 0 {
@@ -957,8 +958,8 @@ func renderProtocolRequest(format clientFormat, cr *canonReq, model string, outp
 		if len(cr.Stop) > 0 {
 			return nil, unsupported("stop sequences on a Responses upstream")
 		}
-		if cr.ReasoningEffort != "" {
-			m["reasoning"] = map[string]any{"effort": cr.ReasoningEffort}
+		if reasoningEffort != "" {
+			m["reasoning"] = map[string]any{"effort": reasoningEffort}
 		}
 	case FormatGemini:
 		delete(m, "model")
@@ -992,8 +993,8 @@ func renderProtocolRequest(format clientFormat, cr *canonReq, model string, outp
 		if len(cr.Stop) > 0 {
 			m["stop"] = cr.Stop
 		}
-		if cr.ReasoningEffort != "" {
-			m["reasoning_effort"] = cr.ReasoningEffort
+		if reasoningEffort != "" {
+			m["reasoning_effort"] = reasoningEffort
 		}
 	}
 	if err := applyProtocolThinking(format, cr, model, m, gc); err != nil {
