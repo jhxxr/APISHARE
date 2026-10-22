@@ -245,6 +245,118 @@ func TestClaudeKeepaliveVersionAndOpenBlock(t *testing.T) {
 	}
 }
 
+func TestMessagesKeepalivePreservesBlockIndexRepresentations(t *testing.T) {
+	for _, index := range []any{3, float64(3), json.Number("3")} {
+		t.Run(fmt.Sprintf("%T", index), func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest("POST", "/v1/messages", nil)
+			state := &messagesKeepalive{c: c, committed: true, emptyDelta: true, blockIndex: -1}
+			state.observe(map[string]any{"type": "content_block_start", "index": index, "content_block": map[string]any{"type": "tool_use"}})
+			if err := state.ping(); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(rec.Body.String(), `"index":3`) || !strings.Contains(rec.Body.String(), `"type":"input_json_delta"`) {
+				t.Fatalf("heartbeat lost block index: %s", rec.Body.String())
+			}
+			state.observe(map[string]any{"type": "content_block_stop", "index": 0})
+			if state.blockIndex != 3 {
+				t.Fatal("stop for another block closed the active block")
+			}
+			state.observe(map[string]any{"type": "content_block_stop", "index": index})
+			rec.Body.Reset()
+			if err := state.ping(); err != nil || !strings.Contains(rec.Body.String(), "event: ping") {
+				t.Fatalf("heartbeat referenced a closed block: %v / %s", err, rec.Body.String())
+			}
+		})
+	}
+}
+
+// Exercise the actual converted SSE writer and consume its heartbeats as a
+// client would: a JSON delta must target the tool, never a preceding text or
+// thinking block, even while parallel tool arguments are deferred.
+func TestMessagesKeepaliveConvertedToolsAfterContent(t *testing.T) {
+	for _, firstKind := range []string{"text", "thinking"} {
+		t.Run(firstKind, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest("POST", "/v1/messages", nil)
+			state := &messagesKeepalive{c: c, emptyDelta: true, blockIndex: -1}
+			c.Set(messagesKeepaliveKey, state)
+			w := newProtocolStream(c, FormatAnthropic, "alias", false)
+			for _, delta := range []streamDelta{
+				{Key: "content", Block: responseBlock{Kind: firstKind, Text: "checking files"}},
+				{Key: "a", Block: responseBlock{Kind: "tool", Call: canonCall{"a", "read", `{"path":`}}},
+				{Key: "b", Block: responseBlock{Kind: "tool", Call: canonCall{"b", "read", `{"path":"b.go"}`}}},
+				{Key: "a", Block: responseBlock{Kind: "tool", Call: canonCall{Arguments: `"a.go"}`}}},
+			} {
+				if err := w.push(c, delta, upstreamUsage{}); err != nil {
+					t.Fatal(err)
+				}
+				if err := state.ping(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := w.finish(c, upstreamUsage{}, "tool_calls", ""); err != nil {
+				t.Fatal(err)
+			}
+			if err := state.ping(); err != nil {
+				t.Fatal(err)
+			}
+			open := -1
+			var kind string
+			toolHeartbeats := 0
+			err := readSSEFrames(strings.NewReader(rec.Body.String()), func(payload string) (bool, error) {
+				var event map[string]any
+				if err := json.Unmarshal([]byte(payload), &event); err != nil {
+					return false, err
+				}
+				i := intFromAny(event["index"])
+				switch str(event["type"]) {
+				case "content_block_start":
+					if open != -1 {
+						t.Fatal("overlapping content blocks")
+					}
+					open, kind = i, str(object(event["content_block"])["type"])
+				case "content_block_delta":
+					if i != open || open < 0 {
+						t.Fatalf("delta references closed/wrong block: %s (open %d)", payload, open)
+					}
+					delta := object(event["delta"])
+					want := map[string]string{"text": "text_delta", "thinking": "thinking_delta", "tool_use": "input_json_delta"}[kind]
+					if str(delta["type"]) != want {
+						t.Fatalf("delta type disagrees with %s block: %s", kind, payload)
+					}
+					if kind == "tool_use" && delta["partial_json"] == "" {
+						toolHeartbeats++
+					}
+				case "content_block_stop":
+					if i != open {
+						t.Fatalf("stop references wrong block: %s", payload)
+					}
+					open = -1
+				}
+				return false, nil
+			})
+			if err != nil || toolHeartbeats != 3 || open != -1 {
+				t.Fatalf("invalid heartbeat stream: %v, tool heartbeats=%d, open=%d", err, toolHeartbeats, open)
+			}
+			body, err := collectNativeProtocolSSE(strings.NewReader(rec.Body.String()), FormatAnthropic, &relayInfo{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			message, err := decodeProtocolObject(body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			blocks := array(message["content"])
+			if len(blocks) != 3 || object(object(blocks[1])["input"])["path"] != "a.go" || object(object(blocks[2])["input"])["path"] != "b.go" {
+				t.Fatalf("heartbeats changed tool arguments: %s", body)
+			}
+		})
+	}
+}
+
 func TestMessagesKeepaliveCancellationJoinsReader(t *testing.T) {
 	testMessagesKeepaliveConfig(t)
 	reader, writer := io.Pipe()

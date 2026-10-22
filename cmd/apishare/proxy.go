@@ -879,6 +879,11 @@ func recordNativeEvent(format clientFormat, payload string, info *relayInfo) boo
 }
 
 func intFromAny(v any) int {
+	// Converted stream events use Go ints before JSON encoding; native events
+	// arrive as json.Number or float64. Preserve indexes in both paths.
+	if n, ok := v.(int); ok {
+		return n
+	}
 	if n, ok := v.(json.Number); ok {
 		if integer, err := n.Int64(); err == nil {
 			return int(integer)
