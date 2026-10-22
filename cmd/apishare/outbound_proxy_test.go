@@ -309,6 +309,123 @@ func TestHTTPProxyRelayProbeAndCacheUpdates(t *testing.T) {
 	}
 }
 
+func TestProxyConnectivityProbe(t *testing.T) {
+	r := testProxyAdminRouter(t)
+	var calls atomic.Int32
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		calls.Add(1)
+		if req.URL.Host != "probe-target.invalid" {
+			t.Errorf("probe destination = %s", req.URL.Host)
+		}
+		if req.Header.Get("Proxy-Authorization") != "Basic "+base64.StdEncoding.EncodeToString([]byte("alice:secret")) {
+			w.WriteHeader(http.StatusProxyAuthRequired)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer proxyServer.Close()
+	previousTargets := proxyProbeTargets
+	proxyProbeTargets = []string{"http://probe-target.invalid/generate_204"}
+	t.Cleanup(func() { proxyProbeTargets = previousTargets })
+
+	p := testSavedProxy(t, proxyServer.URL, "alice", "secret")
+	path := fmt.Sprintf("proxies/%d/test", p.ID)
+	if w := proxyAdminRequest(r, "POST", path, "", false); w.Code != 401 {
+		t.Fatalf("unauthenticated probe: %d", w.Code)
+	}
+	w := proxyAdminRequest(r, "POST", path, "", true)
+	var result struct {
+		OK        bool   `json:"ok"`
+		LatencyMS int64  `json:"latency_ms"`
+		Status    int    `json:"status"`
+		Target    string `json:"target"`
+		Error     string `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != 200 || !result.OK || result.Status != http.StatusNoContent || result.Target != "probe-target.invalid" {
+		t.Fatalf("proxy probe: %d %+v", w.Code, result)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("probe requests = %d", calls.Load())
+	}
+
+	// A disabled proxy is still testable so it can be checked before enabling.
+	if _, err := db.Exec(`UPDATE outbound_proxies SET enabled=0 WHERE id=?`, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	w = proxyAdminRequest(r, "POST", path, "", true)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"ok":true`) {
+		t.Fatalf("disabled proxy was not testable: %s", w.Body.String())
+	}
+	if _, err := db.Exec(`UPDATE outbound_proxies SET enabled=1,password='wrong-secret' WHERE id=?`, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	w = proxyAdminRequest(r, "POST", path, "", true)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"ok":false`) {
+		t.Fatalf("bad proxy credentials accepted: %s", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "认证失败") {
+		t.Fatalf("proxy authentication error not reported: %s", w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "wrong-secret") {
+		t.Fatal("proxy password leaked in probe result")
+	}
+	if w := proxyAdminRequest(r, "POST", "proxies/999999/test", "", true); w.Code != 404 {
+		t.Fatalf("missing proxy probe: %d", w.Code)
+	}
+}
+
+func TestProxyConnectivityProbeFallsBackAndTimesOut(t *testing.T) {
+	r := testProxyAdminRouter(t)
+	var mu sync.Mutex
+	var destinations []string
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		mu.Lock()
+		destinations = append(destinations, req.URL.Host)
+		mu.Unlock()
+		if req.URL.Host == "broken-target.invalid" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer proxyServer.Close()
+	previousTargets, previousTimeout := proxyProbeTargets, proxyProbeTimeout
+	proxyProbeTargets = []string{"http://broken-target.invalid/fail", "http://working-target.invalid/ok"}
+	proxyProbeTimeout = 2 * time.Second
+	t.Cleanup(func() { proxyProbeTargets, proxyProbeTimeout = previousTargets, previousTimeout })
+	p := testSavedProxy(t, proxyServer.URL, "", "")
+	w := proxyAdminRequest(r, "POST", fmt.Sprintf("proxies/%d/test", p.ID), "", true)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"ok":true`) {
+		t.Fatalf("probe did not fall back to a working target: %s", w.Body.String())
+	}
+	mu.Lock()
+	count := len(destinations)
+	mu.Unlock()
+	if count != 2 {
+		t.Fatalf("probe attempts = %d", count)
+	}
+
+	// A stalled target must respect the probe timeout instead of hanging the request.
+	proxyProbeTimeout = 80 * time.Millisecond
+	proxyProbeTargets = []string{"http://stalled-target.invalid/slow"}
+	stalled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		<-req.Context().Done()
+	}))
+	defer stalled.Close()
+	stalledProxy := testSavedProxy(t, stalled.URL, "", "")
+	start := time.Now()
+	w = proxyAdminRequest(r, "POST", fmt.Sprintf("proxies/%d/test", stalledProxy.ID), "", true)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"ok":false`) || !strings.Contains(w.Body.String(), "超时") {
+		t.Fatalf("stalled probe: %s", w.Body.String())
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("stalled probe took %s", elapsed)
+	}
+}
+
 // Minimal local SOCKS5 server: verify real negotiation, username/password and
 // domain forwarding, then tunnel bytes to the test upstream without external I/O.
 func testSOCKSProxy(t *testing.T, target string, observed chan<- string) string {

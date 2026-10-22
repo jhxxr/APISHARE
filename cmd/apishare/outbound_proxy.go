@@ -261,10 +261,155 @@ func clientForOpenCodeFree(base *http.Client, proxyID int64) (*http.Client, erro
 	return &client, nil
 }
 
+// Connectivity probes used by the proxy list test action. The first success
+// wins, so a proxy is not reported unhealthy merely because one public
+// endpoint is blocked in its region. Tests use a one-off transport rather than
+// the relay's cached transports, which keeps live traffic untouched and also
+// lets an administrator check a disabled proxy before enabling it.
+var proxyProbeTargets = []string{
+	"https://www.gstatic.com/generate_204",
+	"https://cp.cloudflare.com/generate_204",
+	"https://www.msftconnecttest.com/connecttest.txt",
+}
+
+var proxyProbeTimeout = 12 * time.Second
+
+type proxyProbeOutcome struct {
+	target  string
+	status  int
+	latency time.Duration
+	err     error
+}
+
+func proxyProbeClient(p *OutboundProxy) (*http.Client, func(), error) {
+	config := *p
+	if err := normalizeProxyEndpoint(&config); err != nil {
+		return nil, nil, err
+	}
+	endpoint, err := url.Parse(config.URL)
+	if err != nil {
+		return nil, nil, errors.New("代理地址无效")
+	}
+	if config.Username != "" {
+		endpoint.User = url.UserPassword(config.Username, config.Password)
+	}
+	baseTransport, ok := upstreamHTTPClient.Transport.(*http.Transport)
+	if !ok {
+		baseTransport = newRelayHTTPClient(relayNetwork).Transport.(*http.Transport)
+	}
+	transport := baseTransport.Clone()
+	transport.Proxy = http.ProxyURL(endpoint)
+	client := &http.Client{
+		Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	return client, transport.CloseIdleConnections, nil
+}
+
+func proxyProbeTargetName(target string) string {
+	if parsed, err := url.Parse(target); err == nil && parsed.Host != "" {
+		return parsed.Host
+	}
+	return target
+}
+
+func proxyProbeFailure(outcomes []proxyProbeOutcome) error {
+	for _, outcome := range outcomes {
+		if outcome.err == nil && outcome.status == http.StatusProxyAuthRequired {
+			return errors.New("代理认证失败（HTTP 407），请检查用户名和密码")
+		}
+	}
+	for _, outcome := range outcomes {
+		if outcome.err != nil {
+			return fmt.Errorf("通过代理访问 %s 失败：%w", proxyProbeTargetName(outcome.target), outcome.err)
+		}
+		if outcome.status > 0 {
+			return fmt.Errorf("%s 返回 HTTP %d", proxyProbeTargetName(outcome.target), outcome.status)
+		}
+	}
+	return errors.New("无法通过代理访问外网")
+}
+
+func probeOutboundProxy(ctx context.Context, p *OutboundProxy) (proxyProbeOutcome, error) {
+	client, closeIdle, err := proxyProbeClient(p)
+	if err != nil {
+		return proxyProbeOutcome{}, err
+	}
+	defer closeIdle()
+	ctx, cancel := context.WithTimeout(ctx, proxyProbeTimeout)
+	defer cancel()
+	targets := append([]string(nil), proxyProbeTargets...)
+	if len(targets) == 0 {
+		return proxyProbeOutcome{}, errors.New("未配置连通性探测地址")
+	}
+	type indexedOutcome struct {
+		index int
+		value proxyProbeOutcome
+	}
+	results := make(chan indexedOutcome, len(targets))
+	for index, target := range targets {
+		go func(index int, target string) {
+			outcome := proxyProbeOutcome{target: target}
+			start := time.Now()
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+			if err == nil {
+				req.Header.Set("User-Agent", "APIShare-Proxy-Check/1.0")
+				var resp *http.Response
+				resp, err = client.Do(req)
+				if err == nil {
+					outcome.status = resp.StatusCode
+					resp.Body.Close()
+				}
+			}
+			outcome.latency = time.Since(start)
+			outcome.err = err
+			results <- indexedOutcome{index: index, value: outcome}
+		}(index, target)
+	}
+	outcomes := make([]proxyProbeOutcome, len(targets))
+	completed := make([]proxyProbeOutcome, 0, len(targets))
+	for received := 0; received < len(targets); received++ {
+		select {
+		case result := <-results:
+			outcomes[result.index] = result.value
+			completed = append(completed, result.value)
+			if result.value.err == nil && result.value.status >= 200 && result.value.status < 400 {
+				return result.value, nil
+			}
+		case <-ctx.Done():
+			// Report an authentication rejection observed before the deadline
+			// instead of a generic timeout.
+			for _, outcome := range completed {
+				if outcome.err == nil && outcome.status == http.StatusProxyAuthRequired {
+					return proxyProbeOutcome{}, proxyProbeFailure([]proxyProbeOutcome{outcome})
+				}
+			}
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return proxyProbeOutcome{}, errors.New("连接测试已取消")
+			}
+			return proxyProbeOutcome{}, fmt.Errorf("连接测试超时（%s）", proxyProbeTimeout)
+		}
+	}
+	return proxyProbeOutcome{}, proxyProbeFailure(outcomes)
+}
+
+func redactProxyProbeError(message, password string) string {
+	if password != "" {
+		message = strings.ReplaceAll(message, password, "[REDACTED]")
+	}
+	return message
+}
+
 func registerOutboundProxyRoutes(auth *gin.RouterGroup) {
 	auth.GET("/proxies", func(c *gin.Context) {
 		rows, err := db.Query(`SELECT p.id,p.name,p.url,p.username,p.password,p.enabled,p.created_at,
-			(SELECT COUNT(*) FROM upstreams u WHERE u.proxy_id=p.id) FROM outbound_proxies p ORDER BY p.id`)
+			(SELECT COUNT(*) FROM (
+				SELECT id FROM upstreams u WHERE u.proxy_id=p.id
+				UNION SELECT upstream_id FROM cliproxy_pools cp WHERE cp.proxy_id=p.id
+				UNION SELECT upstream_id FROM cliproxy_account_proxies ca WHERE ca.proxy_id=p.id
+			)) FROM outbound_proxies p ORDER BY p.id`)
 		if err != nil {
 			c.JSON(500, gin.H{"error": "无法读取代理列表"})
 			return
@@ -291,6 +436,23 @@ func registerOutboundProxyRoutes(auth *gin.RouterGroup) {
 			return
 		}
 		c.JSON(200, out)
+	})
+
+	// Test a saved proxy even while it is disabled: the administrator may
+	// want to verify connectivity before enabling it for upstream traffic.
+	auth.POST("/proxies/:id/test", func(c *gin.Context) {
+		id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+		p, err := dbGetOutboundProxy(id)
+		if err != nil {
+			c.JSON(404, gin.H{"ok": false, "error": "代理不存在"})
+			return
+		}
+		outcome, err := probeOutboundProxy(c.Request.Context(), p)
+		if err != nil {
+			c.JSON(200, gin.H{"ok": false, "error": truncate(redactProxyProbeError(err.Error(), p.Password), 2000)})
+			return
+		}
+		c.JSON(200, gin.H{"ok": true, "latency_ms": outcome.latency.Milliseconds(), "status": outcome.status, "target": proxyProbeTargetName(outcome.target)})
 	})
 
 	auth.POST("/proxies", func(c *gin.Context) {
@@ -342,9 +504,16 @@ func registerOutboundProxyRoutes(auth *gin.RouterGroup) {
 			c.JSON(400, gin.H{"error": "代理配置格式不正确"})
 			return
 		}
-		if req.Enabled != nil && !*req.Enabled && cliProxyProxyID() == id {
-			c.JSON(409, gin.H{"error": "此代理正被内置 CLIProxyAPI 核心使用，请先在「订阅账号 → 核心设置」中更换出站代理"})
-			return
+		if req.Enabled != nil && !*req.Enabled {
+			references, err := cliProxyReferences(id)
+			if err != nil {
+				c.JSON(500, gin.H{"error": "无法检查账号池代理关联"})
+				return
+			}
+			if cliProxyProxyID() == id || references > 0 {
+				c.JSON(409, gin.H{"error": "此代理正被 CLIProxyAPI 账号池或账号使用，请先在上游配置中更换代理"})
+				return
+			}
 		}
 		previous := *p
 		if req.Name != nil {
@@ -387,6 +556,12 @@ func registerOutboundProxyRoutes(auth *gin.RouterGroup) {
 				return
 			}
 		}
+		if err := syncCLIProxyPoolProxyReferences(c.Request.Context(), id); err != nil {
+			_, _ = db.Exec(`UPDATE outbound_proxies SET name=?,url=?,username=?,password=?,enabled=? WHERE id=?`, previous.Name, previous.URL, previous.Username, previous.Password, boolToInt(previous.Enabled), id)
+			_ = syncCLIProxyPoolProxyReferences(c.Request.Context(), id)
+			c.JSON(502, gin.H{"error": "代理变更未能应用到账号池，已恢复原配置"})
+			return
+		}
 		c.JSON(200, gin.H{"ok": true})
 	})
 
@@ -407,8 +582,13 @@ func registerOutboundProxyRoutes(auth *gin.RouterGroup) {
 			c.JSON(409, gin.H{"error": fmt.Sprintf("此代理仍被 %d 个上游使用，请先修改这些上游的代理选择", count)})
 			return
 		}
-		if cliProxyProxyID() == id {
-			c.JSON(409, gin.H{"error": "此代理正被内置 CLIProxyAPI 核心使用，请先在「订阅账号 → 核心设置」中更换出站代理"})
+		references, err := cliProxyReferences(id)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "无法检查账号池代理关联"})
+			return
+		}
+		if cliProxyProxyID() == id || references > 0 {
+			c.JSON(409, gin.H{"error": "此代理正被 CLIProxyAPI 账号池或账号使用，请先在上游配置中更换代理"})
 			return
 		}
 		if _, err := db.Exec(`DELETE FROM outbound_proxies WHERE id=?`, id); err != nil {

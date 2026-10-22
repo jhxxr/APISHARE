@@ -151,7 +151,7 @@ func markOpenCodeRateSuccess(up *Upstream, started time.Time) {
 }
 
 func (up *Upstream) availableForRelay() bool {
-	return healthAvailable(up.ID) && up.openCodeRateLimit() == nil
+	return healthAvailable(up.ID) && up.openCodeRateLimit() == nil && (up.Type != "cliproxy" || cliProxyRelayAvailable(up.ID))
 }
 
 func (up *Upstream) relayFailures() int {

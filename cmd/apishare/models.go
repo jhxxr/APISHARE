@@ -51,6 +51,9 @@ func upstreamModelCacheKeyForProxy(u *Upstream, p *OutboundProxy) modelCacheKey 
 		connection = append(connection, []byte(openCodeV2UserAgent())...)
 		connection = append(connection, []byte(u.OpenAIProtocol+":"+u.openCodeTier())...)
 	}
+	if u.Type == "cliproxy" {
+		connection = append(connection, []byte(fmt.Sprintf(":pool-revision:%d", cliProxyPoolRevision(u.ID)))...)
+	}
 	return modelCacheKey{u.ID, sha256.Sum256(connection)}
 }
 

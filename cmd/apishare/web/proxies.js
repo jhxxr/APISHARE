@@ -1,5 +1,7 @@
 /* Saved outbound proxies and the upstream connection selector. */
 let proxiesCache = [], proxyEditID = null, proxySaving = false;
+/* Last connectivity result per proxy, kept only for this page session. */
+const proxyProbeResults = new Map(), proxyProbeBusy = new Set();
 
 async function loadProxies(quiet = false) {
   const version = requestVersions.proxies = (requestVersions.proxies || 0) + 1;
@@ -39,12 +41,40 @@ function updateProxyHint() {
   const id = Number($("editProxy").value), proxy = proxiesCache.find((item) => item.id === id);
   $("editProxyHint").textContent = !id ? "沿用系统 HTTP(S)_PROXY / NO_PROXY 设置；未设置时直连。" : proxy?.enabled ? "模型调用、连接测试和模型列表获取均通过此代理。" : "此代理不可用。请启用它或选择其他连接方式。";
 }
+function proxyProbeCell(id) {
+  const result = proxyProbeResults.get(id);
+  if (proxyProbeBusy.has(id)) return '<span class="proxy-probe checking" role="status">' + icon("refresh") + '检测中…</span>';
+  if (!result) return '<span class="proxy-probe idle">未测试</span>';
+  const detail = (value, limit = 140) => { const text = String(value || "未知错误"); return text.length > limit ? text.slice(0, limit - 1) + "…" : text; };
+  if (!result.ok) return '<span class="proxy-probe failed" role="status">' + icon("info") + '连接失败</span><small class="proxy-probe-detail" title="' + esc(result.error) + '">' + esc(detail(result.error)) + '</small>';
+  return '<span class="proxy-probe ok" role="status">' + icon("check") + '正常 · ' + result.latency_ms + ' ms</span><small class="proxy-probe-detail">' + esc(result.target) + ' · HTTP ' + result.status + '</small>';
+}
 function renderProxies() {
   const query = $("proxySearch").value.trim().toLowerCase();
   const list = proxiesCache.filter((item) => [item.name, item.url, item.username].join(" ").toLowerCase().includes(query));
   $("proxyListCount").textContent = list.length + (list.length !== proxiesCache.length ? " / " + proxiesCache.length : "");
-  $("proxiesTable").querySelector("tbody").innerHTML = list.map((item) => '<tr><td class="cell-stack"><strong>' + esc(proxyName(item)) + '</strong><small>' + esc(item.url.split(":")[0].toUpperCase()) + ' · #' + item.id + '</small></td><td class="endpoint-cell"><span>' + esc(item.url) + '</span></td><td>' + (item.username ? esc(item.username) + (item.has_password ? '<span class="cell-stack"><small>密码已保存</small></span>' : '') : '<span class="muted">无需认证</span>') + '</td><td>' + item.upstream_count + ' 个上游</td><td><button class="toggle-btn" role="switch" aria-checked="' + !!item.enabled + '" aria-label="' + (item.enabled ? "停用 " : "启用 ") + esc(item.name) + '" onclick="toggleProxy(' + item.id + ', ' + !item.enabled + ', this)"><span></span></button></td><td><div class="row-actions"><button class="text-btn" onclick="openProxyComposer(' + item.id + ')" aria-label="编辑 ' + esc(item.name) + '">' + icon("edit") + '编辑</button><button class="icon-btn danger" onclick="deleteProxy(' + item.id + ')" aria-label="删除 ' + esc(item.name) + '" title="删除代理">' + icon("trash") + '</button></div></td></tr>').join("") || emptyRow(6, query ? "没有匹配的代理" : "添加你的第一个代理", query ? "调整搜索条件后重试。" : "支持 HTTP、HTTPS、SOCKS5、SOCKS5h，以及用户名和密码认证。", query ? "" : "openProxyComposer()", "添加代理", "link");
+  $("proxiesTable").querySelector("tbody").innerHTML = list.map((item) => '<tr><td class="cell-stack"><strong>' + esc(proxyName(item)) + '</strong><small>' + esc(item.url.split(":")[0].toUpperCase()) + ' · #' + item.id + '</small></td><td class="endpoint-cell"><span>' + esc(item.url) + '</span></td><td>' + (item.username ? esc(item.username) + (item.has_password ? '<span class="cell-stack"><small>密码已保存</small></span>' : '') : '<span class="muted">无需认证</span>') + '</td><td>' + item.upstream_count + ' 个上游</td><td class="proxy-probe-cell">' + proxyProbeCell(item.id) + '</td><td><button class="toggle-btn" role="switch" aria-checked="' + !!item.enabled + '" aria-label="' + (item.enabled ? "停用 " : "启用 ") + esc(item.name) + '" onclick="toggleProxy(' + item.id + ', ' + !item.enabled + ', this)"><span></span></button></td><td><div class="row-actions"><button class="text-btn" onclick="testProxy(' + item.id + ', this)" aria-label="测试 ' + esc(proxyName(item)) + ' 的连通性">' + icon("activity") + '测试</button><button class="text-btn" onclick="openProxyComposer(' + item.id + ')" aria-label="编辑 ' + esc(item.name) + '">' + icon("edit") + '编辑</button><button class="icon-btn danger" onclick="deleteProxy(' + item.id + ')" aria-label="删除 ' + esc(item.name) + '" title="删除代理">' + icon("trash") + '</button></div></td></tr>').join("") || emptyRow(7, query ? "没有匹配的代理" : "添加你的第一个代理", query ? "调整搜索条件后重试。" : "支持 HTTP、HTTPS、SOCKS5、SOCKS5h，以及用户名和密码认证。", query ? "" : "openProxyComposer()", "添加代理", "link");
   labelTableCells("proxiesTable");
+}
+async function testProxy(id, button) {
+  if (proxyProbeBusy.has(id)) return;
+  const item = proxiesCache.find((proxy) => proxy.id === id);
+  if (!item) { toast("代理不存在，请刷新后重试", "error"); return; }
+  proxyProbeBusy.add(id);
+  proxyProbeResults.delete(id);
+  renderProxies();
+  try {
+    const result = await api("api/proxies/" + id + "/test", { method: "POST" });
+    proxyProbeResults.set(id, result);
+    if (result.ok) toast("“" + proxyName(item) + "”连接正常 · " + result.latency_ms + " ms");
+    else toast("“" + proxyName(item) + "”连接失败，原因见列表", "error");
+  } catch (error) {
+    proxyProbeResults.set(id, { ok: false, error: error.message });
+    reportError(error, "代理连接测试失败");
+  } finally {
+    proxyProbeBusy.delete(id);
+    renderProxies();
+  }
 }
 function openProxyComposer(id = null) {
   if (proxySaving) return;
@@ -145,6 +175,7 @@ async function saveProxy(event) {
   setBusy($("proxySaveButton"), true, "正在保存…");
   try {
     await api(id === null ? "api/proxies" : "api/proxies/" + id, { method: id === null ? "POST" : "PATCH", body: JSON.stringify(body) });
+    if (id !== null) proxyProbeResults.delete(id);
     proxySaving = false; closeProxyComposer();
     await loadProxies(); renderUpstreams();
     toast(id === null ? "代理已添加，可在上游中选择使用" : "代理配置已保存");
@@ -170,7 +201,7 @@ async function deleteProxy(id) {
   const item = proxiesCache.find((proxy) => proxy.id === id);
   if (item?.upstream_count) { toast("此代理仍被 " + item.upstream_count + " 个上游使用，请先解除关联", "error"); return; }
   if (!await askAction({ title: "删除代理？", description: "“" + (item?.name || "此代理") + "”的连接配置将被删除。", confirm: "删除代理", danger: true })) return;
-  try { await api("api/proxies/" + id, { method: "DELETE" }); await loadProxies(); toast("代理已删除"); }
+  try { await api("api/proxies/" + id, { method: "DELETE" }); proxyProbeResults.delete(id); await loadProxies(); toast("代理已删除"); }
   catch (error) { reportError(error); }
 }
 function initOutboundProxies() {

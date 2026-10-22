@@ -86,6 +86,17 @@ CREATE TABLE IF NOT EXISTS cline_tokens (
   refresh_token TEXT NOT NULL,
   expires_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS cliproxy_pools (
+  upstream_id INTEGER PRIMARY KEY,
+  data_dir TEXT NOT NULL UNIQUE,
+  proxy_id INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS cliproxy_account_proxies (
+  upstream_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  proxy_id INTEGER NOT NULL DEFAULT -1,
+  PRIMARY KEY(upstream_id,name)
+);
 CREATE TABLE IF NOT EXISTS outbound_proxies (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL DEFAULT '',
@@ -358,6 +369,7 @@ type Upstream struct {
 	ModelMap         string          `json:"model_map"`
 	Enabled          bool            `json:"enabled"`
 	ProxyID          int64           `json:"proxy_id"`
+	PoolProxyID      int64           `json:"pool_proxy_id,omitempty"` // CLIProxy pool default; never used on the loopback hop.
 	HeaderOverrides  string          `json:"header_overrides"`
 	OpenAIProtocol   string          `json:"openai_protocol"`   // OpenAI: auto/chat/responses; OpenCode: auto/chat/responses/anthropic
 	OpenCodeTier     string          `json:"opencode_tier"`     // zen/go; empty infers the tier from BaseURL for older channels

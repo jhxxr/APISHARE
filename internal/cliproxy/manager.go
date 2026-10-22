@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -15,11 +14,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	sdk "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
-	_ "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator/builtin"
 )
 
 // Version is the exact module version compiled into API Share, never a runtime
@@ -43,11 +41,12 @@ type diskState struct {
 }
 
 type Status struct {
-	Version   string `json:"version"`
-	Embedded  bool   `json:"embedded"`
-	Running   bool   `json:"running"`
-	AutoStart bool   `json:"auto_start"`
-	Error     string `json:"error,omitempty"`
+	Version      string `json:"version"`
+	Embedded     bool   `json:"embedded"`
+	Running      bool   `json:"running"`
+	AutoStart    bool   `json:"auto_start"`
+	Error        string `json:"error,omitempty"`
+	AccountCount int    `json:"account_count"`
 	// ProxyID is filled by the gateway from its outbound proxy binding.
 	ProxyID int64 `json:"proxy_id"`
 }
@@ -60,6 +59,7 @@ type Manager struct {
 	cancel    context.CancelFunc
 	done      chan struct{}
 	lastError string
+	revision  atomic.Uint64
 }
 
 func NewManager(root string, port int) (*Manager, error) {
@@ -140,10 +140,13 @@ func (m *Manager) saveState(s diskState) error {
 	return writePrivate(filepath.Join(m.root, "state.json"), b)
 }
 func (m *Manager) snapshot() diskState { m.mu.Lock(); defer m.mu.Unlock(); return m.state }
+func (m *Manager) Running() bool       { m.mu.Lock(); defer m.mu.Unlock(); return m.cancel != nil }
+func (m *Manager) Revision() uint64    { return m.revision.Load() }
+func (m *Manager) Touch()              { m.revision.Add(1) }
 func (m *Manager) Status() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return Status{Version: Version(), Embedded: true, Running: m.cancel != nil, AutoStart: m.state.AutoStart, Error: m.lastError}
+	return Status{Version: Version(), Embedded: true, Running: m.cancel != nil, AutoStart: m.state.AutoStart, Error: m.lastError, AccountCount: m.CredentialCount()}
 }
 func (m *Manager) Client() Client {
 	s := m.snapshot()
@@ -224,26 +227,13 @@ func (m *Manager) start(ctx context.Context) error {
 	cfg.RemoteManagement.AllowRemote = false
 	cfg.RemoteManagement.DisableControlPanel = true
 	cfg.AuthDir = filepath.Join(m.root, "auths")
-	service, err := sdk.NewBuilder().WithConfig(cfg).WithConfigPath(path).Build()
+	// Each pool runs the SDK linked into this executable in its own process.
+	// The SDK has process-wide token stores and registries; separate listeners
+	// alone cannot isolate accounts, model catalogs or OAuth callbacks.
+	done, err := m.startProcess(path)
 	if err != nil {
-		return fmt.Errorf("内置 CLIProxyAPI 初始化失败：%w", err)
+		return err
 	}
-	run, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	m.mu.Lock()
-	m.cancel, m.done, m.lastError = cancel, done, ""
-	m.mu.Unlock()
-	go func() {
-		err := service.Run(run)
-		cancel()
-		m.mu.Lock()
-		m.cancel = nil
-		if err != nil && !errors.Is(err, context.Canceled) {
-			m.lastError = "内置核心已停止，请检查网关日志"
-		}
-		close(done)
-		m.mu.Unlock()
-	}()
 	ready, stop := context.WithTimeout(ctx, 20*time.Second)
 	defer stop()
 	client := m.Client()

@@ -135,6 +135,16 @@
       "brand": "opencode",
       "file": "opencode.svg",
       "sha256": "7cfa6e9d6726f7c9fa26c7d9aef0dfec52d20a137380454340f30f12ccbfd302"
+    },
+    {
+      "brand": "antigravity",
+      "file": "antigravity-color.svg",
+      "sha256": "652128cf55a28bb958563ee372d0bd00208d9e6fd446f523f77aafd811eef8ca"
+    },
+    {
+      "brand": "devin",
+      "file": "devin.svg",
+      "sha256": "8d197b0c31522517ffa896cd4a1ee65719eb73bff9eb9bbf7edf64db6b1a573d"
     }
   ]
 }

@@ -2,6 +2,9 @@ package main
 
 import (
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"io"
 	"io/fs"
 	"net/http"
@@ -37,8 +40,31 @@ func TestModelBrandAssetsPublicAndVersioned(t *testing.T) {
 		}
 		count++
 	}
-	if count != 26 {
-		t.Fatalf("brand icon count = %d", count)
+	notice, err := fs.ReadFile(webFS, folder+"/NOTICE.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Assets []struct {
+			File   string `json:"file"`
+			SHA256 string `json:"sha256"`
+		} `json:"assets"`
+	}
+	if err := json.Unmarshal(notice, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if count != len(manifest.Assets) {
+		t.Fatalf("brand icons (%d) and attribution manifest (%d) differ", count, len(manifest.Assets))
+	}
+	for _, asset := range manifest.Assets {
+		content, err := fs.ReadFile(webFS, folder+"/"+asset.File)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hash := sha256.Sum256(content)
+		if hex.EncodeToString(hash[:]) != asset.SHA256 {
+			t.Fatalf("brand icon differs from its attributed package: %s", asset.File)
+		}
 	}
 }
 

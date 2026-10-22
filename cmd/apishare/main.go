@@ -49,12 +49,15 @@ func main() {
 		fmt.Println("failed to initialize CLIProxyAPI:", err)
 		os.Exit(1)
 	}
-	defer cliProxyCore.Close()
+	defer closeCLIProxyPools()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go func() {
 		if err := resumeCLIProxy(ctx); err != nil {
 			fmt.Println("CLIProxyAPI:", err)
+		}
+		if err := resumeCLIProxyPools(ctx); err != nil {
+			fmt.Println("CLIProxyAPI pools:", err)
 		}
 	}()
 	go affinityCleanupLoop()

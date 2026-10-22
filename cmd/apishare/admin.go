@@ -292,18 +292,29 @@ func registerAdminRoutes(r *gin.Engine) {
 		}
 		type upView struct {
 			Upstream
-			APIKey    string `json:"api_key"`
-			KeyMasked string `json:"key_masked"`
-			Fails     int    `json:"fails"`
-			Healthy   bool   `json:"healthy"`
+			APIKey       string `json:"api_key"`
+			KeyMasked    string `json:"key_masked"`
+			Fails        int    `json:"fails"`
+			Healthy      bool   `json:"healthy"`
+			PoolAccounts int    `json:"pool_accounts,omitempty"`
+			PoolRunning  bool   `json:"pool_running,omitempty"`
+			ManagedPool  bool   `json:"managed_pool,omitempty"`
 		}
 		out := make([]upView, 0, len(ups))
 		for _, u := range ups {
+			count, running, managed := 0, false, false
+			if u.Type == "cliproxy" {
+				if manager, err := cliProxyPool(u.ID); err == nil {
+					u.PoolProxyID = cliProxyPoolProxyID(u.ID)
+					count, running, managed = manager.CredentialCount(), manager.Status().Running, true
+				}
+			}
 			out = append(out, upView{
-				Upstream:  u,
-				KeyMasked: maskKey(u.APIKey),
-				Fails:     u.relayFailures(),
-				Healthy:   u.availableForRelay(),
+				Upstream:     u,
+				KeyMasked:    maskKey(u.APIKey),
+				Fails:        u.relayFailures(),
+				Healthy:      u.availableForRelay(),
+				PoolAccounts: count, PoolRunning: running, ManagedPool: managed,
 			})
 		}
 		c.JSON(200, out)
@@ -328,7 +339,14 @@ func registerAdminRoutes(r *gin.Engine) {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		if u.BaseURL == "" || u.APIKey == "" {
+		managedPool := u.Type == "cliproxy" && cliProxyPools.root != ""
+		if managedPool {
+			if err := validateUpstreamProxy(u.PoolProxyID); err != nil {
+				c.JSON(400, gin.H{"error": err.Error()})
+				return
+			}
+		}
+		if !managedPool && (u.BaseURL == "" || u.APIKey == "") {
 			c.JSON(400, gin.H{"error": "base_url and api_key are required"})
 			return
 		}
@@ -354,7 +372,7 @@ func registerAdminRoutes(r *gin.Engine) {
 		}
 		if u.Type == "cliproxy" {
 			if u.ProxyID != 0 {
-				c.JSON(400, gin.H{"error": "CLIProxyAPI 账号池的出站代理请在「订阅账号 → 核心设置」中配置"})
+				c.JSON(400, gin.H{"error": "请在此上游账号池的核心设置中配置默认代理，或为账号单独选择代理"})
 				return
 			}
 		} else if err := validateUpstreamProxy(u.ProxyID); err != nil {
@@ -365,8 +383,14 @@ func registerAdminRoutes(r *gin.Engine) {
 			u.Weight = 1
 		}
 		u.Enabled = true
-		if err := dbInsertUpstream(&u); err != nil {
-			c.JSON(500, gin.H{"error": err.Error()})
+		var saveErr error
+		if managedPool {
+			saveErr = createCLIProxyPool(c.Request.Context(), &u)
+		} else {
+			saveErr = dbInsertUpstream(&u)
+		}
+		if saveErr != nil {
+			c.JSON(500, gin.H{"error": saveErr.Error()})
 			return
 		}
 		c.JSON(200, gin.H{"ok": true, "id": u.ID})
@@ -396,6 +420,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			OpenAIProtocol   *string `json:"openai_protocol"`
 			OpenCodeTier     *string `json:"opencode_tier"`
 			StructuredOutput *string `json:"structured_output"`
+			PoolProxyID      *int64  `json:"pool_proxy_id"`
 		}
 		if c.BindJSON(&req) != nil {
 			return
@@ -404,6 +429,16 @@ func registerAdminRoutes(r *gin.Engine) {
 			u.Name = *req.Name
 		}
 		if req.Type != nil {
+			var managed int
+			_ = db.QueryRow(`SELECT count(*) FROM cliproxy_pools WHERE upstream_id=?`, u.ID).Scan(&managed)
+			if managed > 0 && *req.Type != u.Type {
+				c.JSON(400, gin.H{"error": "账号池类型不可更改，请新建其他类型的上游"})
+				return
+			}
+			if u.Type != "cliproxy" && *req.Type == "cliproxy" {
+				c.JSON(400, gin.H{"error": "请新建 CLIProxyAPI 上游以创建独立账号池"})
+				return
+			}
 			u.APIKey = u.openCodeKeyForType(*req.Type)
 			u.Type = *req.Type
 		}
@@ -467,7 +502,7 @@ func registerAdminRoutes(r *gin.Engine) {
 		if req.ProxyID != nil {
 			if u.Type == "cliproxy" {
 				if *req.ProxyID != 0 {
-					c.JSON(400, gin.H{"error": "CLIProxyAPI 账号池的出站代理请在「订阅账号 → 核心设置」中配置"})
+					c.JSON(400, gin.H{"error": "请在此上游账号池的核心设置中配置默认代理，或为账号单独选择代理"})
 					return
 				}
 			} else if *req.ProxyID != u.ProxyID {
@@ -482,6 +517,15 @@ func registerAdminRoutes(r *gin.Engine) {
 		// the local hop. Clear stale values left by older configurations.
 		if u.Type == "cliproxy" {
 			u.ProxyID = 0
+			if manager, err := cliProxyPool(u.ID); err == nil {
+				u.BaseURL, u.APIKey = manager.Connection()
+				if req.PoolProxyID != nil {
+					if err := setPoolProxy(c.Request.Context(), manager, u.ID, *req.PoolProxyID); err != nil {
+						c.JSON(400, gin.H{"error": err.Error()})
+						return
+					}
+				}
+			}
 		}
 		if err := u.normalizeOpenCodeFree(); err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
@@ -495,11 +539,27 @@ func registerAdminRoutes(r *gin.Engine) {
 	})
 
 	auth.DELETE("/upstreams/:id", func(c *gin.Context) {
+		proxyConfigMu.Lock()
+		defer proxyConfigMu.Unlock()
 		id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
 		if err := dbDeleteUpstream(id); err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
 		}
+		cliProxyPools.Lock()
+		manager := cliProxyPools.items[id]
+		delete(cliProxyPools.items, id)
+		cliProxyPools.Unlock()
+		if manager != nil {
+			if manager == cliProxyCore {
+				_ = manager.Stop()
+				_ = settingsSet(cliProxyProxySetting, "0")
+			} else {
+				manager.Close()
+			}
+		}
+		_, _ = db.Exec(`DELETE FROM cliproxy_pools WHERE upstream_id=?`, id)
+		_, _ = db.Exec(`DELETE FROM cliproxy_account_proxies WHERE upstream_id=?`, id)
 		c.JSON(200, gin.H{"ok": true})
 	})
 
@@ -536,8 +596,15 @@ func registerAdminRoutes(r *gin.Engine) {
 		if dup.Type == "cliproxy" {
 			dup.ProxyID = 0
 		}
-		if err := dbInsertUpstream(&dup); err != nil {
-			c.JSON(500, gin.H{"error": err.Error()})
+		var saveErr error
+		if dup.Type == "cliproxy" && cliProxyPools.root != "" {
+			dup.PoolProxyID = cliProxyPoolProxyID(src.ID)
+			saveErr = createCLIProxyPool(c.Request.Context(), &dup)
+		} else {
+			saveErr = dbInsertUpstream(&dup)
+		}
+		if saveErr != nil {
+			c.JSON(500, gin.H{"error": saveErr.Error()})
 			return
 		}
 		c.JSON(200, gin.H{"ok": true, "id": dup.ID, "name": dup.Name})

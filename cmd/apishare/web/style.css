@@ -186,6 +186,16 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline
 .proxy-clear { display: flex; align-items: center; gap: 9px; min-height: 44px; margin-top: 14px; font-size: 12px; }
 #proxyFormError { margin-top: 16px; }
 #proxiesTable .endpoint-cell { overflow-wrap: anywhere; }
+#proxiesTable .proxy-probe-cell { min-width: 150px; }
+.proxy-probe { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; white-space: nowrap; }
+.proxy-probe .icon { width: 12px; height: 12px; }
+.proxy-probe.idle { color: var(--muted); }
+.proxy-probe.checking { color: var(--muted); }
+.proxy-probe.checking .icon { animation: spin 850ms linear infinite; }
+.proxy-probe.ok { color: var(--green); }
+.proxy-probe.failed { color: var(--red); }
+.proxy-probe-detail { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; margin-top: 4px; color: var(--muted); font: 10px/1.6 var(--mono); overflow: hidden; overflow-wrap: anywhere; max-width: 220px; word-break: break-word; }
+.proxy-probe.failed + .proxy-probe-detail { color: var(--red); max-width: 240px; }
 #proxyComposer .form-actions .btn, #tab-proxies .page-heading .btn { min-height: 44px; }
 @media (max-width: 600px) { #proxyForm .form-grid { grid-template-columns: minmax(0, 1fr); } #proxyForm input { font-size: 16px; } }
 .field { display: flex; flex-direction: column; gap: 8px; color: var(--text); font-size: 12px; min-width: 0; }

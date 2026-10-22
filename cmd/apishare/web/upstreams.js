@@ -47,6 +47,7 @@ function filteredUpstreams() {
   });
 }
 function upstreamIdentity(item) {
+  if (item.type === "cliproxy" && item.managed_pool) return '<div class="upstream-identity">' + providerIcon(item.type, item.base_url) + '<div class="upstream-identity-text"><button class="upstream-name" onclick="openEditUpstream(' + item.id + ')" title="打开 ' + esc(item.name) + ' 账号池">' + esc(item.name) + '</button><span class="upstream-key-line">' + (item.pool_accounts || 0) + ' 个账号 <span>· ' + (item.pool_running ? '运行中' : '已停止') + '</span></span><span class="upstream-format">CLIProxyAPI 账号池 · ' + esc(item.pool_proxy_id ? upstreamProxyLabel(item.pool_proxy_id) : "默认连接") + '</span></div></div>';
   return '<div class="upstream-identity">' + providerIcon(item.type, item.base_url) + '<div class="upstream-identity-text"><button class="upstream-name" onclick="openEditUpstream(' + item.id + ')" title="编辑 ' + esc(item.name) + '">' + esc(item.name || "未命名上游") + '</button><span class="upstream-key-line" title="' + esc(item.base_url) + '">' + esc(item.base_url.replace(/^https?:\/\//, "").replace(/\/$/, "")) + ' <span>· ' + esc(item.key_masked || "已保存密钥") + '</span></span><span class="upstream-format">' + esc(upstreamFormatNames[upstreamFormat(item)] || item.type) + (item.proxy_id ? ' · ' + esc(upstreamProxyLabel(item.proxy_id)) : '') + '</span></div></div>';
 }
 function upstreamHealthHTML(item) {
@@ -124,7 +125,7 @@ async function openUpstreamSection(id, section) {
   const item = upsCache.find((upstream) => upstream.id === id);
   if (!item) return;
   await openEditor(item);
-  if ($("editModal").open) jumpEditor(section);
+  if (editorIsOpen()) jumpEditor(section);
 }
 function selectUpstream(id, selected) {
   if (upstreamBulkBusy) return;

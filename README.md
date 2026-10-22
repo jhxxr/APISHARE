@@ -48,7 +48,7 @@ API Share 是一个用 Go 编写的 AI 网关。它统一接收 OpenAI Chat Comp
 - **会话粘性** — 通过请求头或对话指纹把同一会话绑定到同一上游，提升 Prompt Cache 命中率。
 - **优先级与加权路由** — 先按 `priority` 取最高可用层（数值越小越优先，主力 0、备用 1），同层内再按权重分流；上游返回 `401 / 403 / 408 / 429 / 5xx / 529` 或网络异常时自动切换；连续故障触发指数退避冷却。
 - **计费与配额** — 每日同步 LiteLLM 价格库，支持每 Key 的 QPS、并发、共享额度与模型专属额度。
-- **独立代理池** — 每个上游可单独绑定 HTTP / HTTPS / SOCKS5 / SOCKS5h 代理（均支持用户名密码），OpenCode 免费流量同样经所选代理出站；内置订阅账号池也可从同一代理池选择核心出站代理。
+- **独立代理池** — 每个上游可单独绑定 HTTP / HTTPS / SOCKS5 / SOCKS5h 代理（均支持用户名密码），OpenCode 免费流量同样经所选代理出站；内置订阅账号池也可从同一代理池选择核心出站代理。代理列表可逐个测试连通性与延迟。
 - **单二进制部署** — 纯 Go SQLite（WAL）与 `go:embed` 静态前端，无需 Redis、MySQL 或 Nginx。
 - **内置订阅账号池** — CLIProxyAPI SDK 随程序编译、默认启动，在现有后台完成 OAuth 登录、凭据导入与账号管理，核心版本随 API Share 发版更新。[使用与升级](docs/CLIPROXY.md)
 - **管理与监控** — 初始化向导、热重命名后台路径、公开状态页、自定义站点标题与图标、调用日志与速度指标；仪表盘提供实时 RPM、消费/请求趋势、缓存命中分析与密钥 / 模型 / 上游排行。
@@ -290,7 +290,7 @@ Copyright (C) 2026 API Share contributors.
 
 感谢 [LiteLLM](https://github.com/BerriAI/litellm) 提供的模型价格规范，以及 [New API](https://github.com/QuantumNous/new-api)、[Sub2API](https://github.com/Wei-Shaw/sub2api) 在协议兼容设计上的探索。
 
-内置 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) SDK 遵循 [MIT 许可](cmd/apishare/third_party/cliproxy/LICENSE)，后台「订阅账号」提供许可原文，Docker 镜像同时携带该文件。
+内置 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) SDK 遵循 [MIT 许可](cmd/apishare/third_party/cliproxy/LICENSE)，后台上游的「账号池运行设置」提供许可原文，Docker 镜像同时携带该文件。
 
 <div align="center">
   <sub>Built with ❤️ by the API Share contributors.</sub>

@@ -40,9 +40,9 @@ function editorOpenAIProtocol() {
   if (isOpenCodeType($("editType").value)) return $("editOpenCodeProtocol").value || "auto";
   return { "openai-chat": "chat", "openai-responses": "responses" }[$("editType").value] || "auto";
 }
-const tabNames = { dashboard: "仪表盘", keys: "API 密钥", upstreams: "上游服务", subscriptions: "订阅账号", models: "模型总览", proxies: "代理配置", logs: "调用日志", announcements: "公告管理", settings: "工作空间设置", deployment: "部署配置" };
+const tabNames = { dashboard: "仪表盘", keys: "API 密钥", upstreams: "上游服务", models: "模型总览", proxies: "代理配置", logs: "调用日志", announcements: "公告管理", settings: "工作空间设置", deployment: "部署配置" };
 const siteTitle = () => document.documentElement.dataset.siteTitle || "API Share";
-const tabIcons = { subscriptions: "token", dashboard: "grid", keys: "key", upstreams: "layers", models: "spark", proxies: "link", logs: "activity", announcements: "megaphone", settings: "sliders", deployment: "shield" };
+const tabIcons = { dashboard: "grid", keys: "key", upstreams: "layers", models: "spark", proxies: "link", logs: "activity", announcements: "megaphone", settings: "sliders", deployment: "shield" };
 document.body.classList.toggle("sidebar-collapsed", localStorage.getItem("apishare_sidebar_collapsed") === "true");
 document.querySelectorAll(".tab").forEach((button) => {
   button.title = tabNames[button.dataset.tab];
@@ -55,7 +55,7 @@ document.querySelectorAll(".panel > .page-heading").forEach((heading) => {
   glyph.innerHTML = icon(tabIcons[heading.closest(".panel").id.slice(4)] || "grid");
   heading.firstElementChild.prepend(glyph);
 });
-const validTab = (name) => Object.hasOwn(tabNames, name);
+const validTab = (name) => Object.hasOwn(tabNames, name) || /^upstreams\/[1-9]\d*$/.test(name) || name === "subscriptions";
 let token = localStorage.getItem(TOKEN_KEY) || "";
 let activeTab = "dashboard";
 let logsPage = 1;
@@ -154,13 +154,12 @@ function dismissNewKey() { $("newKeyShow").classList.add("hidden"); $("newKeyVal
 /* Authentication and navigation */
 function showLogin() {
   cancelCoreLogin();
-  document.querySelector(".core-settings").open = false;
   closeLogDetails();
   $("logColumnsMenu").hidePopover();
   resetAnnouncementComposer();
   if ($("keyModelsDialog").open) { savingKeyModels = false; closeKeyModels(); }
   if ($("actionDialog").open) resolveAction(false);
-  if ($("editModal").open) finishCloseEditor();
+  if (editorIsOpen()) finishCloseEditor();
   $("loginView").classList.remove("hidden");
   $("appView").classList.add("hidden");
   document.querySelector(".skip-link").classList.add("hidden");
@@ -240,6 +239,13 @@ function toggleSidebar(open) {
   if (next && matchMedia("(max-width: 768px)").matches) document.querySelector(".tab.active").focus();
 }
 async function switchTab(name, updateHistory = true) {
+  if (name === "subscriptions") name = "upstreams";
+  const detailID = /^upstreams\/([1-9]\d*)$/.exec(name)?.[1];
+  if (editorIsOpen() && !$("editModal").open && Number(detailID) !== editProbe.id) {
+    await closeEdit();
+    if (editorIsOpen()) return;
+  }
+  if (detailID) name = "upstreams";
   if (!validTab(name)) name = "dashboard";
   activeTab = name;
   document.querySelectorAll(".tab").forEach((button) => {
@@ -250,17 +256,18 @@ async function switchTab(name, updateHistory = true) {
   document.querySelectorAll(".panel").forEach((panel) => panel.classList.toggle("hidden", panel.id !== "tab-" + name));
   $("pageCrumb").textContent = tabNames[name];
   document.title = siteTitle() + " · " + tabNames[name];
-  if (updateHistory && location.hash !== "#" + name) history.pushState(null, "", "#" + name);
+  const hash = "#" + name + (detailID ? "/" + detailID : "");
+  if (updateHistory && location.hash !== hash) history.pushState(null, "", hash);
   toggleSidebar(false);
   if (name !== "keys") dismissNewKey();
-  if (name !== "subscriptions") cancelCoreLogin();
-  return loadCurrentTab();
+  if (!detailID && !editorIsOpen()) cancelCoreLogin();
+  await loadCurrentTab();
+  if (detailID && (!editorIsOpen() || editProbe.id !== Number(detailID))) openEditUpstream(Number(detailID));
 }
 async function loadCurrentTab() {
-  if (activeTab === "subscriptions") return loadCLIProxy();
   if (activeTab === "dashboard") return Promise.all([loadStats(), loadRecent()]);
   if (activeTab === "keys") return loadKeys();
-  if (activeTab === "upstreams") return loadUpstreams();
+  if (activeTab === "upstreams") return Promise.all([loadUpstreams(), editorIsOpen() && coreUI.poolID ? loadCLIProxy() : Promise.resolve()]);
   if (activeTab === "models") return loadModelOverview();
   if (activeTab === "proxies") return loadProxies();
   if (activeTab === "logs") return loadLogs(logsPage);
@@ -275,7 +282,7 @@ async function refreshCurrent() {
 document.querySelectorAll(".tab").forEach((button) => button.addEventListener("click", () => switchTab(button.dataset.tab)));
 function followHistory() {
   const name = validTab(location.hash.slice(1)) ? location.hash.slice(1) : "dashboard";
-  if (name !== activeTab && !$("appView").classList.contains("hidden")) switchTab(name, false);
+  if (!$("appView").classList.contains("hidden")) switchTab(name, false);
 }
 window.addEventListener("popstate", followHistory);
 window.addEventListener("hashchange", followHistory);
@@ -711,7 +718,7 @@ async function duplicateUpstream(id) {
   if (!item) { toast("未找到该上游，请刷新列表后重试", "error"); return; }
   const name = await askAction({
     title: "复制上游服务？",
-    description: "将“" + (item.name || "未命名上游") + "”的类型、地址、密钥、模型配置、请求头、代理、优先级与权重完整复制为一条新的上游，并沿用原启用状态。可以修改新上游的名称，创建后再按需调整其他配置。",
+    description: item.type === "cliproxy" && item.managed_pool ? "复制“" + item.name + "”的模型、调度和默认代理配置，并创建一个独立的空账号池。新池的账号需要单独授权或导入。" : "将“" + (item.name || "未命名上游") + "”的类型、地址、密钥、模型配置、请求头、代理、优先级与权重完整复制为一条新的上游，并沿用原启用状态。",
     input: (item.name || "未命名上游") + " 副本",
     inputType: "text",
     inputLabel: "新上游名称",
@@ -736,29 +743,34 @@ async function testUpstream(id, button) {
 
 /* One editor for both creation and updates. */
 function editorValue() {
-  return JSON.stringify(["editName", "editType", "editOpenCodeTier", "editOpenCodeProtocol", "editBase", "editKey", "editProxy", "editHeaderOverrides", "editStructuredOutput", "editPriority", "editWeight", "editModels"].map((id) => $(id).value).concat($("editEnabled").checked, $("editModelInput").value, $("modelMapBatch").value, [modelMappingDirtyValue()]));
+  return JSON.stringify(["editName", "editType", "editOpenCodeTier", "editOpenCodeProtocol", "editBase", "editKey", "editProxy", "editHeaderOverrides", "editStructuredOutput", "editPriority", "editWeight", "editModels"].map((id) => $(id).value).concat($("editEnabled").checked, $("editModelInput").value, $("modelMapBatch").value, [modelMappingDirtyValue()], editorUpstreamType() === "cliproxy" ? coreUI.pending.map(item => [item.name, item.proxy_id]) : [], editorUpstreamType() === "cliproxy" && !coreUI.poolID ? coreUI.defaultProxy : 0));
 }
-function editorDirty() { return $("editModal").open && editorValue() !== editProbe.initial; }
+function editorIsOpen() { return $("editModal").open || !$("upstreamDetailPage").classList.contains("hidden"); }
+function editorDirty() { return editorIsOpen() && editorValue() !== editProbe.initial; }
 function updateEditorDirty() {
   const dirty = editorDirty();
   $("editorSaveStatus").classList.toggle("dirty", dirty || editProbe.id === null);
   $("editorSaveStatus").lastElementChild.textContent = editProbe.saving ? "正在保存配置…" : dirty ? "有未保存的修改" : editProbe.id === null ? "新连接尚未保存" : "配置未改动";
 }
 function openCreateUpstream() { openEditor(null); }
-function openEditUpstream(id) {
+async function openEditUpstream(id) {
   const upstream = upsCache.find((item) => item.id === id);
   if (!upstream) { toast("未找到该上游，请刷新列表后重试", "error"); return; }
-  openEditor(upstream);
+  if (editorIsOpen() && editProbe.id !== id) await closeEdit();
+  await openEditor(upstream);
 }
 async function openEditor(upstream) {
-  if ($("editModal").open) return;
+  if (editorIsOpen()) return;
   if (!await loadProxies()) return;
-  if ($("editModal").open || $("appView").classList.contains("hidden")) return;
+  if (editorIsOpen() || $("appView").classList.contains("hidden")) return;
   const creating = !upstream;
   editProbe.id = upstream ? upstream.id : null;
   editProbe.generation++;
   editProbe.saving = false; editProbe.closing = false; editProbe.models = [];
   $("upstreamEditorForm").reset();
+  preparePoolEditor(upstream);
+  $("editType").disabled = upstream?.type === "cliproxy" && !!upstream.managed_pool;
+  $("editType").querySelector('[value="cliproxy"]').disabled = !!upstream && upstream.type !== "cliproxy";
   $("upstreamEditorForm").querySelectorAll(".form-error").forEach((error) => error.classList.add("hidden"));
   const format = upstreamFormat(upstream);
   $("legacyOpenAIFormatOption").hidden = format !== "openai-auto";
@@ -782,7 +794,7 @@ async function openEditor(upstream) {
   $("revealKeyButton").setAttribute("aria-pressed", "false");
   $("revealKeyButton").setAttribute("aria-label", "显示 API 密钥");
   $("editTitle").textContent = creating ? "新连接" : "连接 #" + upstream.id;
-  $("editorHeading").textContent = creating ? "添加上游服务" : "编辑上游服务";
+  $("editorHeading").textContent = creating ? "添加上游服务" : upstream.type === "cliproxy" ? upstream.name : "编辑上游服务";
   $("editorSaveLabel").textContent = creating ? "创建连接" : "保存修改";
   $("editProbeArea").classList.add("hidden");
   $("editProbeList").innerHTML = ""; $("editProbeFilter").value = ""; $("editProbeInfo").textContent = "";
@@ -791,17 +803,32 @@ async function openEditor(upstream) {
   setBusy($("probeEditorButton"), false);
   updateEditorProvider(false); renderModelChips(); validateHeaderOverrides();
   editProbe.initial = editorValue();
-  $("editModal").showModal();
-  document.body.classList.add("modal-open");
+  const poolPage = !creating && upstream.type === "cliproxy" && upstream.managed_pool;
+  if (poolPage) {
+    $("upstreamListPage").classList.add("hidden");
+    $("upstreamDetailPage").classList.remove("hidden");
+    $("upstreamDetailPage").append($("upstreamEditorForm"));
+    $("editorScroll").prepend($("editorPool"));
+    document.querySelector(".editor-nav .nav-label").after($("poolEditorNav"));
+    if (location.hash !== "#upstreams/" + upstream.id) history.pushState(null, "", "#upstreams/" + upstream.id);
+    $("pageCrumb").textContent = "上游服务 / " + upstream.name;
+    document.title = siteTitle() + " · " + upstream.name;
+    window.scrollTo({top: 0});
+  } else {
+    $("editModal").showModal();
+    document.body.classList.add("modal-open");
+  }
   $("editorScroll").scrollTop = 0;
-  activateEditorSection("editorBasic");
+  activateEditorSection(poolPage ? "editorPool" : "editorBasic");
   updateEditorDirty();
-  $("editName").focus();
+  if (!poolPage) $("editName").focus();
   loadClientHeaderVersions();
+  if (upstream?.type === "cliproxy" && upstream.managed_pool) loadCLIProxy();
 }
 function updateEditorProvider(changed = true) {
   const format = $("editType").value, type = editorUpstreamType();
   const freeOpenCode = type === "opencode-free";
+  const pool = type === "cliproxy" && (!editProbe.id || !!upsCache.find(item => item.id === editProbe.id)?.managed_pool);
   const keepZenCredential = editProbe.provider === "opencode" && $("editOpenCodeTier").value !== "go";
   if (changed && freeOpenCode && editProbe.provider !== type && !keepZenCredential) $("editKey").value = "";
   const knownURLs = [...Object.values(providerURLs), ...Object.values(openCodeURLs), "https://opencode.ai/inference", "https://opencode.ai/inference/go"];
@@ -812,8 +839,13 @@ function updateEditorProvider(changed = true) {
   $("editorProviderIcon").setAttribute("aria-hidden", "true");
   $("opencodeProtocolField").classList.toggle("hidden", !isOpenCodeType(type));
   $("opencodeTierField").classList.toggle("hidden", type !== "opencode");
-  // The pool is a loopback upstream; its egress proxy is configured once for
-  // the embedded core on the subscriptions page, not on this local hop.
+  $("editorPool").classList.toggle("hidden", !pool);
+  $("poolEditorNav").classList.toggle("hidden", !pool);
+  $("editorConnection").classList.toggle("hidden", pool);
+  document.querySelector('[data-section="editorConnection"]').classList.toggle("hidden", pool);
+  $("editBase").disabled = pool;
+  $("editKey").disabled = pool;
+  $("editBase").required = !pool;
   $("editProxyField").classList.toggle("hidden", type === "cliproxy");
   if (type === "cliproxy") $("editProxy").value = "0";
   $("providerHint").textContent = {
@@ -822,13 +854,13 @@ function updateEditorProvider(changed = true) {
     "openai-auto": "旧连接沿用原有行为：跟随 OpenAI 客户端接口，其他格式转换为 Chat。可改选上游实际支持的固定格式。",
     "opencode-free": "保留默认地址，点击「获取模型」即可选择 OpenCode 当前免费模型。无需安装 CLI，API Key 可留空；模型可用性与免费额度由 OpenCode 调整。",
     opencode: "旧连接保留原有 Zen / Go 套餐、密钥和协议。Zen 连接切换为免费渠道时保留已有密钥；Go 连接切换时使用匿名凭据，也可填写自己的 Zen API Key。",
-    cliproxy: "由订阅账号页接入的账号池，跟随客户端原生协议。账号登录、出站代理和核心升级请进入订阅账号页。",
+    cliproxy: "一个上游就是一个独立账号池。在这里添加账号、授权登录，并为每个账号指定代理。内部连接由系统自动管理。",
     cline: "点击「登录 Cline 账号」完成浏览器授权，即可获取当前免费模型，无需安装 CLI。也可手动填写账号凭据。免费模型与额度由 Cline 调整。",
     anthropic: "上游使用 Anthropic 原生 /v1/messages 接口。",
     gemini: "上游使用 Gemini 原生 generateContent / streamGenerateContent 接口。"
   }[format];
   $("editKeyLabel").textContent = type === "cline" ? "账号 RefreshToken / API Key" : freeOpenCode ? "API 密钥（可选）" : "API 密钥";
-  $("editKey").required = editProbe.id === null && !freeOpenCode;
+  $("editKey").required = editProbe.id === null && !freeOpenCode && !pool;
   $("editKeyRequired").classList.toggle("hidden", !$("editKey").required);
   $("editKey").setCustomValidity("");
   if (freeOpenCode) $("editKey").placeholder = editProbe.id === null ? "留空使用匿名访问，或填写自己的 Zen API Key" : "留空保留已有 Zen 凭据；填写 public 使用匿名访问";
@@ -838,6 +870,7 @@ function updateEditorProvider(changed = true) {
   editProbe.provider = type;
   updateClineLoginProvider(changed);
   if (changed) { clearProbeResults(); updateEditorDirty(); }
+  $("probeEditorButton").innerHTML = icon("refresh") + (pool ? " 获取池内模型" : " 获取当前 Key 模型");
 }
 function updateOpenCodeTier() {
   const known = [...Object.values(openCodeURLs), "https://opencode.ai/inference", "https://opencode.ai/inference/go"];
@@ -870,6 +903,10 @@ function activateEditorSection(id) {
   });
 }
 function jumpEditor(id) {
+  if (!$("upstreamDetailPage").classList.contains("hidden")) {
+    $(id).scrollIntoView({block: "start", behavior: motionBehavior()});
+    activateEditorSection(id); return;
+  }
   $("editorScroll").scrollTo({ top: $(id).offsetTop - 24, behavior: motionBehavior() });
   activateEditorSection(id);
 }
@@ -886,15 +923,29 @@ $("editorScroll").addEventListener("scroll", () => {
   });
 }, { passive: true });
 function finishCloseEditor() {
+  clearTimeout(coreUI.refreshTimer);
+  cancelCoreLogin();
   cancelClineLogin();
   clearProbeResults();
   editProbe.saving = false;
   $("editKey").value = ""; $("editKey").type = "password";
   $("editModal").close();
+  document.querySelector('[data-section="editorBasic"]').after($("poolEditorNav"));
+  if (!$("upstreamDetailPage").classList.contains("hidden")) {
+    $("editModal").append($("upstreamEditorForm"));
+    $("editorBasic").after($("editorPool"));
+    $("upstreamDetailPage").classList.add("hidden");
+    $("upstreamListPage").classList.remove("hidden");
+    $("pageCrumb").textContent = "上游服务";
+    document.title = siteTitle() + " · 上游服务";
+    if (/^#upstreams\/\d+$/.test(location.hash)) history.replaceState(null, "", "#upstreams");
+  }
+  coreUI.epoch++; coreUI.pending = []; coreUI.poolID = null; coreUI.credentials = []; coreUI.status = null;
+  $("editType").disabled = false;
   syncModalLock();
 }
 async function closeEdit() {
-  if (!$("editModal").open || editProbe.saving || editProbe.closing) return;
+  if (!editorIsOpen() || editProbe.saving || editProbe.closing) return;
   if (editorDirty()) {
     editProbe.closing = true;
     const discard = await askAction({ title: "放弃未保存的修改？", description: "当前配置尚未保存。返回编辑器可继续修改，放弃后将恢复原有配置。", confirm: "放弃修改", danger: true });
@@ -933,6 +984,7 @@ function formatJSON(id) {
   }
 }
 async function probeEditUpstream() {
+  if (editorUpstreamType() === "cliproxy" && !coreUI.poolID && !await ensureCorePool()) return;
   const base = $("editBase"), key = $("editKey");
   if (!validateHeaderOverrides()) { jumpEditor("editorHeaders"); $("editHeaderOverrides").reportValidity(); return; }
   if (!base.checkValidity()) { jumpEditor("editorConnection"); base.reportValidity(); return; }
@@ -945,7 +997,7 @@ async function probeEditUpstream() {
   const body = { type: editorUpstreamType(), openai_protocol: editorOpenAIProtocol(), opencode_tier: editorUpstreamType() === "opencode-free" ? "zen" : $("editOpenCodeTier").value, base_url: base.value.trim(), proxy_id: Number($("editProxy").value), header_overrides: $("editHeaderOverrides").value.trim() };
   if (key.value.trim()) body.api_key = key.value.trim();
   $("editProbeInfo").className = "probe-info";
-  $("editProbeInfo").textContent = editorUpstreamType() === "opencode-free" ? "正在获取 OpenCode 免费模型…" : key.value.trim() ? "正在使用当前填写的 Key 获取模型…" : "正在使用已保存的 Key 获取模型…";
+  $("editProbeInfo").textContent = editorUpstreamType() === "cliproxy" ? "正在读取当前池的可用模型…" : editorUpstreamType() === "opencode-free" ? "正在获取 OpenCode 免费模型…" : key.value.trim() ? "正在使用当前填写的 Key 获取模型…" : "正在使用已保存的 Key 获取模型…";
   setBusy($("probeEditorButton"), true, "获取中…");
   try {
     const path = editProbe.id === null ? "api/upstream-probe" : "api/upstreams/" + editProbe.id + "/probe";
@@ -955,7 +1007,7 @@ async function probeEditUpstream() {
     editProbe.models = [...new Set(result.models || [])];
     editProbe.selected = new Set(parseAllowlist($("editModels").value));
     $("editProbeInfo").className = "probe-info success";
-    $("editProbeInfo").textContent = editProbe.models.length ? (editorUpstreamType() === "opencode-free" ? "免费目录返回 " : "当前 Key 返回 ") + editProbe.models.length + " 个模型 · " + result.latency_ms + " ms · 勾选后保存为白名单" : "连接成功，但当前配置未返回可用模型。可检查权限或手动填写白名单。";
+    $("editProbeInfo").textContent = editProbe.models.length ? (editorUpstreamType() === "cliproxy" ? "当前账号池返回 " : editorUpstreamType() === "opencode-free" ? "免费目录返回 " : "当前 Key 返回 ") + editProbe.models.length + " 个模型 · " + result.latency_ms + " ms · 勾选后保存为白名单" : "连接成功，但当前配置未返回可用模型。可检查权限或手动填写白名单。";
     $("editProbeArea").classList.toggle("hidden", editProbe.models.length === 0);
     renderEditProbeList();
   } catch (error) {
@@ -980,25 +1032,55 @@ async function saveEditUpstream(event) {
   if (!$("editName").value.trim()) { $("editName").setCustomValidity("请输入上游名称"); jumpEditor("editorBasic"); $("editName").reportValidity(); return false; }
   const creating = editProbe.id === null;
   if (creating && $("editKey").required && !$("editKey").value.trim()) { $("editKey").setCustomValidity("请输入上游 API 密钥"); jumpEditor("editorConnection"); $("editKey").reportValidity(); return false; }
-  try {
-    if (!["http:", "https:"].includes(new URL($("editBase").value).protocol)) throw new Error();
-  } catch { $("editBase").setCustomValidity("请输入以 http:// 或 https:// 开头的服务地址"); jumpEditor("editorConnection"); $("editBase").reportValidity(); return false; }
+  const pool = editorUpstreamType() === "cliproxy" && ! $("editBase").required;
+  if (!pool) {
+    try {
+      if (!["http:", "https:"].includes(new URL($("editBase").value).protocol)) throw new Error();
+    } catch { $("editBase").setCustomValidity("请输入以 http:// 或 https:// 开头的服务地址"); jumpEditor("editorConnection"); $("editBase").reportValidity(); return false; }
+  }
   if (!$("upstreamEditorForm").reportValidity()) return false;
   const body = { name: $("editName").value.trim(), type: editorUpstreamType(), base_url: $("editBase").value.trim().replace(/\/+$/, ""), proxy_id: Number($("editProxy").value), priority: Number($("editPriority").value), weight: Number($("editWeight").value), models: parseAllowlist($("editModels").value).join(","), model_map: $("editModelMap").value.trim(), header_overrides: $("editHeaderOverrides").value.trim(), structured_output: $("editStructuredOutput").value };
   body.openai_protocol = editorOpenAIProtocol();
   body.opencode_tier = editorUpstreamType() === "opencode-free" ? "zen" : editorUpstreamType() === "opencode" ? $("editOpenCodeTier").value : "";
   if (!creating) body.enabled = $("editEnabled").checked;
   if ($("editKey").value.trim()) body.api_key = $("editKey").value.trim();
+  if (pool) {
+    delete body.base_url; delete body.api_key;
+    body.proxy_id = 0;
+    if (creating) body.pool_proxy_id = coreUI.defaultProxy;
+  }
+  const pending = pool ? [...coreUI.pending] : [];
   editProbe.saving = true; updateEditorDirty();
   $("editorError").classList.add("hidden");
   setBusy($("editorSaveButton"), true, creating ? "正在创建…" : "正在保存…");
   try {
-    await api(creating ? "api/upstreams" : "api/upstreams/" + editProbe.id, { method: creating ? "POST" : "PATCH", body: JSON.stringify(body) });
+    const result = await api(creating ? "api/upstreams" : "api/upstreams/" + editProbe.id, { method: creating ? "POST" : "PATCH", body: JSON.stringify(body) });
+    const savedID = result.id || editProbe.id;
+    // Restore the button's labeled DOM before the shared form is reopened.
+    setBusy($("editorSaveButton"), false);
     finishCloseEditor();
     if (activeTab !== "upstreams") await switchTab("upstreams"); else await loadUpstreams();
+    if (pool) {
+      await openEditUpstream(savedID);
+      let imported = 0;
+      for (const item of pending) {
+        try {
+          await api(poolAPI("credentials/import", savedID), {method: "POST", body: JSON.stringify(item)});
+          imported++;
+        } catch (error) {
+          coreUI.pending = pending.slice(imported);
+          coreMessage("账号池已保存；" + imported + " 个凭据已导入，剩余 " + coreUI.pending.length + " 个待重试：" + error.message, true);
+          break;
+        }
+      }
+      await loadCLIProxy();
+      updateEditorDirty();
+    }
     toast(creating ? "上游连接已创建" : "上游配置已保存");
+    return savedID;
   } catch (error) {
     if (error.message !== "unauthorized") {
+      console.error("Upstream configuration could not be saved", error);
       $("editorError").textContent = "保存失败：" + error.message;
       $("editorError").classList.remove("hidden");
       $("editorError").scrollIntoView({ block: "nearest" });
@@ -1253,7 +1335,7 @@ document.addEventListener("input", (event) => {
 });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && $("sidebar").classList.contains("is-open") && !$("editModal").open) toggleSidebar(false);
-  if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && $("editModal").open && !$("actionDialog").open && !editProbe.saving) { event.preventDefault(); $("upstreamEditorForm").requestSubmit(); }
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && editorIsOpen() && !$("actionDialog").open && !editProbe.saving) { event.preventDefault(); $("upstreamEditorForm").requestSubmit(); }
 });
 window.addEventListener("beforeunload", (event) => { if (editorDirty() || deploymentDirty() || announcementDirty()) { event.preventDefault(); event.returnValue = ""; } });
 let resizeFrame = 0;

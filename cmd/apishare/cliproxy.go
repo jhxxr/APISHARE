@@ -31,9 +31,14 @@ var coreLoginSessions = struct {
 }{items: make(map[string]coreLoginSession)}
 
 type coreLoginSession struct {
-	owner    [32]byte
-	provider string
-	expires  time.Time
+	owner     [32]byte
+	provider  string
+	expires   time.Time
+	poolID    int64
+	proxyID   int64
+	worker    *cliproxy.Manager
+	committed bool
+	flow      string
 }
 
 func initializeCLIProxy(dbPath string) error {
@@ -42,7 +47,15 @@ func initializeCLIProxy(dbPath string) error {
 		return fmt.Errorf("CLIPROXY_PORT 无效")
 	}
 	cliProxyCore, err = cliproxy.NewManager(envOr("CLIPROXY_DATA", filepath.Join(filepath.Dir(dbPath), "cliproxy-data")), port)
-	return err
+	if err != nil {
+		return err
+	}
+	root, err := filepath.Abs(envOr("CLIPROXY_DATA", filepath.Join(filepath.Dir(dbPath), "cliproxy-data")))
+	if err != nil {
+		return err
+	}
+	cliProxyPools.root = filepath.Join(root, "pools")
+	return migrateCLIProxyPools()
 }
 
 // cliProxyProxyID returns the saved outbound proxy bound to the embedded core.
@@ -118,35 +131,49 @@ func coreSession(c *gin.Context, state string) (coreLoginSession, bool) {
 	defer coreLoginSessions.Unlock()
 	for id, session := range coreLoginSessions.items {
 		if time.Now().After(session.expires) {
+			if session.worker != nil {
+				go session.worker.DiscardLogin()
+			}
 			delete(coreLoginSessions.items, id)
 		}
 	}
 	session, ok := coreLoginSessions.items[state]
-	return session, ok && session.owner == sha256.Sum256([]byte(adminRequestToken(c)))
+	return session, ok && session.poolID == requestCLIProxyPoolID(c) && session.owner == sha256.Sum256([]byte(adminRequestToken(c)))
 }
 
 func registerCLIProxyRoutes(auth *gin.RouterGroup) {
 	group := auth.Group("/cliproxy")
+	registerCLIProxyHandlers(group)
+	registerCLIProxyPoolRoutes(auth)
+}
+
+func registerCLIProxyHandlers(group *gin.RouterGroup) {
 	group.Use(func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
-		if cliProxyCore == nil {
+		if requestCLIProxyCore(c) == nil {
 			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "CLIProxyAPI 核心尚未初始化"})
 			return
 		}
 		c.Next()
 	})
 	group.GET("/status", func(c *gin.Context) {
-		status := cliProxyCore.Status()
-		status.ProxyID = cliProxyProxyID()
+		status := requestCLIProxyCore(c).Status()
+		status.ProxyID = requestCLIProxyProxyID(c)
 		c.JSON(200, status)
 	})
 	group.GET("/license", func(c *gin.Context) { c.Data(200, "text/plain; charset=utf-8", []byte(cliProxyLicense)) })
 	group.POST("/start", func(c *gin.Context) {
 		coreOperation(c, func() error {
-			if err := syncCLIProxyProxy(c.Request.Context()); err != nil {
-				return err
+			if id := requestCLIProxyPoolID(c); id != 0 {
+				if err := setPoolProxy(c.Request.Context(), requestCLIProxyCore(c), id, cliProxyPoolProxyID(id)); err != nil {
+					return err
+				}
+			} else {
+				if err := syncCLIProxyProxy(c.Request.Context()); err != nil {
+					return err
+				}
 			}
-			return cliProxyCore.Start(c.Request.Context())
+			return requestCLIProxyCore(c).Start(c.Request.Context())
 		})
 	})
 	group.PUT("/proxy", func(c *gin.Context) {
@@ -162,6 +189,14 @@ func registerCLIProxyRoutes(auth *gin.RouterGroup) {
 				c.JSON(400, gin.H{"error": err.Error()})
 				return
 			}
+		}
+		if id := requestCLIProxyPoolID(c); id != 0 {
+			proxyConfigMu.Lock()
+			defer proxyConfigMu.Unlock()
+			coreOperation(c, func() error {
+				return setPoolProxy(c.Request.Context(), requestCLIProxyCore(c), id, req.ProxyID)
+			})
+			return
 		}
 		previous := cliProxyProxyID()
 		previousConfigured := cliProxyProxyConfigured()
@@ -182,17 +217,35 @@ func registerCLIProxyRoutes(auth *gin.RouterGroup) {
 		}
 		c.JSON(200, gin.H{"ok": true})
 	})
-	group.POST("/stop", func(c *gin.Context) { coreOperation(c, cliProxyCore.Stop) })
+	group.POST("/stop", func(c *gin.Context) { coreOperation(c, requestCLIProxyCore(c).Stop) })
 	group.GET("/credentials", func(c *gin.Context) {
 		var result struct {
-			Files []cliproxy.Credential `json:"files"`
+			Files       []cliproxy.Credential `json:"files"`
+			UptimeError string                `json:"uptime_error,omitempty"`
 		}
-		if err := cliProxyCore.Client().Do(c.Request.Context(), "GET", "/credentials", nil, &result); err != nil {
+		manager := requestCLIProxyCore(c)
+		var err error
+		// Preserve legacy management clients, including their error behavior.
+		if requestCLIProxyPoolID(c) == 0 {
+			err = manager.Client().Do(c.Request.Context(), "GET", "/credentials", nil, &result)
+		} else {
+			result.Files, err = manager.Credentials(c.Request.Context())
+		}
+		if err != nil {
 			c.JSON(502, gin.H{"error": err.Error()})
 			return
 		}
 		if result.Files == nil {
 			result.Files = []cliproxy.Credential{}
+		}
+		if err := manager.AttachAccountUptimes(c.Request.Context(), result.Files, time.Now()); err != nil {
+			result.UptimeError = "账号 Uptime 统计暂不可用，请稍后刷新"
+		}
+		if id := requestCLIProxyPoolID(c); id != 0 {
+			for i := range result.Files {
+				result.Files[i].ProxyID = accountProxyID(id, result.Files[i].Name)
+				result.Files[i].EffectiveProxyID = effectiveAccountProxyID(id, result.Files[i].ProxyID)
+			}
 		}
 		c.JSON(200, result)
 	})
@@ -201,6 +254,7 @@ func registerCLIProxyRoutes(auth *gin.RouterGroup) {
 		var req struct {
 			Name       string          `json:"name"`
 			Credential json.RawMessage `json:"credential"`
+			ProxyID    *int64          `json:"proxy_id"`
 		}
 		if c.ShouldBindJSON(&req) != nil || !validCoreCredentialName(req.Name) || len(req.Credential) == 0 {
 			c.JSON(400, gin.H{"error": "请提供有效的 JSON 凭据文件和文件名"})
@@ -212,7 +266,16 @@ func registerCLIProxyRoutes(auth *gin.RouterGroup) {
 			return
 		}
 		coreOperation(c, func() error {
-			return cliProxyCore.Client().Do(c.Request.Context(), "POST", "/credentials?name="+url.QueryEscape(req.Name), req.Credential, nil)
+			proxyConfigMu.Lock()
+			defer proxyConfigMu.Unlock()
+			proxyID := int64(-1)
+			if req.ProxyID != nil {
+				proxyID = *req.ProxyID
+			}
+			if proxyID < -1 {
+				return fmt.Errorf("请选择有效的代理")
+			}
+			return importPoolCredential(c.Request.Context(), requestCLIProxyCore(c), requestCLIProxyPoolID(c), req.Name, req.Credential, proxyID)
 		})
 	})
 	group.PATCH("/credentials/status", func(c *gin.Context) {
@@ -224,8 +287,11 @@ func registerCLIProxyRoutes(auth *gin.RouterGroup) {
 			c.JSON(400, gin.H{"error": "缺少账号或启用状态"})
 			return
 		}
+		if requestCLIProxyPoolID(c) != 0 && !requirePoolCredential(c, req.Name) {
+			return
+		}
 		coreOperation(c, func() error {
-			return cliProxyCore.Client().Do(c.Request.Context(), "PATCH", "/credentials/status", req, nil)
+			return requestCLIProxyCore(c).Client().Do(c.Request.Context(), "PATCH", "/credentials/status", req, nil)
 		})
 	})
 	group.POST("/credentials/refresh", func(c *gin.Context) {
@@ -236,8 +302,11 @@ func registerCLIProxyRoutes(auth *gin.RouterGroup) {
 			c.JSON(400, gin.H{"error": "请选择账号"})
 			return
 		}
+		if requestCLIProxyPoolID(c) != 0 && !requirePoolCredential(c, req.Name) {
+			return
+		}
 		coreOperation(c, func() error {
-			return cliProxyCore.Client().Do(c.Request.Context(), "POST", "/credentials/refresh", req, nil)
+			return requestCLIProxyCore(c).Client().Do(c.Request.Context(), "POST", "/credentials/refresh", req, nil)
 		})
 	})
 	group.DELETE("/credentials", func(c *gin.Context) {
@@ -246,13 +315,96 @@ func registerCLIProxyRoutes(auth *gin.RouterGroup) {
 			c.JSON(400, gin.H{"error": "请选择单个凭据文件"})
 			return
 		}
+		if requestCLIProxyPoolID(c) != 0 && !requirePoolCredential(c, name) {
+			return
+		}
 		coreOperation(c, func() error {
-			return cliProxyCore.Client().Do(c.Request.Context(), "DELETE", "/credentials?name="+url.QueryEscape(name), nil, nil)
+			if err := requestCLIProxyCore(c).Client().Do(c.Request.Context(), "DELETE", "/credentials?name="+url.QueryEscape(name), nil, nil); err != nil {
+				return err
+			}
+			_, err := db.Exec(`DELETE FROM cliproxy_account_proxies WHERE upstream_id=? AND name=?`, requestCLIProxyPoolID(c), name)
+			return err
 		})
+	})
+	group.PATCH("/credentials/proxy", func(c *gin.Context) {
+		var req struct {
+			Name    string `json:"name"`
+			ProxyID *int64 `json:"proxy_id"`
+		}
+		if c.ShouldBindJSON(&req) != nil || req.ProxyID == nil || *req.ProxyID < -1 {
+			c.JSON(400, gin.H{"error": "请选择有效的账号和代理"})
+			return
+		}
+		proxyConfigMu.Lock()
+		defer proxyConfigMu.Unlock()
+		if !requirePoolCredential(c, req.Name) {
+			return
+		}
+		coreOperation(c, func() error {
+			return saveAccountProxy(c.Request.Context(), requestCLIProxyCore(c), requestCLIProxyPoolID(c), req.Name, *req.ProxyID)
+		})
+	})
+	group.POST("/oauth/siwc/start", func(c *gin.Context) {
+		var req struct {
+			Name string `json:"name"`
+		}
+		if c.ShouldBindJSON(&req) != nil {
+			c.JSON(400, gin.H{"error": "请选择有效的 Codex 账号"})
+			return
+		}
+		if !requirePoolCredential(c, req.Name) {
+			return
+		}
+		manager := requestCLIProxyCore(c)
+		poolID := requestCLIProxyPoolID(c)
+		files, err := manager.ReadCredentials()
+		if err != nil || files[req.Name] == nil {
+			c.JSON(400, gin.H{"error": "请选择当前池内已保存的 Codex OAuth 账号"})
+			return
+		}
+		worker, _, err := newCLIProxyPoolManager("login-")
+		proxyID := accountProxyID(poolID, req.Name)
+		if err == nil {
+			err = worker.SeedCredentials(map[string]json.RawMessage{req.Name: files[req.Name]})
+		}
+		if err == nil {
+			var proxyURL string
+			proxyURL, err = cliProxyProxyURL(effectiveAccountProxyID(poolID, proxyID))
+			if proxyID == 0 {
+				proxyURL = "direct"
+			}
+			if err == nil {
+				err = worker.SetProxyURL(c.Request.Context(), proxyURL)
+			}
+		}
+		if err == nil {
+			err = worker.Start(c.Request.Context())
+		}
+		var result cliproxy.Login
+		if err == nil {
+			err = worker.Client().Do(c.Request.Context(), "POST", "/oauth/siwc/bind", gin.H{"name": req.Name}, &result)
+		}
+		u, parseErr := url.Parse(result.URL)
+		if err != nil || parseErr != nil || u.Scheme != "https" || u.Host == "" || result.State == "" {
+			if worker != nil {
+				worker.DiscardLogin()
+			}
+			c.JSON(502, gin.H{"error": "无法发起 SIWC 绑定，请确认账号包含有效的 Codex OAuth 凭据"})
+			return
+		}
+		coreLoginSessions.Lock()
+		coreLoginSessions.items[result.State] = coreLoginSession{
+			owner: sha256.Sum256([]byte(adminRequestToken(c))), provider: "codex",
+			expires: time.Now().Add(5 * time.Minute), poolID: poolID, proxyID: proxyID, worker: worker, flow: "siwc_bind",
+		}
+		coreLoginSessions.Unlock()
+		expireCoreLogin(result.State, 5*time.Minute)
+		c.JSON(200, result)
 	})
 	group.POST("/oauth/start", func(c *gin.Context) {
 		var req struct {
 			Provider string `json:"provider"`
+			ProxyID  *int64 `json:"proxy_id"`
 		}
 		if c.ShouldBindJSON(&req) != nil || !validCoreProvider(req.Provider) {
 			c.JSON(400, gin.H{"error": "不支持的登录提供商"})
@@ -262,6 +414,9 @@ func registerCLIProxyRoutes(auth *gin.RouterGroup) {
 		coreLoginSessions.Lock()
 		for id, s := range coreLoginSessions.items {
 			if time.Now().After(s.expires) {
+				if s.worker != nil {
+					go s.worker.DiscardLogin()
+				}
 				delete(coreLoginSessions.items, id)
 			}
 		}
@@ -272,23 +427,70 @@ func registerCLIProxyRoutes(auth *gin.RouterGroup) {
 			return
 		}
 		var result cliproxy.Login
-		if err := cliProxyCore.Client().Do(c.Request.Context(), "GET", "/oauth/auth-url?is_webui=true&provider="+url.QueryEscape(req.Provider), nil, &result); err != nil {
+		worker := requestCLIProxyCore(c)
+		poolID, proxyID := requestCLIProxyPoolID(c), int64(-1)
+		if req.ProxyID != nil {
+			proxyID = *req.ProxyID
+		}
+		if proxyID < -1 {
+			c.JSON(400, gin.H{"error": "请选择有效的代理"})
+			return
+		}
+		if poolID != 0 {
+			// A short-lived isolated worker performs the entire OAuth exchange
+			// through this account's chosen proxy, without changing live traffic.
+			var err error
+			worker, _, err = newCLIProxyPoolManager("login-")
+			if err == nil {
+				var proxyURL string
+				proxyURL, err = cliProxyProxyURL(effectiveAccountProxyID(poolID, proxyID))
+				if proxyID == 0 {
+					proxyURL = "direct"
+				}
+				if err == nil {
+					err = worker.SetProxyURL(c.Request.Context(), proxyURL)
+				}
+			}
+			if err == nil {
+				err = worker.Start(c.Request.Context())
+			}
+			if err != nil {
+				if worker != nil {
+					worker.DiscardLogin()
+				}
+				c.JSON(502, gin.H{"error": "无法启动授权，请检查代理和核心状态"})
+				return
+			}
+		}
+		if err := worker.Client().Do(c.Request.Context(), "GET", "/oauth/auth-url?is_webui=true&provider="+url.QueryEscape(req.Provider), nil, &result); err != nil {
+			if poolID != 0 {
+				worker.DiscardLogin()
+			}
 			c.JSON(502, gin.H{"error": err.Error()})
 			return
 		}
 		u, err := url.Parse(result.URL)
 		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || result.State == "" {
+			if poolID != 0 {
+				worker.DiscardLogin()
+			}
 			c.JSON(502, gin.H{"error": "核心返回的授权链接无效"})
 			return
 		}
 		coreLoginSessions.Lock()
-		coreLoginSessions.items[result.State] = coreLoginSession{owner: sha256.Sum256([]byte(adminRequestToken(c))), provider: req.Provider, expires: time.Now().Add(15 * time.Minute)}
+		session := coreLoginSession{owner: sha256.Sum256([]byte(adminRequestToken(c))), provider: req.Provider, expires: time.Now().Add(15 * time.Minute), poolID: poolID, proxyID: proxyID}
+		if poolID != 0 {
+			session.worker = worker
+		}
+		coreLoginSessions.items[result.State] = session
 		coreLoginSessions.Unlock()
+		expireCoreLogin(result.State, 15*time.Minute)
 		c.JSON(200, result)
 	})
 	group.GET("/oauth/status", func(c *gin.Context) {
 		state := c.Query("state")
-		if _, ok := coreSession(c, state); !ok {
+		session, ok := coreSession(c, state)
+		if !ok {
 			c.JSON(404, gin.H{"error": "登录会话已过期，请重新发起"})
 			return
 		}
@@ -296,12 +498,62 @@ func registerCLIProxyRoutes(auth *gin.RouterGroup) {
 			Status string `json:"status"`
 			Error  string `json:"error,omitempty"`
 		}
-		if err := cliProxyCore.Client().Do(c.Request.Context(), "GET", "/oauth/status?state="+url.QueryEscape(state), nil, &result); err != nil {
+		if session.committed {
+			c.JSON(200, gin.H{"status": "ok"})
+			return
+		}
+		worker := requestCLIProxyCore(c)
+		if session.worker != nil {
+			worker = session.worker
+		}
+		if err := worker.Client().Do(c.Request.Context(), "GET", "/oauth/status?state="+url.QueryEscape(state), nil, &result); err != nil {
 			c.JSON(502, gin.H{"error": err.Error()})
 			return
 		}
 		if result.Error != "" {
 			result.Error = "授权失败，请重新登录或导入凭据"
+		}
+		if result.Status == "ok" && session.worker != nil {
+			coreLoginSessions.Lock()
+			defer coreLoginSessions.Unlock()
+			current, exists := coreLoginSessions.items[state]
+			if !exists {
+				c.JSON(404, gin.H{"error": "登录会话已取消"})
+				return
+			}
+			if !current.committed {
+				files, err := worker.ReadCredentials()
+				if err == nil && len(files) == 0 {
+					err = fmt.Errorf("授权完成但尚未生成凭据，请重试")
+				}
+				for name, raw := range files {
+					if err != nil {
+						break
+					}
+					if session.flow == "siwc_bind" {
+						var document map[string]json.RawMessage
+						err = json.Unmarshal(raw, &document)
+						if err == nil && len(document["siwc"]) == 0 {
+							err = fmt.Errorf("SIWC 绑定尚未完成")
+						}
+						if err == nil {
+							// Bind only the SIWC section; the live credential may have
+							// refreshed its OAuth tokens while binding was in progress.
+							err = requestCLIProxyCore(c).Client().Do(c.Request.Context(), "PATCH", "/credentials/fields",
+								gin.H{"name": name, "siwc": document["siwc"]}, nil)
+						}
+					} else {
+						err = importPoolCredential(c.Request.Context(), requestCLIProxyCore(c), session.poolID, name, raw, session.proxyID)
+					}
+				}
+				if err != nil {
+					c.JSON(502, gin.H{"error": "保存授权凭据失败，请检查账号池状态后重试"})
+					return
+				}
+				current.committed = true
+				coreLoginSessions.items[state] = current
+				go worker.DiscardLogin()
+			}
 		}
 		c.JSON(200, result)
 	})
@@ -325,18 +577,27 @@ func registerCLIProxyRoutes(auth *gin.RouterGroup) {
 			return
 		}
 		coreOperation(c, func() error {
-			return cliProxyCore.Client().Do(c.Request.Context(), "POST", "/oauth/callback", gin.H{"provider": session.provider, "state": req.State, "code": u.Query().Get("code")}, nil)
+			worker := requestCLIProxyCore(c)
+			if session.worker != nil {
+				worker = session.worker
+			}
+			return worker.Client().Do(c.Request.Context(), "POST", "/oauth/callback", gin.H{"provider": session.provider, "state": req.State, "code": u.Query().Get("code"), "client_id": u.Query().Get("client_id"), "redirect_url": req.RedirectURL}, nil)
 		})
 	})
 	group.DELETE("/oauth/session", func(c *gin.Context) {
 		state := c.Query("state")
-		if _, ok := coreSession(c, state); !ok {
+		session, ok := coreSession(c, state)
+		if !ok {
 			c.JSON(404, gin.H{"error": "登录会话不存在"})
 			return
 		}
 		coreOperation(c, func() error {
-			if err := cliProxyCore.Client().Do(c.Request.Context(), "DELETE", "/oauth/session?state="+url.QueryEscape(state), nil, nil); err != nil {
-				return err
+			if session.worker != nil {
+				session.worker.DiscardLogin()
+			} else {
+				if err := requestCLIProxyCore(c).Client().Do(c.Request.Context(), "DELETE", "/oauth/session?state="+url.QueryEscape(state), nil, nil); err != nil {
+					return err
+				}
 			}
 			coreLoginSessions.Lock()
 			delete(coreLoginSessions.items, state)
@@ -345,7 +606,11 @@ func registerCLIProxyRoutes(auth *gin.RouterGroup) {
 		})
 	})
 	group.POST("/upstream", func(c *gin.Context) {
-		base, key := cliProxyCore.Connection()
+		if id := requestCLIProxyPoolID(c); id != 0 {
+			c.JSON(200, gin.H{"ok": true, "id": id, "existing": true})
+			return
+		}
+		base, key := requestCLIProxyCore(c).Connection()
 		// Verify connectivity before publishing the pool to the gateway router.
 		models, err := probeUpstreamModels(c.Request.Context(), "cliproxy", base, key)
 		if err != nil {
@@ -379,7 +644,7 @@ func registerCLIProxyRoutes(auth *gin.RouterGroup) {
 }
 
 func validCoreCredentialName(name string) bool {
-	return len(name) > 5 && len(name) < 240 && strings.HasSuffix(name, ".json") && !strings.ContainsAny(name, "/\\\x00\r\n") && name != ".json" && name != "..json"
+	return len(name) > 5 && len(name) < 240 && strings.HasSuffix(name, ".json") && !strings.ContainsAny(name, "/\\:*?\"<>|\x00\r\n") && name != ".json" && name != "..json"
 }
 
 func validCoreProvider(provider string) bool {

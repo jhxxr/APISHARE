@@ -164,7 +164,7 @@ func pickUpstream(format clientFormat, model string, exclude map[int64]bool, nat
 			}
 			continue
 		}
-		if !healthAvailable(u.ID) {
+		if !healthAvailable(u.ID) || u.Type == "cliproxy" && !cliProxyRelayAvailable(u.ID) {
 			continue
 		}
 		var tier int
