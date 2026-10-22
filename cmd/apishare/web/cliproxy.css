@@ -1,0 +1,24 @@
+.core-card { margin-bottom: 20px; padding: 24px; }
+.core-note { color: var(--muted); line-height: 1.7; }
+.core-version-form { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; }
+.core-version-form .field { min-width: 170px; flex: 1; max-width: 280px; }
+.core-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.core-card .btn, .core-row-actions .btn { min-height: 44px; }
+.core-card fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.core-card fieldset:disabled { opacity: .65; }
+.core-login { background: var(--panel-soft); border: 1px solid var(--border); border-radius: var(--radius); margin-top: 20px; padding: 20px; overflow-wrap: anywhere; }
+.core-login .field { margin-top: 16px; }
+.core-row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+#coreMessage { min-height: 24px; margin: 12px 0 0; overflow-wrap: anywhere; }
+.core-settings-row { display: flex; align-items: center; justify-content: flex-end; gap: 16px; margin-top: 12px; }
+.core-settings { position: relative; flex-shrink: 0; }
+.core-settings summary { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px; color: var(--muted); cursor: pointer; list-style: none; font-size: 12px; border-radius: var(--radius); }
+.core-settings summary::-webkit-details-marker { display: none; }
+.core-settings summary:hover, .core-settings[open] summary { background: var(--panel-soft); color: var(--text); }
+.core-settings summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.core-settings-menu { position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 12; width: min(320px, calc(100vw - 48px)); padding: 20px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); box-shadow: 0 8px 28px rgb(34 43 52 / 12%); }
+.core-settings-menu .core-actions .btn { min-height: 44px; }
+.core-proxy-field { margin-top: 16px; }
+.core-proxy-field select { width: 100%; }
+.core-license { display: inline-block; margin-top: 16px; font-size: 12px; }
+@media (max-width: 768px) { .core-card { padding: 16px; } .core-version-form .field { max-width: none; width: 100%; } .core-version-form { align-items: stretch; } .core-actions .btn { flex: 1; } .core-settings-row { flex-wrap: wrap; } }

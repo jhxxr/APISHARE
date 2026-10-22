@@ -22,8 +22,8 @@ const fmtTime = (value) => {
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
 };
 const number = (value) => Number(value || 0).toLocaleString("zh-CN");
-const upstreamFormatNames = { "openai-chat": "OpenAI Chat Completions", "openai-responses": "OpenAI Responses", "openai-auto": "OpenAI · 旧配置（跟随客户端）", "opencode-free": "OpenCode 免费模型", opencode: "OpenCode · 旧配置（Zen / Go）", cline: "Cline 免费模型", anthropic: "Anthropic Messages", gemini: "Gemini generateContent" };
-const providerURLs = { openai: "https://api.openai.com", "opencode-free": "https://opencode.ai/zen", opencode: "https://opencode.ai/zen", cline: "https://api.cline.bot/api/v1", anthropic: "https://api.anthropic.com", gemini: "https://generativelanguage.googleapis.com" };
+const upstreamFormatNames = { cliproxy: "CLIProxyAPI · 原生协议", "openai-chat": "OpenAI Chat Completions", "openai-responses": "OpenAI Responses", "openai-auto": "OpenAI · 旧配置（跟随客户端）", "opencode-free": "OpenCode 免费模型", opencode: "OpenCode · 旧配置（Zen / Go）", cline: "Cline 免费模型", anthropic: "Anthropic Messages", gemini: "Gemini generateContent" };
+const providerURLs = { cliproxy: "http://127.0.0.1:18317", openai: "https://api.openai.com", "opencode-free": "https://opencode.ai/zen", opencode: "https://opencode.ai/zen", cline: "https://api.cline.bot/api/v1", anthropic: "https://api.anthropic.com", gemini: "https://generativelanguage.googleapis.com" };
 const openCodeURLs = { zen: providerURLs.opencode, go: "https://opencode.ai/zen/go" };
 const isOpenCodeType = (type) => type === "opencode" || type === "opencode-free";
 function upstreamFormat(upstream) {
@@ -40,9 +40,9 @@ function editorOpenAIProtocol() {
   if (isOpenCodeType($("editType").value)) return $("editOpenCodeProtocol").value || "auto";
   return { "openai-chat": "chat", "openai-responses": "responses" }[$("editType").value] || "auto";
 }
-const tabNames = { dashboard: "仪表盘", keys: "API 密钥", upstreams: "上游服务", models: "模型总览", proxies: "代理配置", logs: "调用日志", announcements: "公告管理", settings: "工作空间设置", deployment: "部署配置" };
+const tabNames = { dashboard: "仪表盘", keys: "API 密钥", upstreams: "上游服务", subscriptions: "订阅账号", models: "模型总览", proxies: "代理配置", logs: "调用日志", announcements: "公告管理", settings: "工作空间设置", deployment: "部署配置" };
 const siteTitle = () => document.documentElement.dataset.siteTitle || "API Share";
-const tabIcons = { dashboard: "grid", keys: "key", upstreams: "layers", models: "spark", proxies: "link", logs: "activity", announcements: "megaphone", settings: "sliders", deployment: "shield" };
+const tabIcons = { subscriptions: "token", dashboard: "grid", keys: "key", upstreams: "layers", models: "spark", proxies: "link", logs: "activity", announcements: "megaphone", settings: "sliders", deployment: "shield" };
 document.body.classList.toggle("sidebar-collapsed", localStorage.getItem("apishare_sidebar_collapsed") === "true");
 document.querySelectorAll(".tab").forEach((button) => {
   button.title = tabNames[button.dataset.tab];
@@ -153,6 +153,8 @@ function dismissNewKey() { $("newKeyShow").classList.add("hidden"); $("newKeyVal
 
 /* Authentication and navigation */
 function showLogin() {
+  cancelCoreLogin();
+  document.querySelector(".core-settings").open = false;
   closeLogDetails();
   $("logColumnsMenu").hidePopover();
   resetAnnouncementComposer();
@@ -251,9 +253,11 @@ async function switchTab(name, updateHistory = true) {
   if (updateHistory && location.hash !== "#" + name) history.pushState(null, "", "#" + name);
   toggleSidebar(false);
   if (name !== "keys") dismissNewKey();
+  if (name !== "subscriptions") cancelCoreLogin();
   return loadCurrentTab();
 }
 async function loadCurrentTab() {
+  if (activeTab === "subscriptions") return loadCLIProxy();
   if (activeTab === "dashboard") return Promise.all([loadStats(), loadRecent()]);
   if (activeTab === "keys") return loadKeys();
   if (activeTab === "upstreams") return loadUpstreams();
@@ -808,12 +812,17 @@ function updateEditorProvider(changed = true) {
   $("editorProviderIcon").setAttribute("aria-hidden", "true");
   $("opencodeProtocolField").classList.toggle("hidden", !isOpenCodeType(type));
   $("opencodeTierField").classList.toggle("hidden", type !== "opencode");
+  // The pool is a loopback upstream; its egress proxy is configured once for
+  // the embedded core on the subscriptions page, not on this local hop.
+  $("editProxyField").classList.toggle("hidden", type === "cliproxy");
+  if (type === "cliproxy") $("editProxy").value = "0";
   $("providerHint").textContent = {
     "openai-chat": "上游固定使用 /v1/chat/completions。适用于支持 Chat Completions 的 OpenAI 兼容服务。",
     "openai-responses": "上游固定使用 /v1/responses。请确认上游支持 Responses 接口。",
     "openai-auto": "旧连接沿用原有行为：跟随 OpenAI 客户端接口，其他格式转换为 Chat。可改选上游实际支持的固定格式。",
     "opencode-free": "保留默认地址，点击「获取模型」即可选择 OpenCode 当前免费模型。无需安装 CLI，API Key 可留空；模型可用性与免费额度由 OpenCode 调整。",
     opencode: "旧连接保留原有 Zen / Go 套餐、密钥和协议。Zen 连接切换为免费渠道时保留已有密钥；Go 连接切换时使用匿名凭据，也可填写自己的 Zen API Key。",
+    cliproxy: "由订阅账号页接入的账号池，跟随客户端原生协议。账号登录、出站代理和核心升级请进入订阅账号页。",
     cline: "点击「登录 Cline 账号」完成浏览器授权，即可获取当前免费模型，无需安装 CLI。也可手动填写账号凭据。免费模型与额度由 Cline 调整。",
     anthropic: "上游使用 Anthropic 原生 /v1/messages 接口。",
     gemini: "上游使用 Gemini 原生 generateContent / streamGenerateContent 接口。"

@@ -349,7 +349,7 @@ type Upstream struct {
 	config           *upstreamConfig // Immutable parsed runtime configuration; never exposed by APIs.
 	ID               int64           `json:"id"`
 	Name             string          `json:"name"`
-	Type             string          `json:"type"` // provider: openai | opencode-free | opencode (legacy) | cline | anthropic | gemini
+	Type             string          `json:"type"` // provider: openai | cliproxy | opencode-free | opencode (legacy) | cline | anthropic | gemini
 	BaseURL          string          `json:"base_url"`
 	APIKey           string          `json:"api_key"`
 	Priority         int             `json:"priority"` // Lower is preferred; only the smallest available tier receives new traffic.

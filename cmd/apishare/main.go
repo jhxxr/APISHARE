@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -41,6 +45,18 @@ func main() {
 		fmt.Println("failed to bootstrap admin:", err)
 		os.Exit(1)
 	}
+	if err := initializeCLIProxy(dbPath); err != nil {
+		fmt.Println("failed to initialize CLIProxyAPI:", err)
+		os.Exit(1)
+	}
+	defer cliProxyCore.Close()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		if err := resumeCLIProxy(ctx); err != nil {
+			fmt.Println("CLIProxyAPI:", err)
+		}
+	}()
 	go affinityCleanupLoop()
 	go limiterJanitorLoop()
 	go pricingRefresherLoop()
@@ -56,9 +72,22 @@ func main() {
 	if adminSetupRequired() {
 		fmt.Println("首次部署：打开首页完成管理员密码和后台路径配置")
 	}
-	if err := r.Run(addr); err != nil {
+	server := &http.Server{Addr: addr, Handler: r, ReadHeaderTimeout: 15 * time.Second}
+	shutdownDone := make(chan struct{})
+	go func() {
+		<-ctx.Done()
+		defer close(shutdownDone)
+		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = server.Shutdown(shutdown)
+	}()
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		fmt.Println("server error:", err)
+		cliProxyCore.Close()
 		os.Exit(1)
+	}
+	if ctx.Err() != nil {
+		<-shutdownDone
 	}
 }
 

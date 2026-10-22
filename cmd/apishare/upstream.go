@@ -113,16 +113,21 @@ func (u *Upstream) mapModel(clientModel string) string {
 //  2. 格式与白名单层级：同一优先级内按以下顺序取最优层（跨格式转换设计：
 //     候选不限于客户端原生格式的上游——只要某个上游（任意格式）服务该模型
 //     就可以入选）：
-//     1) 原生格式 + 显式白名单命中   （格式对、模型也对，最佳）
-//     2) 其他格式 + 显式白名单命中   （模型对，需要跨格式转换）
-//     3) 原生格式 + 通配             （格式对，模型是否真支持由上游裁决）
-//     4) 其他格式 + 通配             （兜底）
+//  1. 原生格式 + 显式白名单命中   （格式对、模型也对，最佳）
+//  2. 其他格式 + 显式白名单命中   （模型对，需要跨格式转换）
+//  3. 原生格式 + 通配             （格式对，模型是否真支持由上游裁决）
+//  4. 其他格式 + 通配             （兜底）
 //  3. 权重：同一优先级、同一格式层内按 weight 加权随机。
 //
 // nativeOnly=true 时（如 embeddings）只考虑原生类型。
 //
 // exclude 里的上游（本轮已试过的）不重复选择。weight<=0 的上游不接新流量。
 func supportsNativeEndpoint(up *Upstream, format clientFormat) bool {
+	if up.Type == "cliproxy" {
+		// Compact uses Responses. Embeddings/audio must continue to use a
+		// dedicated upstream instead of an OAuth pool without those endpoints.
+		return format == FormatOpenAIResponse
+	}
 	if up.Type != format.nativeUpstreamType() {
 		return false
 	}

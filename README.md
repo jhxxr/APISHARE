@@ -38,7 +38,7 @@ API Share 是一个用 Go 编写的 AI 网关。它统一接收 OpenAI Chat Comp
 客户端只需要一个网关签发的 API Key，就可以用 Claude Code 驱动 DeepSeek、用 Codex CLI 驱动 Gemini，或者让任意 OpenAI 兼容客户端接入不同厂商的模型。
 
 > [!NOTE]
-> 本项目只对接官方 API 上游（OpenAI、Anthropic、Gemini、xAI、DeepSeek、GLM、Qwen 或私有部署的 vLLM / Ollama 等标准端点）。OpenCode 免费模型流量会模拟官方客户端所用 Bun 运行时的 HTTP/1.1 请求格式与 TLS 握手特征，以通过官方免费入口的客户端校验；`/zen/go`、付费模型及其他上游不受影响。不包含网页订阅逆向或网页 Cookie 抓取。
+> 支持官方 API 上游（OpenAI、Anthropic、Gemini、xAI、DeepSeek、GLM、Qwen 或私有部署的 vLLM / Ollama 等标准端点），并通过内置 CLIProxyAPI SDK 接入订阅账号 OAuth 凭据，无需额外安装核心或使用其 WebUI。OpenCode 免费模型流量会模拟官方客户端所用 Bun 运行时的 HTTP/1.1 请求格式与 TLS 握手特征，以通过官方免费入口的客户端校验；`/zen/go`、付费模型及其他上游不受影响。不包含网页 Cookie 抓取。
 
 ---
 
@@ -48,8 +48,9 @@ API Share 是一个用 Go 编写的 AI 网关。它统一接收 OpenAI Chat Comp
 - **会话粘性** — 通过请求头或对话指纹把同一会话绑定到同一上游，提升 Prompt Cache 命中率。
 - **优先级与加权路由** — 先按 `priority` 取最高可用层（数值越小越优先，主力 0、备用 1），同层内再按权重分流；上游返回 `401 / 403 / 408 / 429 / 5xx / 529` 或网络异常时自动切换；连续故障触发指数退避冷却。
 - **计费与配额** — 每日同步 LiteLLM 价格库，支持每 Key 的 QPS、并发、共享额度与模型专属额度。
-- **独立代理池** — 每个上游可单独绑定 HTTP / HTTPS / SOCKS5 / SOCKS5h 代理（均支持用户名密码），OpenCode 免费流量同样经所选代理出站。
+- **独立代理池** — 每个上游可单独绑定 HTTP / HTTPS / SOCKS5 / SOCKS5h 代理（均支持用户名密码），OpenCode 免费流量同样经所选代理出站；内置订阅账号池也可从同一代理池选择核心出站代理。
 - **单二进制部署** — 纯 Go SQLite（WAL）与 `go:embed` 静态前端，无需 Redis、MySQL 或 Nginx。
+- **内置订阅账号池** — CLIProxyAPI SDK 随程序编译、默认启动，在现有后台完成 OAuth 登录、凭据导入与账号管理，核心版本随 API Share 发版更新。[使用与升级](docs/CLIPROXY.md)
 - **管理与监控** — 初始化向导、热重命名后台路径、公开状态页、自定义站点标题与图标、调用日志与速度指标；仪表盘提供实时 RPM、消费/请求趋势、缓存命中分析与密钥 / 模型 / 上游排行。
 
 ---
@@ -77,6 +78,7 @@ API Share 是一个用 Go 编写的 AI 网关。它统一接收 OpenAI Chat Comp
 | Anthropic Messages | `anthropic` | Claude 官方端点 |
 | Google Gemini | `gemini` | AI Studio 官方端点 |
 | Cline 免费模型 | `cline` | 账号登录、令牌刷新与免费模型发现 |
+| CLIProxyAPI 订阅账号池 | `cliproxy` | 内置 OAuth 账号池，四种模型协议按客户端原生格式转交核心 |
 | OpenCode 免费模型 | `opencode-free` | 自动发现免费模型、按模型选择原生协议，并对官方免费入口模拟 Bun TLS/HTTP 指纹 |
 
 渠道配置、Cline / OpenCode 登录流程与路由优先级见 **[上游渠道文档](docs/UPSTREAM_CHANNELS.md)**。
@@ -222,6 +224,7 @@ Claude Code 结构化输出、Codex 配置说明、Gemini 与 cURL 示例、音�
 | 文档 | 内容 |
 |---|---|
 | [上游渠道与协议矩阵](docs/UPSTREAM_CHANNELS.md) | 入站 / 出站协议、路由优先级、Cline 与 OpenCode 渠道 |
+| [内置 CLIProxyAPI](docs/CLIPROXY.md) | 订阅账号、持久化数据、SDK 版本与随发行版升级 |
 | [客户端接入指南](docs/CLIENTS.md) | Codex、Claude Code、OpenAI SDK、Gemini、音频与 Realtime |
 | [协议转换引擎](docs/PROTOCOL_CONVERSION.md) | 工具调用、推理内容、流式保活与已知边界 |
 | [会话粘性、计费与配额](docs/BILLING.md) | Prompt Cache、价格同步、Usage 采集、日志清理 |
@@ -286,6 +289,8 @@ Copyright (C) 2026 API Share contributors.
 前端内嵌的 Space Grotesk 与 Orbitron 字体遵循各自的 [SIL Open Font License](cmd/apishare/web/public/fonts/OFL.txt)。
 
 感谢 [LiteLLM](https://github.com/BerriAI/litellm) 提供的模型价格规范，以及 [New API](https://github.com/QuantumNous/new-api)、[Sub2API](https://github.com/Wei-Shaw/sub2api) 在协议兼容设计上的探索。
+
+内置 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) SDK 遵循 [MIT 许可](cmd/apishare/third_party/cliproxy/LICENSE)，后台「订阅账号」提供许可原文，Docker 镜像同时携带该文件。
 
 <div align="center">
   <sub>Built with ❤️ by the API Share contributors.</sub>

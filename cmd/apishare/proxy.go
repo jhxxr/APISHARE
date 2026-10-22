@@ -502,6 +502,9 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	if err := up.applyHeaders(req, c.Request.Header); err != nil {
 		return info, false, err
 	}
+	if up.Type == "cliproxy" {
+		setCLIProxyHeaders(req, c.Request.Header, task)
+	}
 
 	start := time.Now()
 	info.startedAt = start

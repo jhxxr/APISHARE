@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"apishare/internal/bunhttp"
@@ -340,6 +342,11 @@ func registerOutboundProxyRoutes(auth *gin.RouterGroup) {
 			c.JSON(400, gin.H{"error": "代理配置格式不正确"})
 			return
 		}
+		if req.Enabled != nil && !*req.Enabled && cliProxyProxyID() == id {
+			c.JSON(409, gin.H{"error": "此代理正被内置 CLIProxyAPI 核心使用，请先在「订阅账号 → 核心设置」中更换出站代理"})
+			return
+		}
+		previous := *p
 		if req.Name != nil {
 			p.Name = *req.Name
 		}
@@ -368,6 +375,18 @@ func registerOutboundProxyRoutes(auth *gin.RouterGroup) {
 			return
 		}
 		closeProxyTransport(id)
+		// Keep the embedded core's egress in step with the saved record. A failed
+		// apply restores the previous row so the database never claims a proxy the
+		// core is not using; the admin can retry after fixing the new settings.
+		if cliProxyProxyID() == id {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+			defer cancel()
+			if err := syncCLIProxyProxy(ctx); err != nil {
+				_, _ = db.Exec(`UPDATE outbound_proxies SET name=?,url=?,username=?,password=?,enabled=? WHERE id=?`, previous.Name, previous.URL, previous.Username, previous.Password, boolToInt(previous.Enabled), id)
+				c.JSON(502, gin.H{"error": "代理已保存，但无法应用到 CLIProxyAPI 核心，请检查核心状态后重试"})
+				return
+			}
+		}
 		c.JSON(200, gin.H{"ok": true})
 	})
 
@@ -386,6 +405,10 @@ func registerOutboundProxyRoutes(auth *gin.RouterGroup) {
 		}
 		if count > 0 {
 			c.JSON(409, gin.H{"error": fmt.Sprintf("此代理仍被 %d 个上游使用，请先修改这些上游的代理选择", count)})
+			return
+		}
+		if cliProxyProxyID() == id {
+			c.JSON(409, gin.H{"error": "此代理正被内置 CLIProxyAPI 核心使用，请先在「订阅账号 → 核心设置」中更换出站代理"})
 			return
 		}
 		if _, err := db.Exec(`DELETE FROM outbound_proxies WHERE id=?`, id); err != nil {

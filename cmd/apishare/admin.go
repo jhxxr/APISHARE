@@ -118,6 +118,7 @@ func registerAdminRoutes(r *gin.Engine) {
 	auth := api.Group("", adminAuth())
 	registerClientVersionRoutes(auth)
 	registerClineOAuthRoutes(auth)
+	registerCLIProxyRoutes(auth)
 	auth.GET("/me", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": true, "admin_path": currentAdminPath(), "setup_required": adminSetupRequired()})
 	})
@@ -320,7 +321,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			return
 		}
 		if !validUpstreamType(u.Type) {
-			c.JSON(400, gin.H{"error": "type must be openai, opencode-free, opencode, cline, anthropic or gemini"})
+			c.JSON(400, gin.H{"error": "type must be openai, cliproxy, opencode-free, opencode, cline, anthropic or gemini"})
 			return
 		}
 		if err := u.normalizeOpenCodeFree(); err != nil {
@@ -351,7 +352,12 @@ func registerAdminRoutes(r *gin.Engine) {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		if err := validateUpstreamProxy(u.ProxyID); err != nil {
+		if u.Type == "cliproxy" {
+			if u.ProxyID != 0 {
+				c.JSON(400, gin.H{"error": "CLIProxyAPI 账号池的出站代理请在「订阅账号 → 核心设置」中配置"})
+				return
+			}
+		} else if err := validateUpstreamProxy(u.ProxyID); err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
@@ -459,13 +465,23 @@ func registerAdminRoutes(r *gin.Engine) {
 			u.Enabled = *req.Enabled
 		}
 		if req.ProxyID != nil {
-			if *req.ProxyID != u.ProxyID {
+			if u.Type == "cliproxy" {
+				if *req.ProxyID != 0 {
+					c.JSON(400, gin.H{"error": "CLIProxyAPI 账号池的出站代理请在「订阅账号 → 核心设置」中配置"})
+					return
+				}
+			} else if *req.ProxyID != u.ProxyID {
 				if err := validateUpstreamProxy(*req.ProxyID); err != nil {
 					c.JSON(400, gin.H{"error": err.Error()})
 					return
 				}
 			}
 			u.ProxyID = *req.ProxyID
+		}
+		// The pool is a loopback upstream; its proxy must never be applied to
+		// the local hop. Clear stale values left by older configurations.
+		if u.Type == "cliproxy" {
+			u.ProxyID = 0
 		}
 		if err := u.normalizeOpenCodeFree(); err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
@@ -517,6 +533,9 @@ func registerAdminRoutes(r *gin.Engine) {
 		dup.Name = name
 		dup.CreatedAt = ""
 		dup.config = nil
+		if dup.Type == "cliproxy" {
+			dup.ProxyID = 0
+		}
 		if err := dbInsertUpstream(&dup); err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
@@ -588,7 +607,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			return
 		}
 		if !validUpstreamType(req.Type) {
-			c.JSON(400, gin.H{"ok": false, "error": "type must be openai, opencode-free, opencode, cline, anthropic or gemini"})
+			c.JSON(400, gin.H{"ok": false, "error": "type must be openai, cliproxy, opencode-free, opencode, cline, anthropic or gemini"})
 			return
 		}
 		probeResult(c, &Upstream{Type: req.Type, BaseURL: req.BaseURL, APIKey: req.APIKey, ProxyID: req.ProxyID, HeaderOverrides: req.HeaderOverrides, OpenAIProtocol: req.OpenAIProtocol, OpenCodeTier: req.OpenCodeTier})

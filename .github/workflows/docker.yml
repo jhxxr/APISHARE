@@ -27,7 +27,7 @@ jobs:
         env:
           CGO_ENABLED: "0"
         run: |
-          go test ./cmd/apishare -run '^(TestProductionRouterStartupAndPreflight|TestHTMLAssetsChangeURLsWhenContentChanges|TestPagesServeMatchingVersionedAssetsAndCachePolicy)$' -count=1
+          go test ./... -count=1
           go build -trimpath -o "${{ runner.temp }}/apishare" ./cmd/apishare
 
       - name: Set up QEMU

@@ -21,6 +21,7 @@
 *.sqlite-journal
 *.sqlite3-journal
 /data/
+/cliproxy-data/
 
 # 运行日志、测试覆盖率及临时文件
 *.log

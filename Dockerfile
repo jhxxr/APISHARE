@@ -7,6 +7,7 @@ RUN go mod download
 COPY cmd/apishare/ ./cmd/apishare/
 COPY internal/ ./internal/
 COPY LICENSE internal/bunhttp/NOTICE ./licenses/
+COPY cmd/apishare/third_party/cliproxy/LICENSE ./licenses/CLIProxyAPI/LICENSE
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/apishare ./cmd/apishare
 
 FROM alpine:3.20
