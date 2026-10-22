@@ -2,8 +2,11 @@
 const transportHeaderNames = new Set(["host", "content-length", "connection", "proxy-connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade"]);
 const headerNamePattern = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 const clientVersionState = { clients: [], promise: null, error: "" };
+function editorHeaderOverrides() {
+  return editorUpstreamType() === "cliproxy" ? "" : $("editHeaderOverrides").value.trim();
+}
 function validateHeaderOverrides() {
-  const field = $("editHeaderOverrides"), raw = field.value.trim();
+  const field = $("editHeaderOverrides"), raw = editorHeaderOverrides();
   let error = "";
   if (raw) {
     try {

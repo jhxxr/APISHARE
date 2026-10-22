@@ -175,6 +175,9 @@ func probeUpstreamModelsWithClient(ctx context.Context, upType, baseURL, apiKey 
 }
 
 func probeUpstreamModelListWithClient(ctx context.Context, upType, baseURL, apiKey string, client *http.Client, headers string, efforts map[string][]string) ([]string, error) {
+	if strings.TrimSpace(upType) == "cliproxy" {
+		headers = ""
+	}
 	if _, err := parseHeaderOverrides(headers); err != nil {
 		return nil, err
 	}

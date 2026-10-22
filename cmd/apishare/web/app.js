@@ -115,6 +115,8 @@ async function api(path, options = {}) {
     const error = new Error(data.error || "请求失败（" + response.status + "）");
     error.status = response.status;
     error.field = data.field || "";
+    error.code = data.code || "";
+    error.existingName = data.existing_name || "";
     throw error;
   }
   updateConnection(true);
@@ -818,11 +820,12 @@ async function openEditor(upstream) {
     $("editModal").showModal();
     document.body.classList.add("modal-open");
   }
+  numberEditorSections();
   $("editorScroll").scrollTop = 0;
   activateEditorSection(poolPage ? "editorPool" : "editorBasic");
   updateEditorDirty();
   if (!poolPage) $("editName").focus();
-  loadClientHeaderVersions();
+  if (editorUpstreamType() !== "cliproxy") loadClientHeaderVersions();
   if (upstream?.type === "cliproxy" && upstream.managed_pool) loadCLIProxy();
 }
 function updateEditorProvider(changed = true) {
@@ -843,6 +846,12 @@ function updateEditorProvider(changed = true) {
   $("poolEditorNav").classList.toggle("hidden", !pool);
   $("editorConnection").classList.toggle("hidden", pool);
   document.querySelector('[data-section="editorConnection"]').classList.toggle("hidden", pool);
+  $("editorHeaders").classList.toggle("hidden", type === "cliproxy");
+  document.querySelector('[data-section="editorHeaders"]').classList.toggle("hidden", type === "cliproxy");
+  $("editHeaderOverrides").disabled = type === "cliproxy";
+  $("editStructuredOutput").closest(".field").classList.toggle("hidden",type==="cliproxy");
+  $("editStructuredOutput").disabled=type==="cliproxy";
+  validateHeaderOverrides();
   $("editBase").disabled = pool;
   $("editKey").disabled = pool;
   $("editBase").required = !pool;
@@ -869,6 +878,7 @@ function updateEditorProvider(changed = true) {
   $("editBase").placeholder = type === "opencode" ? openCodeURLs[$("editOpenCodeTier").value] : providerURLs[type];
   editProbe.provider = type;
   updateClineLoginProvider(changed);
+  numberEditorSections();
   if (changed) { clearProbeResults(); updateEditorDirty(); }
   $("probeEditorButton").innerHTML = icon("refresh") + (pool ? " 获取池内模型" : " 获取当前 Key 模型");
 }
@@ -895,6 +905,15 @@ function toggleKeyVisibility() {
   $("revealKeyButton").setAttribute("aria-label", visible ? "隐藏 API 密钥" : "显示 API 密钥");
 }
 function motionBehavior() { return matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth"; }
+function numberEditorSections() {
+  let index = 0;
+  document.querySelectorAll(".editor-nav-item:not(.hidden)").forEach(button => {
+    const number = String(++index).padStart(2, "0");
+    button.firstElementChild.textContent = number;
+    const marker = $(button.dataset.section).querySelector(":scope > .editor-section-heading > span");
+    if (marker) marker.textContent = number;
+  });
+}
 function activateEditorSection(id) {
   document.querySelectorAll(".editor-nav-item").forEach((button) => {
     const active = button.dataset.section === id;
@@ -917,14 +936,14 @@ $("editorScroll").addEventListener("scroll", () => {
     editorScrollFrame = 0;
     const scroll = $("editorScroll");
     let section = "editorBasic";
-    document.querySelectorAll(".editor-section").forEach((item) => { if (item.offsetTop <= scroll.scrollTop + 65) section = item.id; });
+    document.querySelectorAll(".editor-section:not(.hidden)").forEach((item) => { if (item.offsetTop <= scroll.scrollTop + 65) section = item.id; });
     if (scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 5) section = "editorRouting";
     activateEditorSection(section);
   });
 }, { passive: true });
 function finishCloseEditor() {
   clearTimeout(coreUI.refreshTimer);
-  cancelCoreLogin();
+  cancelCoreLogin(false);
   cancelClineLogin();
   clearProbeResults();
   editProbe.saving = false;
@@ -945,6 +964,7 @@ function finishCloseEditor() {
   syncModalLock();
 }
 async function closeEdit() {
+  if(poolManagement.busy){toast("请等待当前操作完成，或先取消剩余操作","error");return;}
   if (!editorIsOpen() || editProbe.saving || editProbe.closing) return;
   if (editorDirty()) {
     editProbe.closing = true;
@@ -994,7 +1014,7 @@ async function probeEditUpstream() {
   editProbe.controller = new AbortController();
   const probeSignature = () => [$("editType").value, $("editOpenCodeTier").value, editorOpenAIProtocol(), base.value, key.value, $("editProxy").value, $("editHeaderOverrides").value].join("\n");
   const signature = probeSignature();
-  const body = { type: editorUpstreamType(), openai_protocol: editorOpenAIProtocol(), opencode_tier: editorUpstreamType() === "opencode-free" ? "zen" : $("editOpenCodeTier").value, base_url: base.value.trim(), proxy_id: Number($("editProxy").value), header_overrides: $("editHeaderOverrides").value.trim() };
+  const body = { type: editorUpstreamType(), openai_protocol: editorOpenAIProtocol(), opencode_tier: editorUpstreamType() === "opencode-free" ? "zen" : $("editOpenCodeTier").value, base_url: base.value.trim(), proxy_id: Number($("editProxy").value), header_overrides: editorHeaderOverrides() };
   if (key.value.trim()) body.api_key = key.value.trim();
   $("editProbeInfo").className = "probe-info";
   $("editProbeInfo").textContent = editorUpstreamType() === "cliproxy" ? "正在读取当前池的可用模型…" : editorUpstreamType() === "opencode-free" ? "正在获取 OpenCode 免费模型…" : key.value.trim() ? "正在使用当前填写的 Key 获取模型…" : "正在使用已保存的 Key 获取模型…";
@@ -1020,6 +1040,7 @@ async function probeEditUpstream() {
 }
 async function saveEditUpstream(event) {
   event.preventDefault();
+  if(poolManagement.busy){toast("请等待账号操作完成后再保存上游","error");return false;}
   if (editProbe.saving) return false;
   if (!validateHeaderOverrides()) { jumpEditor("editorHeaders"); $("editHeaderOverrides").reportValidity(); return false; }
   commitModelInput();
@@ -1039,7 +1060,7 @@ async function saveEditUpstream(event) {
     } catch { $("editBase").setCustomValidity("请输入以 http:// 或 https:// 开头的服务地址"); jumpEditor("editorConnection"); $("editBase").reportValidity(); return false; }
   }
   if (!$("upstreamEditorForm").reportValidity()) return false;
-  const body = { name: $("editName").value.trim(), type: editorUpstreamType(), base_url: $("editBase").value.trim().replace(/\/+$/, ""), proxy_id: Number($("editProxy").value), priority: Number($("editPriority").value), weight: Number($("editWeight").value), models: parseAllowlist($("editModels").value).join(","), model_map: $("editModelMap").value.trim(), header_overrides: $("editHeaderOverrides").value.trim(), structured_output: $("editStructuredOutput").value };
+  const body = { name: $("editName").value.trim(), type: editorUpstreamType(), base_url: $("editBase").value.trim().replace(/\/+$/, ""), proxy_id: Number($("editProxy").value), priority: Number($("editPriority").value), weight: Number($("editWeight").value), models: parseAllowlist($("editModels").value).join(","), model_map: $("editModelMap").value.trim(), header_overrides: editorHeaderOverrides(), structured_output: editorUpstreamType()==="cliproxy"?"":$("editStructuredOutput").value };
   body.openai_protocol = editorOpenAIProtocol();
   body.opencode_tier = editorUpstreamType() === "opencode-free" ? "zen" : editorUpstreamType() === "opencode" ? $("editOpenCodeTier").value : "";
   if (!creating) body.enabled = $("editEnabled").checked;
@@ -1050,6 +1071,7 @@ async function saveEditUpstream(event) {
     if (creating) body.pool_proxy_id = coreUI.defaultProxy;
   }
   const pending = pool ? [...coreUI.pending] : [];
+  const pendingReport = pool ? [...poolManagement.report] : [];
   editProbe.saving = true; updateEditorDirty();
   $("editorError").classList.add("hidden");
   setBusy($("editorSaveButton"), true, creating ? "正在创建…" : "正在保存…");
@@ -1062,17 +1084,7 @@ async function saveEditUpstream(event) {
     if (activeTab !== "upstreams") await switchTab("upstreams"); else await loadUpstreams();
     if (pool) {
       await openEditUpstream(savedID);
-      let imported = 0;
-      for (const item of pending) {
-        try {
-          await api(poolAPI("credentials/import", savedID), {method: "POST", body: JSON.stringify(item)});
-          imported++;
-        } catch (error) {
-          coreUI.pending = pending.slice(imported);
-          coreMessage("账号池已保存；" + imported + " 个凭据已导入，剩余 " + coreUI.pending.length + " 个待重试：" + error.message, true);
-          break;
-        }
-      }
+      if (pending.length||pendingReport.some(item=>item.status==="error")) await completeStagedPoolImports(pending,savedID,pendingReport);
       await loadCLIProxy();
       updateEditorDirty();
     }

@@ -32,6 +32,11 @@ func compileUpstreamConfig(up *Upstream) {
 }
 
 func (up *Upstream) applyHeaders(req *http.Request, incoming http.Header) error {
+	if up.Type == "cliproxy" {
+		// This hop connects to the private SDK listener. Provider headers belong
+		// to its executors, including for older rows with saved override rules.
+		return nil
+	}
 	config := up.config
 	var rules []headerRule
 	if config == nil || config.headersRaw != up.HeaderOverrides {

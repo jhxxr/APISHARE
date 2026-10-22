@@ -31,14 +31,19 @@ var coreLoginSessions = struct {
 }{items: make(map[string]coreLoginSession)}
 
 type coreLoginSession struct {
-	owner     [32]byte
-	provider  string
-	expires   time.Time
-	poolID    int64
-	proxyID   int64
-	worker    *cliproxy.Manager
-	committed bool
-	flow      string
+	owner      [32]byte
+	provider   string
+	expires    time.Time
+	poolID     int64
+	proxyID    int64
+	worker     *cliproxy.Manager
+	committed  bool
+	flow       string
+	login      cliproxy.Login
+	status     string
+	message    string
+	duplicates []string
+	op         *sync.Mutex
 }
 
 func initializeCLIProxy(dbPath string) error {
@@ -129,16 +134,8 @@ func coreOperation(c *gin.Context, fn func() error) {
 func coreSession(c *gin.Context, state string) (coreLoginSession, bool) {
 	coreLoginSessions.Lock()
 	defer coreLoginSessions.Unlock()
-	for id, session := range coreLoginSessions.items {
-		if time.Now().After(session.expires) {
-			if session.worker != nil {
-				go session.worker.DiscardLogin()
-			}
-			delete(coreLoginSessions.items, id)
-		}
-	}
 	session, ok := coreLoginSessions.items[state]
-	return session, ok && session.poolID == requestCLIProxyPoolID(c) && session.owner == sha256.Sum256([]byte(adminRequestToken(c)))
+	return session, ok && time.Now().Before(session.expires) && session.poolID == requestCLIProxyPoolID(c) && session.owner == sha256.Sum256([]byte(adminRequestToken(c)))
 }
 
 func registerCLIProxyRoutes(auth *gin.RouterGroup) {
@@ -156,6 +153,10 @@ func registerCLIProxyHandlers(group *gin.RouterGroup) {
 		}
 		c.Next()
 	})
+	registerCLIProxyAccountRoutes(group)
+	registerCLIProxyOperationRoutes(group)
+	registerCLIProxyAttemptRoutes(group)
+	registerCLIProxySessionRoutes(group)
 	group.GET("/status", func(c *gin.Context) {
 		status := requestCLIProxyCore(c).Status()
 		status.ProxyID = requestCLIProxyProxyID(c)
@@ -163,6 +164,8 @@ func registerCLIProxyHandlers(group *gin.RouterGroup) {
 	})
 	group.GET("/license", func(c *gin.Context) { c.Data(200, "text/plain; charset=utf-8", []byte(cliProxyLicense)) })
 	group.POST("/start", func(c *gin.Context) {
+		proxyConfigMu.Lock()
+		defer proxyConfigMu.Unlock()
 		coreOperation(c, func() error {
 			if id := requestCLIProxyPoolID(c); id != 0 {
 				if err := setPoolProxy(c.Request.Context(), requestCLIProxyCore(c), id, cliProxyPoolProxyID(id)); err != nil {
@@ -217,7 +220,11 @@ func registerCLIProxyHandlers(group *gin.RouterGroup) {
 		}
 		c.JSON(200, gin.H{"ok": true})
 	})
-	group.POST("/stop", func(c *gin.Context) { coreOperation(c, requestCLIProxyCore(c).Stop) })
+	group.POST("/stop", func(c *gin.Context) {
+		proxyConfigMu.Lock()
+		defer proxyConfigMu.Unlock()
+		coreOperation(c, requestCLIProxyCore(c).Stop)
+	})
 	group.GET("/credentials", func(c *gin.Context) {
 		var result struct {
 			Files       []cliproxy.Credential `json:"files"`
@@ -229,6 +236,9 @@ func registerCLIProxyHandlers(group *gin.RouterGroup) {
 		if requestCLIProxyPoolID(c) == 0 {
 			err = manager.Client().Do(c.Request.Context(), "GET", "/credentials", nil, &result)
 		} else {
+			if manager.Running() {
+				_ = manager.RefreshRuntime(c.Request.Context())
+			}
 			result.Files, err = manager.Credentials(c.Request.Context())
 		}
 		if err != nil {
@@ -255,6 +265,7 @@ func registerCLIProxyHandlers(group *gin.RouterGroup) {
 			Name       string          `json:"name"`
 			Credential json.RawMessage `json:"credential"`
 			ProxyID    *int64          `json:"proxy_id"`
+			Replace    bool            `json:"replace"`
 		}
 		if c.ShouldBindJSON(&req) != nil || !validCoreCredentialName(req.Name) || len(req.Credential) == 0 {
 			c.JSON(400, gin.H{"error": "请提供有效的 JSON 凭据文件和文件名"})
@@ -265,20 +276,25 @@ func registerCLIProxyHandlers(group *gin.RouterGroup) {
 			c.JSON(400, gin.H{"error": "凭据必须是非空 JSON 对象"})
 			return
 		}
-		coreOperation(c, func() error {
-			proxyConfigMu.Lock()
-			defer proxyConfigMu.Unlock()
-			proxyID := int64(-1)
-			if req.ProxyID != nil {
-				proxyID = *req.ProxyID
-			}
-			if proxyID < -1 {
-				return fmt.Errorf("请选择有效的代理")
-			}
-			return importPoolCredential(c.Request.Context(), requestCLIProxyCore(c), requestCLIProxyPoolID(c), req.Name, req.Credential, proxyID)
-		})
+		proxyConfigMu.Lock()
+		defer proxyConfigMu.Unlock()
+		proxyID := int64(-1)
+		if req.ProxyID != nil {
+			proxyID = *req.ProxyID
+		}
+		if proxyID < -1 {
+			c.JSON(400, gin.H{"error": "请选择有效的代理"})
+			return
+		}
+		if err := importPoolCredential(c.Request.Context(), requestCLIProxyCore(c), requestCLIProxyPoolID(c), req.Name, req.Credential, proxyID, req.Replace); err != nil {
+			credentialImportError(c, err)
+			return
+		}
+		c.JSON(200, gin.H{"ok": true})
 	})
 	group.PATCH("/credentials/status", func(c *gin.Context) {
+		proxyConfigMu.Lock()
+		defer proxyConfigMu.Unlock()
 		var req struct {
 			Name     string `json:"name"`
 			Disabled *bool  `json:"disabled"`
@@ -295,6 +311,8 @@ func registerCLIProxyHandlers(group *gin.RouterGroup) {
 		})
 	})
 	group.POST("/credentials/refresh", func(c *gin.Context) {
+		proxyConfigMu.Lock()
+		defer proxyConfigMu.Unlock()
 		var req struct {
 			Name string `json:"name"`
 		}
@@ -310,6 +328,8 @@ func registerCLIProxyHandlers(group *gin.RouterGroup) {
 		})
 	})
 	group.DELETE("/credentials", func(c *gin.Context) {
+		proxyConfigMu.Lock()
+		defer proxyConfigMu.Unlock()
 		name := c.Query("name")
 		if !validCoreCredentialName(name) {
 			c.JSON(400, gin.H{"error": "请选择单个凭据文件"})
@@ -396,9 +416,11 @@ func registerCLIProxyHandlers(group *gin.RouterGroup) {
 		coreLoginSessions.items[result.State] = coreLoginSession{
 			owner: sha256.Sum256([]byte(adminRequestToken(c))), provider: "codex",
 			expires: time.Now().Add(5 * time.Minute), poolID: poolID, proxyID: proxyID, worker: worker, flow: "siwc_bind",
+			login: result, status: "wait", op: &sync.Mutex{},
 		}
 		coreLoginSessions.Unlock()
 		expireCoreLogin(result.State, 5*time.Minute)
+		go watchCoreLogin(result.State)
 		c.JSON(200, result)
 	})
 	group.POST("/oauth/start", func(c *gin.Context) {
@@ -412,16 +434,20 @@ func registerCLIProxyHandlers(group *gin.RouterGroup) {
 		}
 		// Prune expired records and bound pending sessions before creating a core flow.
 		coreLoginSessions.Lock()
+		expired := make([]string, 0)
+		active := 0
 		for id, s := range coreLoginSessions.items {
 			if time.Now().After(s.expires) {
-				if s.worker != nil {
-					go s.worker.DiscardLogin()
-				}
-				delete(coreLoginSessions.items, id)
+				expired = append(expired, id)
+			} else {
+				active++
 			}
 		}
-		full := len(coreLoginSessions.items) >= 64
+		full := active >= 64
 		coreLoginSessions.Unlock()
+		for _, id := range expired {
+			go discardCoreLogin(id)
+		}
 		if full {
 			c.JSON(429, gin.H{"error": "待处理登录过多，请稍后重试"})
 			return
@@ -478,13 +504,21 @@ func registerCLIProxyHandlers(group *gin.RouterGroup) {
 			return
 		}
 		coreLoginSessions.Lock()
-		session := coreLoginSession{owner: sha256.Sum256([]byte(adminRequestToken(c))), provider: req.Provider, expires: time.Now().Add(15 * time.Minute), poolID: poolID, proxyID: proxyID}
+		ttl := 15 * time.Minute
+		if result.ExpiresIn > 0 && time.Duration(result.ExpiresIn)*time.Second < ttl {
+			ttl = time.Duration(result.ExpiresIn) * time.Second
+		}
+		result.ExpiresIn = int(ttl / time.Second)
+		session := coreLoginSession{owner: sha256.Sum256([]byte(adminRequestToken(c))), provider: req.Provider, expires: time.Now().Add(ttl), poolID: poolID, proxyID: proxyID, login: result, status: "wait", op: &sync.Mutex{}}
 		if poolID != 0 {
 			session.worker = worker
 		}
 		coreLoginSessions.items[result.State] = session
 		coreLoginSessions.Unlock()
-		expireCoreLogin(result.State, 15*time.Minute)
+		expireCoreLogin(result.State, ttl)
+		if poolID != 0 {
+			go watchCoreLogin(result.State)
+		}
 		c.JSON(200, result)
 	})
 	group.GET("/oauth/status", func(c *gin.Context) {
@@ -494,68 +528,28 @@ func registerCLIProxyHandlers(group *gin.RouterGroup) {
 			c.JSON(404, gin.H{"error": "登录会话已过期，请重新发起"})
 			return
 		}
-		var result struct {
-			Status string `json:"status"`
-			Error  string `json:"error,omitempty"`
-		}
-		if session.committed {
-			c.JSON(200, gin.H{"status": "ok"})
-			return
-		}
-		worker := requestCLIProxyCore(c)
-		if session.worker != nil {
-			worker = session.worker
-		}
-		if err := worker.Client().Do(c.Request.Context(), "GET", "/oauth/status?state="+url.QueryEscape(state), nil, &result); err != nil {
-			c.JSON(502, gin.H{"error": err.Error()})
-			return
-		}
-		if result.Error != "" {
-			result.Error = "授权失败，请重新登录或导入凭据"
-		}
-		if result.Status == "ok" && session.worker != nil {
-			coreLoginSessions.Lock()
-			defer coreLoginSessions.Unlock()
-			current, exists := coreLoginSessions.items[state]
-			if !exists {
-				c.JSON(404, gin.H{"error": "登录会话已取消"})
+		if session.worker == nil {
+			var result struct {
+				Status string `json:"status"`
+				Error  string `json:"error,omitempty"`
+			}
+			if err := requestCLIProxyCore(c).Client().Do(c.Request.Context(), "GET", "/oauth/status?state="+url.QueryEscape(state), nil, &result); err != nil {
+				c.JSON(502, gin.H{"error": err.Error()})
 				return
 			}
-			if !current.committed {
-				files, err := worker.ReadCredentials()
-				if err == nil && len(files) == 0 {
-					err = fmt.Errorf("授权完成但尚未生成凭据，请重试")
-				}
-				for name, raw := range files {
-					if err != nil {
-						break
-					}
-					if session.flow == "siwc_bind" {
-						var document map[string]json.RawMessage
-						err = json.Unmarshal(raw, &document)
-						if err == nil && len(document["siwc"]) == 0 {
-							err = fmt.Errorf("SIWC 绑定尚未完成")
-						}
-						if err == nil {
-							// Bind only the SIWC section; the live credential may have
-							// refreshed its OAuth tokens while binding was in progress.
-							err = requestCLIProxyCore(c).Client().Do(c.Request.Context(), "PATCH", "/credentials/fields",
-								gin.H{"name": name, "siwc": document["siwc"]}, nil)
-						}
-					} else {
-						err = importPoolCredential(c.Request.Context(), requestCLIProxyCore(c), session.poolID, name, raw, session.proxyID)
-					}
-				}
-				if err != nil {
-					c.JSON(502, gin.H{"error": "保存授权凭据失败，请检查账号池状态后重试"})
-					return
-				}
-				current.committed = true
-				coreLoginSessions.items[state] = current
-				go worker.DiscardLogin()
+			if result.Error != "" {
+				result.Error = "授权失败，请重新登录或导入凭据"
 			}
+			c.JSON(200, result)
+			return
 		}
-		c.JSON(200, result)
+		advanceCoreLogin(c.Request.Context(), state, false)
+		session, ok = coreSession(c, state)
+		if !ok {
+			c.JSON(404, gin.H{"error": "登录会话已取消"})
+			return
+		}
+		c.JSON(200, coreLoginView(state, session))
 	})
 	group.POST("/oauth/callback", func(c *gin.Context) {
 		var req struct {
@@ -591,19 +585,14 @@ func registerCLIProxyHandlers(group *gin.RouterGroup) {
 			c.JSON(404, gin.H{"error": "登录会话不存在"})
 			return
 		}
-		coreOperation(c, func() error {
-			if session.worker != nil {
-				session.worker.DiscardLogin()
-			} else {
-				if err := requestCLIProxyCore(c).Client().Do(c.Request.Context(), "DELETE", "/oauth/session?state="+url.QueryEscape(state), nil, nil); err != nil {
-					return err
-				}
+		if session.worker == nil {
+			if err := requestCLIProxyCore(c).Client().Do(c.Request.Context(), "DELETE", "/oauth/session?state="+url.QueryEscape(state), nil, nil); err != nil {
+				c.JSON(502, gin.H{"error": err.Error()})
+				return
 			}
-			coreLoginSessions.Lock()
-			delete(coreLoginSessions.items, state)
-			coreLoginSessions.Unlock()
-			return nil
-		})
+		}
+		discardCoreLogin(state)
+		c.JSON(200, gin.H{"ok": true})
 	})
 	group.POST("/upstream", func(c *gin.Context) {
 		if id := requestCLIProxyPoolID(c); id != 0 {

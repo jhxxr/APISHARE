@@ -79,7 +79,7 @@ func TestManagedCLIProxyPoolsScopeAccountsAndProxyBindings(t *testing.T) {
 	withTestCLIProxyPools(t)
 	create := func(name string) int64 {
 		t.Helper()
-		response := proxyAdminRequest(router, "POST", "upstreams", fmt.Sprintf(`{"name":%q,"type":"cliproxy"}`, name), true)
+		response := proxyAdminRequest(router, "POST", "upstreams", fmt.Sprintf(`{"name":%q,"type":"cliproxy","header_overrides":"obsolete-invalid-json"}`, name), true)
 		if response.Code != 200 {
 			t.Fatalf("create pool: %d %s", response.Code, response.Body.String())
 		}
@@ -96,6 +96,18 @@ func TestManagedCLIProxyPoolsScopeAccountsAndProxyBindings(t *testing.T) {
 	upB, _ := dbGetUpstream(b)
 	if upA.BaseURL == upB.BaseURL || upA.APIKey == upB.APIKey || upA.ProxyID != 0 || upB.ProxyID != 0 {
 		t.Fatal("pool listeners/keys are not isolated")
+	}
+	if upA.HeaderOverrides != "" || upB.HeaderOverrides != "" {
+		t.Fatal("pool creation retained gateway header overrides")
+	}
+	if _, err := db.Exec(`UPDATE upstreams SET header_overrides='obsolete-invalid-json' WHERE id=?`, a); err != nil {
+		t.Fatal(err)
+	}
+	if response := proxyAdminRequest(router, "PATCH", fmt.Sprintf("upstreams/%d", a), `{"header_overrides":"another-invalid-value"}`, true); response.Code != 200 {
+		t.Fatalf("unsupported pool headers blocked saving: %d %s", response.Code, response.Body.String())
+	}
+	if saved, _ := dbGetUpstream(a); saved.HeaderOverrides != "" {
+		t.Fatal("pool edit retained obsolete gateway headers")
 	}
 	scope := func(id int64, suffix string) string { return fmt.Sprintf("upstreams/%d/cliproxy/%s", id, suffix) }
 	coreLoginSessions.Lock()
@@ -154,6 +166,8 @@ func TestManagedCLIProxyPoolsScopeAccountsAndProxyBindings(t *testing.T) {
 		{"PATCH", "credentials/proxy", `{"name":"only-a.json","proxy_id":0}`},
 		{"POST", "credentials/refresh", `{"name":"only-a.json"}`},
 		{"DELETE", "credentials?name=only-a.json", ""},
+		{"GET", "credentials/models?name=only-a.json", ""},
+		{"POST", "credentials/test", `{"name":"only-a.json","model":"any-model"}`},
 	} {
 		if response := proxyAdminRequest(router, operation.method, scope(b, operation.path), operation.body, true); response.Code != 404 {
 			t.Fatalf("cross-pool %s accepted: %d %s", operation.path, response.Code, response.Body.String())
@@ -203,8 +217,8 @@ func TestManagedCLIProxyPoolsScopeAccountsAndProxyBindings(t *testing.T) {
 		t.Fatalf("stopped pool lost its safe account history: %d %s", response.Code, response.Body.String())
 	}
 	chosen, err := pickUpstream(FormatOpenAIChat, "a-model", nil, false)
-	if err != nil || chosen.ID != b {
-		t.Fatalf("stopped pool still received new traffic: %+v %v", chosen, err)
+	if err == nil || chosen != nil {
+		t.Fatalf("stopped or empty pool still received new traffic: %+v %v", chosen, err)
 	}
 }
 

@@ -271,7 +271,9 @@ func TestCLIProxyNativeRelayAndScopedAffinity(t *testing.T) {
 		fmt.Fprint(w, `{"id":"resp-test","object":"response","status":"completed","model":"test-model","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":4,"output_tokens":2}}`)
 	}))
 	defer server.Close()
-	up := &Upstream{ID: 99, Type: "cliproxy", BaseURL: server.URL, APIKey: "pool-key"}
+	up := &Upstream{ID: 99, Type: "cliproxy", BaseURL: server.URL, APIKey: "pool-key",
+		HeaderOverrides: `{"Authorization":false,"User-Agent":"obsolete-pool-override"}`}
+	compileUpstreamConfig(up)
 	for _, format := range []clientFormat{FormatOpenAIChat, FormatOpenAIResponse, FormatAnthropic, FormatGemini} {
 		if up.wireFormat(format) != format {
 			t.Fatalf("native protocol lost: %s", format)

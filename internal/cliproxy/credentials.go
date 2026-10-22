@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 )
 
 func (m *Manager) Credentials(ctx context.Context) ([]Credential, error) {
@@ -17,6 +19,18 @@ func (m *Manager) Credentials(ctx context.Context) ([]Credential, error) {
 			Files []Credential `json:"files"`
 		}
 		err := m.Client().Do(ctx, "GET", "/credentials", nil, &result)
+		if err == nil {
+			snapshot := m.Runtime()
+			for i := range result.Files {
+				for j := range snapshot.Accounts {
+					if snapshot.Accounts[j].ID == result.Files[i].ID {
+						details := snapshot.Accounts[j]
+						result.Files[i].Details = &details
+						break
+					}
+				}
+			}
+		}
 		return result.Files, err
 	}
 	files, err := m.ReadCredentials()
@@ -41,6 +55,14 @@ func (m *Manager) Credentials(ctx context.Context) ([]Credential, error) {
 		}
 		out = append(out, Credential{ID: id, Name: name, Provider: strings.ToLower(strings.TrimSpace(meta.Type)),
 			Email: meta.Email, Label: meta.Label, Disabled: meta.Disabled, Unavailable: true, Status: "stopped"})
+		var document map[string]any
+		if json.Unmarshal(raw, &document) == nil {
+			auth := &coreauth.Auth{ID: id, FileName: name, Provider: meta.Type, Metadata: document, Disabled: meta.Disabled}
+			details := projectAccount(auth, nil, time.Now())
+			details.Ready = false
+			details.Reason = "stopped"
+			out[len(out)-1].Details = &details
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil

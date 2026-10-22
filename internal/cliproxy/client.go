@@ -59,18 +59,19 @@ func (c Client) Do(ctx context.Context, method, path string, body any, out any) 
 
 // Credential intentionally omits tokens and arbitrary provider metadata.
 type Credential struct {
-	ID               string         `json:"id"`
-	Name             string         `json:"name"`
-	Label            string         `json:"label,omitempty"`
-	Email            string         `json:"email,omitempty"`
-	Provider         string         `json:"provider"`
-	Status           string         `json:"status"`
-	Disabled         bool           `json:"disabled"`
-	Unavailable      bool           `json:"unavailable"`
-	RuntimeOnly      bool           `json:"runtime_only"`
-	ProxyID          int64          `json:"proxy_id"`
-	EffectiveProxyID int64          `json:"effective_proxy_id"`
-	Uptime           *AccountUptime `json:"uptime,omitempty"`
+	ID               string          `json:"id"`
+	Name             string          `json:"name"`
+	Label            string          `json:"label,omitempty"`
+	Email            string          `json:"email,omitempty"`
+	Provider         string          `json:"provider"`
+	Status           string          `json:"status"`
+	Disabled         bool            `json:"disabled"`
+	Unavailable      bool            `json:"unavailable"`
+	RuntimeOnly      bool            `json:"runtime_only"`
+	ProxyID          int64           `json:"proxy_id"`
+	EffectiveProxyID int64           `json:"effective_proxy_id"`
+	Uptime           *AccountUptime  `json:"uptime,omitempty"`
+	Details          *AccountRuntime `json:"details,omitempty"`
 }
 
 type Login struct {

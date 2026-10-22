@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"apishare/internal/cliproxy"
 	"github.com/gin-gonic/gin"
 )
 
@@ -97,6 +98,7 @@ func (i *relayInfo) protocolUsage() upstreamUsage {
 
 // relayTask 一次转发所需的全部上下文。
 type relayTask struct {
+	traceID                   string
 	format                    clientFormat
 	endpoint                  string    // 原生透传时的上游路径
 	body                      []byte    // 客户端原始请求体（原生透传用）
@@ -199,7 +201,7 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			if i == 0 {
 				if id, ok := affinityGet(skey); ok {
 					if u, err := cachedRoutingUpstream(id); err == nil && !tried[u.ID] && u.Enabled && u.Weight > 0 &&
-						u.servesModel(cr.Model) && u.availableForRelay() && (!nativeOnly || supportsNativeEndpoint(u, format)) {
+						u.servesModel(cr.Model) && u.availableForRelay(cr.Model) && (!nativeOnly || supportsNativeEndpoint(u, format)) {
 						up = u
 					}
 				}
@@ -329,7 +331,8 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 			logError = "stream interrupted: " + lastErr.Error()
 		}
 		entry := &CallLog{
-			KeyID: ak.ID, KeyName: ak.Name,
+			TraceID: task.traceID,
+			KeyID:   ak.ID, KeyName: ak.Name,
 			UpstreamID: info.UpstreamID, UpstreamName: info.UpstreamName,
 			Model: task.model, Endpoint: string(task.format),
 			PromptTokens: counts.inputTotal(), CompletionTokens: counts.outputTotal(),
@@ -357,7 +360,8 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 
 func insertFailureLog(ak ApiKey, info relayInfo, task *relayTask, status int, errMsg string) {
 	dbInsertLog(&CallLog{
-		KeyID: ak.ID, KeyName: ak.Name,
+		TraceID: task.traceID,
+		KeyID:   ak.ID, KeyName: ak.Name,
 		UpstreamID: info.UpstreamID, UpstreamName: info.UpstreamName,
 		Model: task.model, Endpoint: string(task.format),
 		Status: status, LatencyMS: info.LatencyMS, FirstTokenMS: info.FirstTokenMS, DurationMS: info.DurationMS, Error: errMsg,
@@ -503,6 +507,10 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		return info, false, err
 	}
 	if up.Type == "cliproxy" {
+		if task.traceID == "" {
+			task.traceID = randHex(16)
+		}
+		req.Header.Set(cliproxy.TraceHeader, task.traceID)
 		setCLIProxyHeaders(req, c.Request.Header, task)
 	}
 

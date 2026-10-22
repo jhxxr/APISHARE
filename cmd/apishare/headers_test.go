@@ -28,6 +28,35 @@ func TestHeaderOverridesValidation(t *testing.T) {
 	}
 }
 
+func TestCLIProxyIgnoresObsoleteGatewayHeaders(t *testing.T) {
+	for _, raw := range []string{`{"Authorization":false,"*":true,"User-Agent":"obsolete"}`, "invalid-json"} {
+		for _, compiled := range []bool{false, true} {
+			up := &Upstream{Type: "cliproxy", APIKey: "pool-key", HeaderOverrides: raw}
+			if compiled {
+				compileUpstreamConfig(up)
+			}
+			request := httptest.NewRequest("POST", "http://127.0.0.1/v1/responses", nil)
+			request.Header.Set("Authorization", "Bearer pool-key")
+			request.Header.Set("User-Agent", "gateway")
+			expected := request.Header.Clone()
+			if err := up.applyHeaders(request, http.Header{"Authorization": {"Bearer client-key"}, "X-Private": {"client-header"}}); err != nil || !reflect.DeepEqual(request.Header, expected) {
+				t.Fatalf("obsolete headers modified the SDK connection: compiled=%v headers=%v err=%v", compiled, request.Header, err)
+			}
+		}
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer pool-key" || r.Header.Get("X-Obsolete") != "" {
+			t.Error("model discovery applied a gateway override to the SDK connection")
+		}
+		fmt.Fprint(w, `{"data":[{"id":"pool-model"}]}`)
+	}))
+	defer server.Close()
+	models, err := probeUpstreamModelsWithClient(context.Background(), "cliproxy", server.URL, "pool-key", server.Client(), "invalid-json")
+	if err != nil || !reflect.DeepEqual(models, []string{"pool-model"}) {
+		t.Fatalf("obsolete pool headers blocked model discovery: %v %v", models, err)
+	}
+}
+
 func TestHeaderOverridesRulesAndCredentialFiltering(t *testing.T) {
 	incoming := http.Header{}
 	for name, value := range map[string]string{"Authorization": "Bearer gateway-key", "x-api-key": "gateway-key", "x-goog-api-key": "gateway-key", "Cookie": "session=private", "X-Foo": "client-value", "X-Trace-ID": "trace", "X-Trace-Drop": "drop", "X-Delete": "delete", "Connection": "keep-alive, X-Hop", "X-Hop": "hop", "Content-Length": "999", "Proxy-Authorization": "private", "Anthropic-Beta": "feature", "User-Agent": "client-agent"} {

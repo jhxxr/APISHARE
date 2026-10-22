@@ -366,6 +366,9 @@ func registerAdminRoutes(r *gin.Engine) {
 			c.JSON(400, gin.H{"error": "structured_output must be empty, json_schema, json_object or disabled"})
 			return
 		}
+		if u.Type == "cliproxy" {
+			u.HeaderOverrides = ""
+		}
 		if _, err := parseHeaderOverrides(u.HeaderOverrides); err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
@@ -489,7 +492,9 @@ func registerAdminRoutes(r *gin.Engine) {
 				return
 			}
 		}
-		if req.HeaderOverrides != nil {
+		if u.Type == "cliproxy" {
+			u.HeaderOverrides = ""
+		} else if req.HeaderOverrides != nil {
 			if _, err := parseHeaderOverrides(*req.HeaderOverrides); err != nil {
 				c.JSON(400, gin.H{"error": err.Error()})
 				return
@@ -595,6 +600,7 @@ func registerAdminRoutes(r *gin.Engine) {
 		dup.config = nil
 		if dup.Type == "cliproxy" {
 			dup.ProxyID = 0
+			dup.HeaderOverrides = ""
 		}
 		var saveErr error
 		if dup.Type == "cliproxy" && cliProxyPools.root != "" {
@@ -644,6 +650,9 @@ func registerAdminRoutes(r *gin.Engine) {
 		if up.BaseURL == "" || up.APIKey == "" {
 			c.JSON(400, gin.H{"ok": false, "error": "base_url and api_key are required"})
 			return
+		}
+		if up.Type == "cliproxy" {
+			up.HeaderOverrides = ""
 		}
 		if _, err := parseHeaderOverrides(up.HeaderOverrides); err != nil {
 			c.JSON(400, gin.H{"ok": false, "error": err.Error()})

@@ -158,7 +158,7 @@ func queryLogs(ctx context.Context, query logQuery) (*logQueryResult, error) {
 		}
 	}
 	args := append(append([]any{}, query.Args...), limit, offset)
-	rows, err := tx.QueryContext(ctx, `SELECT id,key_id,key_name,upstream_id,upstream_name,model,endpoint,prompt_tokens,completion_tokens,cost_usd,status,latency_ms,first_token_ms,duration_ms,error,created_at,billing_json FROM call_logs WHERE `+query.Where+` ORDER BY unixepoch(created_at) DESC,id DESC LIMIT ? OFFSET ?`, args...)
+	rows, err := tx.QueryContext(ctx, `SELECT id,key_id,key_name,upstream_id,upstream_name,model,endpoint,prompt_tokens,completion_tokens,cost_usd,status,latency_ms,first_token_ms,duration_ms,error,created_at,billing_json,trace_id FROM call_logs WHERE `+query.Where+` ORDER BY unixepoch(created_at) DESC,id DESC LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +184,7 @@ func queryLogs(ctx context.Context, query logQuery) (*logQueryResult, error) {
 func scanQueriedLog(rows *sql.Rows) (CallLog, error) {
 	var log CallLog
 	var billing string
-	err := rows.Scan(&log.ID, &log.KeyID, &log.KeyName, &log.UpstreamID, &log.UpstreamName, &log.Model, &log.Endpoint, &log.PromptTokens, &log.CompletionTokens, &log.CostUSD, &log.Status, &log.LatencyMS, &log.FirstTokenMS, &log.DurationMS, &log.Error, &log.CreatedAt, &billing)
+	err := rows.Scan(&log.ID, &log.KeyID, &log.KeyName, &log.UpstreamID, &log.UpstreamName, &log.Model, &log.Endpoint, &log.PromptTokens, &log.CompletionTokens, &log.CostUSD, &log.Status, &log.LatencyMS, &log.FirstTokenMS, &log.DurationMS, &log.Error, &log.CreatedAt, &billing, &log.TraceID)
 	if err == nil && billing != "" {
 		_ = json.Unmarshal([]byte(billing), &log.Billing)
 	}

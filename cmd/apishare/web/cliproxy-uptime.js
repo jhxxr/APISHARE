@@ -23,6 +23,7 @@ function poolAccountUptimeHTML(item, index) {
   return '<button type="button" class="pool-uptime-button" data-account-uptime="' + index + '" data-uptime-key="' + esc(key) + '" aria-label="' + esc(label) + '" aria-expanded="' + selected + '" aria-controls="poolAccountUptimeDetail"><span class="pool-uptime-heading"><strong class="' + tone + '">' + rate + '</strong><small>24h</small></span><span class="pool-uptime-bars" aria-hidden="true">' + poolUptimeBars(data.history) + '</span><span class="pool-uptime-caption">' + (data.calls ? number(data.successes) + ' / ' + number(data.calls) + ' 次成功' : '暂无调用') + '</span></button>';
 }
 function showPoolAccountUptime(item) {
+  resetPoolAccountDetails();
   coreUI.uptimeAccount = item.id || item.name;
   renderCoreAccounts();
   const panel = $("poolAccountUptimeDetail");

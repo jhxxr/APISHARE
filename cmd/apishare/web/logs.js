@@ -199,6 +199,7 @@ function renderLogDetails() {
   }
   const fields = [["模型", log.model || "—"], ["上游服务", log.upstream_name || "未分配"], ["API 密钥", log.key_name || "—"], ["请求端点", log.endpoint || "—"], ["总耗时", perf.total ? fmtDuration(perf.total) : "—"], ["首 Token 延迟", perf.first ? fmtDuration(perf.first) : "—"], ["输出速度", perf.tps ? perf.tps + " tok/s" : "—"], ["费用", fmtUSD(log.cost_usd)]];
   $("logDetailBody").innerHTML = '<div class="log-detail-status">' + statusBadge(log.status) + '<strong>' + (log.status >= 200 && log.status < 300 ? "请求成功" : "请求失败") + '</strong></div><dl class="log-detail-fields">' + fields.map(([label, value]) => '<div><dt>' + label + '</dt><dd>' + (label === "模型" ? modelLabel(log.model) : esc(value)) + '</dd></div>').join("") + '</dl>' + (log.error ? '<section class="log-error-box"><h3>错误信息</h3><pre>' + esc(log.error) + '</pre></section>' : '');
+  renderGatewayAccountAttempts(log);
 }
 function closeLogDetails() {
   if (!$("logDetailDialog").open) return;

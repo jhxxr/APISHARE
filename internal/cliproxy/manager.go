@@ -41,25 +41,30 @@ type diskState struct {
 }
 
 type Status struct {
-	Version      string `json:"version"`
-	Embedded     bool   `json:"embedded"`
-	Running      bool   `json:"running"`
-	AutoStart    bool   `json:"auto_start"`
-	Error        string `json:"error,omitempty"`
-	AccountCount int    `json:"account_count"`
+	Version       string `json:"version"`
+	Embedded      bool   `json:"embedded"`
+	Running       bool   `json:"running"`
+	AutoStart     bool   `json:"auto_start"`
+	Error         string `json:"error,omitempty"`
+	AccountCount  int    `json:"account_count"`
+	Ready         bool   `json:"ready"`
+	ReadyAccounts int    `json:"ready_accounts"`
 	// ProxyID is filled by the gateway from its outbound proxy binding.
 	ProxyID int64 `json:"proxy_id"`
 }
 
 type Manager struct {
-	root      string
-	op        sync.Mutex
-	mu        sync.Mutex
-	state     diskState
-	cancel    context.CancelFunc
-	done      chan struct{}
-	lastError string
-	revision  atomic.Uint64
+	root            string
+	op              sync.Mutex
+	mu              sync.Mutex
+	state           diskState
+	cancel          context.CancelFunc
+	done            chan struct{}
+	lastError       string
+	revision        atomic.Uint64
+	runtimeMu       sync.RWMutex
+	runtimeSnapshot RuntimeSnapshot
+	runtimeFetched  time.Time
 }
 
 func NewManager(root string, port int) (*Manager, error) {
@@ -145,8 +150,18 @@ func (m *Manager) Revision() uint64    { return m.revision.Load() }
 func (m *Manager) Touch()              { m.revision.Add(1) }
 func (m *Manager) Status() Status {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	return Status{Version: Version(), Embedded: true, Running: m.cancel != nil, AutoStart: m.state.AutoStart, Error: m.lastError, AccountCount: m.CredentialCount()}
+	result := Status{Version: Version(), Embedded: true, Running: m.cancel != nil, AutoStart: m.state.AutoStart, Error: m.lastError}
+	m.mu.Unlock()
+	result.AccountCount = m.CredentialCount()
+	result.Ready = m.Ready("")
+	if result.Ready {
+		for _, account := range m.Runtime().Accounts {
+			if account.Ready {
+				result.ReadyAccounts++
+			}
+		}
+	}
+	return result
 }
 func (m *Manager) Client() Client {
 	s := m.snapshot()
@@ -245,6 +260,8 @@ func (m *Manager) start(ctx context.Context) error {
 			Version int `json:"config-version"`
 		}
 		if err := client.Do(ready, "GET", "/config", nil, &settings); err == nil && settings.Version == 8 {
+			_ = m.RefreshRuntime(ready)
+			go m.pollRuntime(done)
 			return nil
 		}
 		select {
@@ -265,6 +282,9 @@ func (m *Manager) stop() {
 	if cancel == nil {
 		return
 	}
+	ctx, stopFlush := context.WithTimeout(context.Background(), 750*time.Millisecond)
+	_ = m.Client().Do(ctx, "POST", "/apishare/flush", nil, nil)
+	stopFlush()
 	cancel()
 	<-done
 }

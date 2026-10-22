@@ -12,6 +12,7 @@ import (
 	"time"
 
 	sdk "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
 	_ "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator/builtin"
 )
@@ -55,9 +56,12 @@ func runPoolCore(path string) error {
 		if statsErr == nil {
 			defer recorder.db.Close()
 			builder.WithResultPolicy(recorder)
+			usage.RegisterNamedPlugin("apishare-account-attempts", recorder)
+			builder.WithServerOptions(recorder.traceOption())
 		} else {
 			fmt.Fprintln(os.Stderr, "CLIProxyAPI account uptime is temporarily unavailable")
 		}
+		builder.WithServerOptions(poolRuntimeOption(state, recorder))
 		var service *sdk.Service
 		service, err = builder.Build()
 		if err == nil {

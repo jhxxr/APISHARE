@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -67,6 +68,7 @@ type accountUptimeRecorder struct {
 	db        *sql.DB
 	lastPrune atomic.Int64
 	warned    atomic.Bool
+	flushers  sync.Map
 }
 
 func openAccountUptimeRecorder(root string) (*accountUptimeRecorder, error) {
@@ -92,6 +94,10 @@ func openAccountUptimeRecorder(root string) (*accountUptimeRecorder, error) {
 		return nil, err
 	}
 	recorder := &accountUptimeRecorder{db: database}
+	if err := recorder.initAttempts(); err != nil {
+		database.Close()
+		return nil, err
+	}
 	if err := recorder.prune(time.Now()); err != nil {
 		database.Close()
 		return nil, err
@@ -101,6 +107,12 @@ func openAccountUptimeRecorder(root string) (*accountUptimeRecorder, error) {
 
 func (r *accountUptimeRecorder) prune(now time.Time) error {
 	_, err := r.db.Exec(`DELETE FROM account_results WHERE observed_at<?`, now.Add(-48*time.Hour).UnixMilli())
+	if err == nil {
+		_, err = r.db.Exec(`DELETE FROM account_attempts WHERE observed_at<?`, now.Add(-7*24*time.Hour).UnixMilli())
+	}
+	if err == nil {
+		_, err = r.db.Exec(`DELETE FROM trace_links WHERE observed_at<?`, now.Add(-7*24*time.Hour).UnixMilli())
+	}
 	if err == nil {
 		r.lastPrune.Store(now.UnixMilli())
 	}

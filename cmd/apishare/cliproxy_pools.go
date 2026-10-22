@@ -156,11 +156,19 @@ func cliProxyPoolRevision(id int64) uint64 {
 	return manager.Revision()
 }
 
-func cliProxyRelayAvailable(id int64) bool {
+func cliProxyRelayAvailable(id int64, models ...string) bool {
 	cliProxyPools.Lock()
 	manager := cliProxyPools.items[id]
+	configured := cliProxyPools.root != ""
 	cliProxyPools.Unlock()
-	return manager == nil || manager.Running()
+	if manager == nil {
+		return !configured
+	}
+	model := ""
+	if len(models) > 0 {
+		model = models[0]
+	}
+	return manager.Ready(model)
 }
 
 func accountProxyID(poolID int64, name string) int64 {
@@ -193,7 +201,7 @@ func saveAccountProxy(ctx context.Context, manager *cliproxy.Manager, poolID int
 	} else if proxyID == -1 {
 		proxyURL = ""
 	}
-	if err := manager.Client().Do(ctx, "PATCH", "/credentials/fields", gin.H{"name": name, "proxy_url": proxyURL}, nil); err != nil {
+	if err := manager.PatchCredential(ctx, name, gin.H{"proxy_url": proxyURL}); err != nil {
 		return err
 	}
 	_, err = db.Exec(`INSERT INTO cliproxy_account_proxies(upstream_id,name,proxy_id) VALUES(?,?,?)
@@ -271,6 +279,9 @@ func registerCLIProxyPoolRoutes(auth *gin.RouterGroup) {
 		c.Next()
 		if c.Request.Method != "GET" && c.Writer.Status() < 300 {
 			manager.Touch()
+			if manager.Running() {
+				_ = manager.RefreshRuntime(c.Request.Context())
+			}
 			healthMarkSuccess(id)
 			invalidatePublicOverviews()
 		}
@@ -299,7 +310,7 @@ func requirePoolCredential(c *gin.Context, name string) bool {
 	return false
 }
 
-func importPoolCredential(ctx context.Context, manager *cliproxy.Manager, poolID int64, name string, raw json.RawMessage, proxyID int64) error {
+func importPoolCredential(ctx context.Context, manager *cliproxy.Manager, poolID int64, name string, raw json.RawMessage, proxyID int64, replace ...bool) error {
 	var document map[string]any
 	if json.Unmarshal(raw, &document) != nil || len(document) == 0 {
 		return errors.New("凭据必须是非空 JSON 对象")
@@ -311,11 +322,34 @@ func importPoolCredential(ctx context.Context, manager *cliproxy.Manager, poolID
 				return fmt.Errorf("服务账号 JSON 缺少 %s", field)
 			}
 		}
+		location, _ := document["location"].(string)
+		if location == "" {
+			location = "us-central1"
+		}
+		if !vertexLocationPattern.MatchString(location) {
+			return errors.New("Vertex AI 地区无效")
+		}
 		document = map[string]any{"type": "vertex", "service_account": document, "project_id": document["project_id"],
-			"email": document["client_email"], "location": "us-central1"}
+			"email": document["client_email"], "location": location}
 	}
+	if document["type"] == "vertex" {
+		location, _ := document["location"].(string)
+		if location == "" {
+			location = "us-central1"
+		}
+		if !vertexLocationPattern.MatchString(location) {
+			return errors.New("Vertex AI 地区无效")
+		}
+		document["location"] = location
+	}
+	confirmed := len(replace) > 0 && replace[0]
+	target, replacing, err := prepareCredentialReplacement(manager, name, document, confirmed)
+	if err != nil {
+		return err
+	}
+	name = target
 	// Pool membership is the private auth directory, never a caller-provided label.
-	if poolID != 0 {
+	if poolID != 0 && !replacing {
 		proxyURL, err := cliProxyProxyURL(effectiveAccountProxyID(poolID, proxyID))
 		if err != nil {
 			return err
@@ -330,7 +364,7 @@ func importPoolCredential(ctx context.Context, manager *cliproxy.Manager, poolID
 	if err := manager.Client().Do(ctx, "POST", "/credentials?name="+url.QueryEscape(name), document, nil); err != nil {
 		return err
 	}
-	if poolID != 0 {
+	if poolID != 0 && !replacing {
 		_, err := db.Exec(`INSERT INTO cliproxy_account_proxies(upstream_id,name,proxy_id) VALUES(?,?,?)
 			ON CONFLICT(upstream_id,name) DO UPDATE SET proxy_id=excluded.proxy_id`, poolID, name, proxyID)
 		if err == nil {
