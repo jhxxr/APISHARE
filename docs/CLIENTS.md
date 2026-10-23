@@ -2,6 +2,8 @@
 
 API Share 同时提供 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 与 Google Gemini 入站端点。客户端使用网关签发的 API Key 即可接入，由网关完成协议转换与上游路由。
 
+客户端识别与调用统计的前置调研见 [客户端 User-Agent 样本与识别限制](CLIENT_USER_AGENTS.md)。
+
 ## OpenAI Codex CLI
 
 后台将仅支持 Chat Completions 的上游（如 DeepSeek、GLM、本地 vLLM）设置为 `OpenAI Chat Completions`（`openai_protocol: "chat"`）。Codex 客户端直接以原生 `responses` 格式连接网关，由网关在内存中实时转换工具调用与流式增量。

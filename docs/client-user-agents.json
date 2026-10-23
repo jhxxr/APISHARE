@@ -1,0 +1,944 @@
+{
+  "schema_version": 1,
+  "collected_at": "2026-10-23",
+  "timezone": "Asia/Shanghai",
+  "purpose": "Research catalogue for future inbound-client logging and statistics; not loaded by the gateway.",
+  "runtime_ready": false,
+  "sample_kind": "source_derived_synthetic",
+  "observed_on_wire": false,
+  "sample_notice": "Examples illustrate formats from source. They are not captured requests and do not assert current release versions. Optional SDK/runtime suffixes are illustrative.",
+  "regex_flavor": "Go RE2-compatible candidate patterns; no runtime integration has been performed.",
+  "identity_semantics": "Client identity is self-declared and may be overridden or impersonated. Missing app evidence means application=unknown even if an SDK is identified.",
+  "clients": [
+    {
+      "id": "codex",
+      "name": "Codex",
+      "evidence": "official_source",
+      "scope": "Official default HTTP client; UA prefix follows originator.",
+      "user_agents": [
+        {
+          "template": "{originator}/{version} ({os} {os_version}; {arch}) {terminal}",
+          "pattern": "(?i)^(?:codex_cli_rs|codex-tui|codex_vscode)/([^/\\s]+)(?:\\s|$)",
+          "version_group": 1,
+          "examples": [
+            "codex_cli_rs/1.2.3 (Windows 11; x86_64) terminal/1.0",
+            "codex-tui/1.2.3 (Linux 6.1; x86_64) terminal/1.0",
+            "codex_vscode/1.2.3 (Mac OS 14; arm64) terminal/1.0"
+          ],
+          "source_ids": [
+            "S01"
+          ]
+        }
+      ],
+      "auxiliary_headers": [
+        {
+          "headers": {
+            "originator": [
+              "codex_cli_rs",
+              "codex-tui",
+              "codex_vscode"
+            ]
+          },
+          "scope": "Known originator values; inspect alongside the UA.",
+          "source_ids": [
+            "S01"
+          ]
+        }
+      ],
+      "source_ids": [
+        "S01"
+      ],
+      "limitations": [
+        "Originator is configurable. Other Codex originators need additional samples.",
+        "A matching UA identifies a declared client identity, not authenticated software."
+      ]
+    },
+    {
+      "id": "claude_code",
+      "name": "Claude Code",
+      "evidence": "official_distribution_historical",
+      "scope": "Inspected official npm distribution @anthropic-ai/claude-code@2.1.20, package/cli.js.",
+      "user_agents": [
+        {
+          "template": "claude-cli/{version} (external, {entrypoint}[, agent-sdk/{sdk_version}])",
+          "pattern": "(?i)^claude-cli/([^/\\s]+)(?:\\s|$)",
+          "version_group": 1,
+          "examples": [
+            "claude-cli/2.1.20 (external, cli)",
+            "claude-cli/2.1.20 (external, sdk-cli, agent-sdk/0.1.0)"
+          ],
+          "source_ids": [
+            "S02"
+          ]
+        }
+      ],
+      "auxiliary_headers": [
+        {
+          "headers": {
+            "x-app": "cli"
+          },
+          "scope": "Supporting signal only; also used by Qwen Code proxy mode.",
+          "source_ids": [
+            "S02",
+            "S21"
+          ]
+        }
+      ],
+      "source_ids": [
+        "S02",
+        "S21"
+      ],
+      "limitations": [
+        "Historical official package evidence; the current native distribution was not inspected for this format.",
+        "Entrypoint varies and the Agent SDK suffix is optional.",
+        "Qwen Code Anthropic proxy mode also sends claude-cli plus x-app: cli. Treat this identity as ambiguous."
+      ]
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "evidence": "official_source",
+      "scope": "Current App.useragent/model-request and the v1.19.3 model request builder.",
+      "user_agents": [
+        {
+          "template": "opencode/{channel}/{version}/{client}",
+          "pattern": "(?i)^opencode/([^/\\s]+)/([0-9][^/\\s]*|unknown)/([^/\\s]+)(?:\\s|$)",
+          "version_group": 2,
+          "examples": [
+            "opencode/latest/1.2.3/cli",
+            "opencode/preview/1.2.3-beta.1/desktop"
+          ],
+          "source_ids": [
+            "S03",
+            "S04",
+            "S06"
+          ]
+        },
+        {
+          "template": "opencode/{version}[ SDK/runtime suffix]",
+          "pattern": "(?i)^opencode/([0-9][^/\\s]*)(?:\\s|$)",
+          "version_group": 1,
+          "examples": [
+            "opencode/1.19.3",
+            "opencode/1.19.3 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14"
+          ],
+          "source_ids": [
+            "S05"
+          ]
+        }
+      ],
+      "auxiliary_headers": [
+        {
+          "header_names": [
+            "x-opencode-client",
+            "x-opencode-project",
+            "x-opencode-session-id",
+            "x-opencode-session"
+          ],
+          "scope": "Supporting signals whose presence varies by version and provider.",
+          "source_ids": [
+            "S04",
+            "S05",
+            "S08",
+            "S25"
+          ]
+        }
+      ],
+      "source_ids": [
+        "S03",
+        "S04",
+        "S05",
+        "S06"
+      ],
+      "limitations": [
+        "The version segment changes position between two-segment and four-segment forms.",
+        "Suffix in the second legacy example is an illustrative composite, not a captured request.",
+        "x-opencode-session alone is not exclusive to OpenCode: Cline and Cherry Studio also set it."
+      ]
+    },
+    {
+      "id": "gemini_cli",
+      "name": "Gemini CLI",
+      "evidence": "official_source",
+      "scope": "Content generator HTTP options, including the VS Code surface.",
+      "user_agents": [
+        {
+          "template": "GeminiCLI[-{clientName}]/{version}/{model} ({platform}; {arch}; {surface})",
+          "pattern": "(?i)^GeminiCLI(?:-[^/\\s]+)?/([^/\\s]+)/[^\\s]+\\s+\\(",
+          "version_group": 1,
+          "examples": [
+            "GeminiCLI/1.2.3/model-id (win32; x64; cli)",
+            "GeminiCLI-example/1.2.3/model-id (linux; x64; cli)"
+          ],
+          "source_ids": [
+            "S07"
+          ]
+        },
+        {
+          "template": "CloudCodeVSCode/{version} (...; proxy_client=geminicli)",
+          "pattern": "(?i)^CloudCodeVSCode/([^/\\s]+)\\s+\\([^\\r\\n]*proxy_client=geminicli\\)",
+          "version_group": 1,
+          "examples": [
+            "CloudCodeVSCode/1.2.3 (aidev_client; os_type=Linux; os_version=6.1; arch=x64; host_path=example; proxy_client=geminicli)"
+          ],
+          "source_ids": [
+            "S07"
+          ]
+        }
+      ],
+      "auxiliary_headers": [],
+      "source_ids": [
+        "S07"
+      ],
+      "limitations": [
+        "Do not attribute all CloudCodeVSCode traffic to Gemini CLI; require proxy_client=geminicli.",
+        "Custom headers can override the default UA."
+      ]
+    },
+    {
+      "id": "cline",
+      "name": "Cline",
+      "evidence": "official_source",
+      "scope": "Confirmed for cline/cline-pass billing, openai-codex and opencode-go provider paths.",
+      "user_agents": [
+        {
+          "template": "Cline/{version}",
+          "pattern": "(?i)^Cline/([^/\\s]+)(?:\\s|$)",
+          "version_group": 1,
+          "examples": [
+            "Cline/1.2.3"
+          ],
+          "source_ids": [
+            "S08"
+          ]
+        }
+      ],
+      "auxiliary_headers": [
+        {
+          "headers": {
+            "X-Title": "Cline",
+            "HTTP-Referer": "https://cline.bot"
+          },
+          "scope": "Cline billing provider defaults.",
+          "source_ids": [
+            "S08"
+          ],
+          "matching_note": "Match X-Title as a complete value; parse HTTP-Referer and compare the exact hostname."
+        },
+        {
+          "header_names": [
+            "X-CLIENT-TYPE",
+            "X-CLIENT-VERSION",
+            "X-PLATFORM",
+            "X-CORE-VERSION"
+          ],
+          "scope": "Cline billing paths; these generic names alone are not enough for attribution.",
+          "source_ids": [
+            "S08"
+          ]
+        }
+      ],
+      "source_ids": [
+        "S08"
+      ],
+      "limitations": [
+        "Other custom providers do not automatically receive this required-header set.",
+        "X-CLIENT-TYPE may describe the hosting surface, not the product by itself."
+      ]
+    },
+    {
+      "id": "roo_code",
+      "name": "Roo Code",
+      "evidence": "official_source",
+      "scope": "OpenAI-compatible paths using DEFAULT_HEADERS.",
+      "user_agents": [
+        {
+          "template": "RooCode/{version}",
+          "pattern": "(?i)^RooCode/([^/\\s]+)(?:\\s|$)",
+          "version_group": 1,
+          "examples": [
+            "RooCode/1.2.3"
+          ],
+          "source_ids": [
+            "S09",
+            "S10"
+          ]
+        }
+      ],
+      "auxiliary_headers": [
+        {
+          "headers": {
+            "X-Title": "Roo Code",
+            "HTTP-Referer": "https://github.com/RooVetGit/Roo-Cline"
+          },
+          "scope": "DEFAULT_HEADERS; title is needed because github.com alone is not an app identity.",
+          "source_ids": [
+            "S09"
+          ],
+          "matching_note": "Match X-Title as a complete value; parse HTTP-Referer and compare the exact hostname."
+        }
+      ],
+      "source_ids": [
+        "S09",
+        "S10",
+        "S11"
+      ],
+      "limitations": [
+        "Inspected native Anthropic client construction does not set DEFAULT_HEADERS.",
+        "User-supplied headers may override defaults."
+      ]
+    },
+    {
+      "id": "kilo_code",
+      "name": "Kilo Code",
+      "evidence": "official_source",
+      "scope": "Kilo CLI model requests and Kilo gateway provider requests; these have different UA shapes.",
+      "user_agents": [
+        {
+          "template": "kilo/{channel}/{version}/{client}",
+          "pattern": "(?i)^kilo/([^/\\s]+)/([^/\\s]+)/([^/\\s]+)(?:\\s|$)",
+          "version_group": 2,
+          "examples": [
+            "kilo/latest/1.2.3/cli"
+          ],
+          "source_ids": [
+            "S12",
+            "S13"
+          ]
+        },
+        {
+          "template": "opencode-kilo-provider[/{version}]",
+          "pattern": "(?i)^opencode-kilo-provider(?:/([^/\\s]+))?(?:\\s|$)",
+          "version_group": 1,
+          "examples": [
+            "opencode-kilo-provider/1.2.3",
+            "opencode-kilo-provider"
+          ],
+          "source_ids": [
+            "S14",
+            "S15"
+          ]
+        }
+      ],
+      "auxiliary_headers": [
+        {
+          "headers": {
+            "X-Title": "Kilo Code",
+            "HTTP-Referer": "https://kilo.ai/"
+          },
+          "scope": "Provider-specific attribution.",
+          "source_ids": [
+            "S16"
+          ],
+          "matching_note": "Match X-Title as a complete value; parse HTTP-Referer and compare the exact hostname."
+        },
+        {
+          "header_names": [
+            "X-KILOCODE-EDITORNAME",
+            "X-KILOCODE-FEATURE"
+          ],
+          "scope": "Kilo gateway metadata; editor name may include its version.",
+          "source_ids": [
+            "S14",
+            "S15"
+          ]
+        }
+      ],
+      "source_ids": [
+        "S12",
+        "S13",
+        "S14",
+        "S15",
+        "S16"
+      ],
+      "limitations": [
+        "This is not a verified catalogue of all historical Kilo VS Code extension versions.",
+        "Some provider-specific UA overrides and inherited OpenCode identifiers also exist."
+      ]
+    },
+    {
+      "id": "kimi_cli",
+      "name": "Kimi CLI",
+      "evidence": "official_source",
+      "scope": "Confirmed only for provider.type == kimi default headers in the inspected factory.",
+      "user_agents": [
+        {
+          "template": "KimiCLI/{version}",
+          "pattern": "(?i)^KimiCLI/([^/\\s]+)(?:\\s|$)",
+          "version_group": 1,
+          "examples": [
+            "KimiCLI/1.2.3"
+          ],
+          "source_ids": [
+            "S17",
+            "S18"
+          ]
+        }
+      ],
+      "auxiliary_headers": [],
+      "source_ids": [
+        "S17",
+        "S18"
+      ],
+      "limitations": [
+        "openai_legacy/openai_responses/anthropic branches only forward configured custom headers here.",
+        "Do not assume that every request from Kimi CLI declares this UA."
+      ]
+    },
+    {
+      "id": "qwen_code",
+      "name": "Qwen Code",
+      "evidence": "official_source",
+      "scope": "Default OpenAI-compatible provider, DashScope provider and native Anthropic base URL.",
+      "user_agents": [
+        {
+          "template": "QwenCode/{version} ({platform}; {arch})",
+          "pattern": "(?i)^QwenCode/([^/\\s]+)(?:\\s|$)",
+          "version_group": 1,
+          "examples": [
+            "QwenCode/1.2.3 (win32; x64)"
+          ],
+          "source_ids": [
+            "S19",
+            "S20",
+            "S21"
+          ]
+        }
+      ],
+      "auxiliary_headers": [
+        {
+          "header_names": [
+            "X-DashScope-UserAgent",
+            "X-DashScope-AuthType"
+          ],
+          "scope": "DashScope path; the UserAgent value uses the QwenCode format.",
+          "source_ids": [
+            "S20"
+          ]
+        }
+      ],
+      "source_ids": [
+        "S19",
+        "S20",
+        "S21"
+      ],
+      "limitations": [
+        "Anthropic provider with a non-native base URL declares claude-cli/{version} (external, cli) instead.",
+        "That proxy identity cannot distinguish Qwen Code from Claude Code using UA plus x-app alone."
+      ]
+    },
+    {
+      "id": "lobehub",
+      "name": "LobeHub",
+      "evidence": "official_source",
+      "scope": "Official desktop UA helper and OpenRouter provider attribution headers.",
+      "user_agents": [
+        {
+          "template": "LobeHub Desktop/{version}",
+          "pattern": "(?i)^LobeHub Desktop/([^/\\s]+)(?:\\s|$)",
+          "version_group": 1,
+          "examples": [
+            "LobeHub Desktop/1.2.3"
+          ],
+          "source_ids": [
+            "S22"
+          ]
+        }
+      ],
+      "auxiliary_headers": [
+        {
+          "headers": {
+            "X-Title": "LobeHub",
+            "HTTP-Referer": "https://lobehub.com"
+          },
+          "scope": "OpenRouter provider default headers.",
+          "source_ids": [
+            "S30"
+          ],
+          "matching_note": "Match X-Title as a complete value; parse HTTP-Referer and compare the exact hostname."
+        }
+      ],
+      "source_ids": [
+        "S22",
+        "S30"
+      ],
+      "limitations": [
+        "The desktop UA helper is source-confirmed; end-to-end propagation to a custom model gateway needs capture.",
+        "Web/server traffic does not necessarily share the desktop UA."
+      ]
+    },
+    {
+      "id": "cherry_studio",
+      "name": "Cherry Studio",
+      "evidence": "official_source",
+      "scope": "Canonical preset and managed provider attribution; custom providers default to no app attribution headers.",
+      "user_agents": [],
+      "auxiliary_headers": [
+        {
+          "headers": {
+            "X-Title": "Cherry Studio",
+            "HTTP-Referer": "https://cherry-ai.com"
+          },
+          "scope": "getProviderAppHeaders returns defaults only for canonical/registry preset providers.",
+          "source_ids": [
+            "S23",
+            "S24"
+          ],
+          "matching_note": "Match X-Title as a complete value; parse HTTP-Referer and compare the exact hostname."
+        }
+      ],
+      "source_ids": [
+        "S23",
+        "S24",
+        "S25"
+      ],
+      "limitations": [
+        "No cross-provider dedicated UA was confirmed in this research.",
+        "Pure custom providers normally do not get X-Title and HTTP-Referer automatically.",
+        "OpenCode session headers are not enough to label this traffic as OpenCode."
+      ]
+    },
+    {
+      "id": "aider",
+      "name": "Aider",
+      "evidence": "official_source",
+      "scope": "OpenRouter attribution configured through LiteLLM environment variables.",
+      "user_agents": [],
+      "auxiliary_headers": [
+        {
+          "headers": {
+            "X-Title": "Aider",
+            "HTTP-Referer": "https://aider.chat"
+          },
+          "scope": "Expected OpenRouter attribution from OR_SITE_URL and OR_APP_NAME; needs wire capture.",
+          "source_ids": [
+            "S26"
+          ],
+          "matching_note": "Match X-Title as a complete value; parse HTTP-Referer and compare the exact hostname."
+        }
+      ],
+      "source_ids": [
+        "S26"
+      ],
+      "limitations": [
+        "Official Aider source sets OR_SITE_URL and OR_APP_NAME; verify actual forwarded headers for the installed LiteLLM version.",
+        "This does not establish an Aider-specific UA for arbitrary OpenAI-compatible endpoints."
+      ]
+    },
+    {
+      "id": "open_webui",
+      "name": "Open WebUI",
+      "evidence": "official_source",
+      "scope": "Headers added only when the configured URL contains openrouter.ai.",
+      "user_agents": [],
+      "auxiliary_headers": [
+        {
+          "headers": {
+            "X-Title": "Open WebUI",
+            "HTTP-Referer": "https://openwebui.com/"
+          },
+          "scope": "OpenRouter-specific branch.",
+          "source_ids": [
+            "S27"
+          ],
+          "matching_note": "Match X-Title as a complete value; parse HTTP-Referer and compare the exact hostname."
+        }
+      ],
+      "source_ids": [
+        "S27"
+      ],
+      "limitations": [
+        "A self-hosted generic gateway URL is not guaranteed to receive these app headers.",
+        "The USER_AGENT setting in env.py is for web-loader fetches and is not evidence of the model API UA."
+      ]
+    },
+    {
+      "id": "sillytavern",
+      "name": "SillyTavern",
+      "evidence": "official_source",
+      "scope": "Attribution constants for selected providers, including OpenRouter.",
+      "user_agents": [],
+      "auxiliary_headers": [
+        {
+          "headers": {
+            "X-Title": "SillyTavern",
+            "HTTP-Referer": "https://sillytavern.app"
+          },
+          "scope": "OpenRouter/AIMLAPI/Featherless provider constants; provider-dependent injection.",
+          "source_ids": [
+            "S28",
+            "S29"
+          ],
+          "matching_note": "Match X-Title as a complete value; parse HTTP-Referer and compare the exact hostname."
+        }
+      ],
+      "source_ids": [
+        "S28",
+        "S29"
+      ],
+      "limitations": [
+        "No stable application-specific UA was confirmed for arbitrary custom endpoints.",
+        "Generic node-fetch identification must not be treated as SillyTavern."
+      ]
+    }
+  ],
+  "sdk_fallbacks": [
+    {
+      "id": "openai_python",
+      "name": "OpenAI Python SDK",
+      "user_agents": [
+        {
+          "template": "{client_class}/Python {sdk_version}",
+          "pattern": "(?i)^(?:Async)?(?:Azure)?OpenAI/Python\\s+(\\S+)(?:\\s|$)",
+          "version_group": 1,
+          "examples": [
+            "OpenAI/Python 1.2.3",
+            "AsyncOpenAI/Python 1.2.3"
+          ],
+          "source_ids": [
+            "S31"
+          ]
+        }
+      ],
+      "limitations": [
+        "The UA prefix is the concrete class name. This identifies an SDK, not the application."
+      ]
+    },
+    {
+      "id": "openai_js",
+      "name": "OpenAI JavaScript/TypeScript SDK",
+      "user_agents": [
+        {
+          "template": "{constructor_name}/JS {sdk_version}",
+          "pattern": "(?i)^(?:Azure)?OpenAI/JS\\s+(\\S+)(?:\\s|$)",
+          "version_group": 1,
+          "examples": [
+            "OpenAI/JS 1.2.3"
+          ],
+          "source_ids": [
+            "S32"
+          ]
+        }
+      ],
+      "limitations": [
+        "Browser paths may omit this UA. Constructor names may vary. This does not establish Codex identity."
+      ]
+    },
+    {
+      "id": "anthropic_python",
+      "name": "Anthropic Python SDK",
+      "user_agents": [
+        {
+          "template": "{client_class}/Python {sdk_version}",
+          "pattern": "(?i)^(?:Async)?Anthropic/Python\\s+(\\S+)(?:\\s|$)",
+          "version_group": 1,
+          "examples": [
+            "Anthropic/Python 1.2.3",
+            "AsyncAnthropic/Python 1.2.3"
+          ],
+          "source_ids": [
+            "S33"
+          ]
+        }
+      ],
+      "limitations": [
+        "Subclass-specific names are not exhaustively listed. This does not establish Claude Code identity."
+      ]
+    },
+    {
+      "id": "anthropic_js",
+      "name": "Anthropic JavaScript/TypeScript SDK",
+      "user_agents": [
+        {
+          "template": "Anthropic/JS {sdk_version}",
+          "pattern": "(?i)^Anthropic/JS\\s+(\\S+)(?:\\s|$)",
+          "version_group": 1,
+          "examples": [
+            "Anthropic/JS 1.2.3"
+          ],
+          "source_ids": [
+            "S34"
+          ]
+        }
+      ],
+      "limitations": [
+        "This identifies an SDK, not the application."
+      ]
+    },
+    {
+      "id": "google_genai_python",
+      "name": "Google Gen AI Python SDK",
+      "user_agents": [
+        {
+          "template": "google-genai-sdk/{sdk_version} gl-python/{python_version} [custom UA]",
+          "pattern": "(?i)(?:^|\\s)google-genai-sdk/([^\\s]+)(?:\\s|$)",
+          "version_group": 1,
+          "examples": [
+            "google-genai-sdk/1.2.3 gl-python/3.12.0"
+          ],
+          "source_ids": [
+            "S35"
+          ]
+        }
+      ],
+      "limitations": [
+        "The SDK may combine a custom UA with its own library and language labels. This does not establish Gemini CLI identity."
+      ]
+    }
+  ],
+  "needs_capture": [
+    {
+      "id": "chatbox",
+      "name": "Chatbox",
+      "status": "needs_custom_gateway_capture",
+      "finding": "CHATBOX-* headers are conditional on isChatboxAPI(url); no application UA rule confirmed for custom endpoints.",
+      "source_ids": [
+        "S36"
+      ]
+    },
+    {
+      "id": "continue",
+      "name": "Continue",
+      "status": "needs_capture",
+      "finding": "Inspected shared fetch merges provided/configured headers; no cross-provider application UA confirmed.",
+      "source_ids": [
+        "S37"
+      ]
+    },
+    {
+      "id": "librechat",
+      "name": "LibreChat",
+      "status": "needs_capture",
+      "finding": "Inspected custom endpoint initialization supports configured headers; no universal application UA confirmed.",
+      "source_ids": [
+        "S38"
+      ]
+    },
+    {
+      "id": "openclaw",
+      "name": "OpenClaw",
+      "status": "needs_capture",
+      "finding": "Inspected OpenRouter stream/provider paths; no cross-provider application UA confirmed.",
+      "source_ids": [
+        "S39"
+      ]
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "status": "not_verified",
+      "finding": "Need actual BYOK/custom-base-URL request headers at the gateway.",
+      "source_ids": []
+    },
+    {
+      "id": "windsurf",
+      "name": "Windsurf",
+      "status": "not_verified",
+      "finding": "Need actual custom API request headers at the gateway.",
+      "source_ids": []
+    },
+    {
+      "id": "nextchat",
+      "name": "NextChat",
+      "status": "not_verified",
+      "finding": "Need separate browser-direct and server-proxy request samples.",
+      "source_ids": []
+    }
+  ],
+  "ambiguities": [
+    {
+      "id": "qwen_anthropic_proxy_identity",
+      "headers": {
+        "User-Agent": "claude-cli/{qwen_version} (external, cli)",
+        "x-app": "cli"
+      },
+      "possible_clients": [
+        "claude_code",
+        "qwen_code"
+      ],
+      "handling": "Keep the declared Claude-compatible identity and record ambiguity. Do not infer Qwen Code without additional evidence.",
+      "source_ids": [
+        "S02",
+        "S21"
+      ]
+    },
+    {
+      "id": "shared_opencode_session_header",
+      "header_name": "x-opencode-session",
+      "possible_clients": [
+        "opencode",
+        "cline",
+        "cherry_studio"
+      ],
+      "handling": "Do not use this header alone as OpenCode application evidence.",
+      "source_ids": [
+        "S04",
+        "S08",
+        "S25"
+      ]
+    }
+  ],
+  "sources": {
+    "S01": {
+      "url": "https://github.com/openai/codex/blob/30587d78850abf2bfc484ffb0ab0f71497cc9c05/codex-rs/login/src/auth/default_client.rs",
+      "kind": "official_source"
+    },
+    "S02": {
+      "url": "https://www.npmjs.com/package/@anthropic-ai/claude-code/v/2.1.20",
+      "kind": "official_distribution",
+      "package": "@anthropic-ai/claude-code",
+      "version": "2.1.20",
+      "artifact_url": "https://registry.npmjs.org/@anthropic-ai/claude-code/-/claude-code-2.1.20.tgz",
+      "artifact_member": "package/cli.js",
+      "integrity": "sha512-5r9OEF5TTmkhOKWtJ9RYqdn/vchwQWABO3dvgZVXftqlBZV/IiKjHVISu0dKtqWzByLBolchwePrhY68ul0QrA=="
+    },
+    "S03": {
+      "url": "https://github.com/anomalyco/opencode/blob/09399e3eec776400ea4f9f44e3b999c34a4e71ba/packages/core/src/app.ts",
+      "kind": "official_source"
+    },
+    "S04": {
+      "url": "https://github.com/anomalyco/opencode/blob/09399e3eec776400ea4f9f44e3b999c34a4e71ba/packages/core/src/session/model-request.ts",
+      "kind": "official_source"
+    },
+    "S05": {
+      "url": "https://github.com/anomalyco/opencode/blob/e3c4eb242585dcd77be1a867391b7c25fd47ce52/packages/opencode/src/session/llm/request.ts",
+      "kind": "official_source"
+    },
+    "S06": {
+      "url": "https://github.com/anomalyco/opencode/blob/e3c4eb242585dcd77be1a867391b7c25fd47ce52/packages/opencode/src/installation/index.ts",
+      "kind": "official_source"
+    },
+    "S07": {
+      "url": "https://github.com/google-gemini/gemini-cli/blob/a713410aba5d594594e20d5c822e3aab8f822089/packages/core/src/core/contentGenerator.ts",
+      "kind": "official_source"
+    },
+    "S08": {
+      "url": "https://github.com/cline/cline/blob/1619168bdeb570aa233d0f0a9af1d332d83a2816/sdk/packages/llms/src/providers/request-headers.ts",
+      "kind": "official_source"
+    },
+    "S09": {
+      "url": "https://github.com/RooCodeInc/Roo-Code/blob/b867ec9145750d0ae1ff7f02d35406e9bf2a0b16/src/api/providers/constants.ts",
+      "kind": "official_source"
+    },
+    "S10": {
+      "url": "https://github.com/RooCodeInc/Roo-Code/blob/b867ec9145750d0ae1ff7f02d35406e9bf2a0b16/src/api/providers/openai.ts",
+      "kind": "official_source"
+    },
+    "S11": {
+      "url": "https://github.com/RooCodeInc/Roo-Code/blob/b867ec9145750d0ae1ff7f02d35406e9bf2a0b16/src/api/providers/anthropic.ts",
+      "kind": "official_source"
+    },
+    "S12": {
+      "url": "https://github.com/Kilo-Org/kilocode/blob/eb11204e8f146fb2b98676029b8d9a9f841c1f6c/packages/opencode/src/installation/index.ts",
+      "kind": "official_source"
+    },
+    "S13": {
+      "url": "https://github.com/Kilo-Org/kilocode/blob/eb11204e8f146fb2b98676029b8d9a9f841c1f6c/packages/opencode/src/session/llm/request.ts",
+      "kind": "official_source"
+    },
+    "S14": {
+      "url": "https://github.com/Kilo-Org/kilocode/blob/eb11204e8f146fb2b98676029b8d9a9f841c1f6c/packages/kilo-gateway/src/headers.ts",
+      "kind": "official_source"
+    },
+    "S15": {
+      "url": "https://github.com/Kilo-Org/kilocode/blob/eb11204e8f146fb2b98676029b8d9a9f841c1f6c/packages/kilo-gateway/src/api/constants.ts",
+      "kind": "official_source"
+    },
+    "S16": {
+      "url": "https://github.com/Kilo-Org/kilocode/blob/eb11204e8f146fb2b98676029b8d9a9f841c1f6c/packages/opencode/src/provider/provider.ts",
+      "kind": "official_source"
+    },
+    "S17": {
+      "url": "https://github.com/MoonshotAI/kimi-cli/blob/9ab1286b8fe4e6bcd116949a27ce5e0ac3389c82/src/kimi_cli/constant.py",
+      "kind": "official_source"
+    },
+    "S18": {
+      "url": "https://github.com/MoonshotAI/kimi-cli/blob/9ab1286b8fe4e6bcd116949a27ce5e0ac3389c82/src/kimi_cli/llm.py",
+      "kind": "official_source"
+    },
+    "S19": {
+      "url": "https://github.com/QwenLM/qwen-code/blob/7fc12989fd0ee65a4f96ea44776a6216a681906f/packages/core/src/core/openaiContentGenerator/provider/default.ts",
+      "kind": "official_source"
+    },
+    "S20": {
+      "url": "https://github.com/QwenLM/qwen-code/blob/7fc12989fd0ee65a4f96ea44776a6216a681906f/packages/core/src/core/openaiContentGenerator/provider/dashscope.ts",
+      "kind": "official_source"
+    },
+    "S21": {
+      "url": "https://github.com/QwenLM/qwen-code/blob/7fc12989fd0ee65a4f96ea44776a6216a681906f/packages/core/src/core/anthropicContentGenerator/anthropicContentGenerator.ts",
+      "kind": "official_source"
+    },
+    "S22": {
+      "url": "https://github.com/lobehub/lobe-chat/blob/599f13cbef20e6b75ffff6bfc9d0b185971e70aa/apps/desktop/src/main/utils/user-agent.ts",
+      "kind": "official_source"
+    },
+    "S23": {
+      "url": "https://github.com/CherryHQ/cherry-studio/blob/6e35bf4419f9434e013d396bad8fafc2fb596600/src/main/utils/http.ts",
+      "kind": "official_source"
+    },
+    "S24": {
+      "url": "https://github.com/CherryHQ/cherry-studio/blob/6e35bf4419f9434e013d396bad8fafc2fb596600/src/main/ai/utils/provider.ts",
+      "kind": "official_source"
+    },
+    "S25": {
+      "url": "https://github.com/CherryHQ/cherry-studio/blob/6e35bf4419f9434e013d396bad8fafc2fb596600/src/main/ai/provider/config.ts",
+      "kind": "official_source"
+    },
+    "S26": {
+      "url": "https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/llm.py",
+      "kind": "official_source"
+    },
+    "S27": {
+      "url": "https://github.com/open-webui/open-webui/blob/91ea4e3421d1d8069f13d4a463fcb5986d94ea60/backend/open_webui/utils/headers.py",
+      "kind": "official_source"
+    },
+    "S28": {
+      "url": "https://github.com/SillyTavern/SillyTavern/blob/06bde939fb1e9c4c8d8641d810f0a916b5bce127/src/constants.js",
+      "kind": "official_source"
+    },
+    "S29": {
+      "url": "https://github.com/SillyTavern/SillyTavern/blob/06bde939fb1e9c4c8d8641d810f0a916b5bce127/src/endpoints/backends/chat-completions.js",
+      "kind": "official_source"
+    },
+    "S30": {
+      "url": "https://github.com/lobehub/lobe-chat/blob/599f13cbef20e6b75ffff6bfc9d0b185971e70aa/packages/model-runtime/src/providers/openrouter/index.ts",
+      "kind": "official_source"
+    },
+    "S31": {
+      "url": "https://github.com/openai/openai-python/blob/81792ff040a2ca2b70348163049d3d69d5ba95cf/src/openai/_base_client.py",
+      "kind": "official_source"
+    },
+    "S32": {
+      "url": "https://github.com/openai/openai-node/blob/4c11b87c3e5e4fcddeeffc85b55502b2296f49fd/src/client.ts",
+      "kind": "official_source"
+    },
+    "S33": {
+      "url": "https://github.com/anthropics/anthropic-sdk-python/blob/9313f13a5a643ceed10fafba6785eab8e04b6e6e/src/anthropic/_base_client.py",
+      "kind": "official_source"
+    },
+    "S34": {
+      "url": "https://github.com/anthropics/anthropic-sdk-typescript/blob/5badc765f17d373405f300ee8e69e7f490b1f172/src/client.ts",
+      "kind": "official_source"
+    },
+    "S35": {
+      "url": "https://github.com/googleapis/python-genai/blob/92f72b3a236a5bc56e8e3327ab9563f77dd119c3/google/genai/_api_client.py",
+      "kind": "official_source"
+    },
+    "S36": {
+      "url": "https://github.com/chatboxai/chatbox/blob/0ac6385ae1ff5bf778777826da3c5edcd55b61b8/src/shared/request/request.ts",
+      "kind": "official_source"
+    },
+    "S37": {
+      "url": "https://github.com/continuedev/continue/blob/5522c6f44ca0ac3528b37244818fbfa39b5af470/packages/fetch/src/fetch.ts",
+      "kind": "official_source"
+    },
+    "S38": {
+      "url": "https://github.com/LibreChat-AI/LibreChat/blob/b793ab8bda7dd54ed766d6dd39013dadd85abfcb/packages/api/src/endpoints/custom/initialize.ts",
+      "kind": "official_source"
+    },
+    "S39": {
+      "url": "https://github.com/openclaw/openclaw/blob/279015b0578ee497695120b2c682a8154fc520ab/extensions/openrouter/stream.ts",
+      "kind": "official_source"
+    }
+  }
+}
