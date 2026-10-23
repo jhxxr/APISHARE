@@ -41,6 +41,7 @@ type PublicModel struct {
 	PublicUsage
 	Family               string           `json:"family"`
 	Status               string           `json:"status"`
+	Calls24H             int64            `json:"calls_24h"`
 	Uptime               *float64         `json:"uptime_percent"`
 	AvgTPS               *float64         `json:"avg_tps"`
 	LastCall             string           `json:"last_call"`
@@ -342,11 +343,27 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 	histories := make(map[string][]PublicInterval)
 	windows := make(map[string]int)
 	speeds := make(map[string]*float64)
+	calls24h := make(map[string]int64)
 	var allCalls, allSuccess int64
 	if interval == "auto" {
 		histories, windows, speeds, allCalls, allSuccess, err = publicAutoHistories(tx, windowEnd, getSettings().LogRetentionDays)
 		// Each model has its own window in automatic mode.
 		result.HistoryWindowMinutes = 0
+		if err == nil {
+			// Ranking always compares the same rolling 24 hours, regardless of
+			// how far each model's automatic trace has zoomed in or out.
+			err = publicRows(tx, `SELECT model,COUNT(*) FROM call_logs
+ WHERE unixepoch(created_at) BETWEEN ? AND ? GROUP BY model`,
+				func(rows *sql.Rows) error {
+					var model string
+					var count int64
+					if err := rows.Scan(&model, &count); err != nil {
+						return err
+					}
+					calls24h[model] = count
+					return nil
+				}, historyStart.Unix(), windowEnd.Unix())
+		}
 	} else {
 		bucketSeconds := int64(bucketSize / time.Second)
 		err = publicRows(tx, `SELECT l.model,MIN(CAST((unixepoch(l.created_at)-?)/? AS INTEGER),?) AS slot,
@@ -364,6 +381,7 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 				}
 				bucket := &histories[model][slot]
 				bucket.Calls, bucket.Successes = calls, successes
+				calls24h[model] += calls
 				allCalls += calls
 				allSuccess += successes
 				return nil
@@ -459,7 +477,7 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 				status = "incident"
 			}
 		}
-		result.Models = append(result.Models, PublicModel{PublicUsage: u, Family: family, Status: status,
+		result.Models = append(result.Models, PublicModel{PublicUsage: u, Family: family, Status: status, Calls24H: calls24h[model],
 			Uptime: requestUptime(success, calls), AvgTPS: speeds[model], LastCall: last.at,
 			HistoryWindowMinutes: result.HistoryWindowMinutes + windows[model], History: history})
 	}

@@ -6,6 +6,58 @@ import (
 	"time"
 )
 
+func TestPublicModelRecentCallsIndependentOfHistoryWindow(t *testing.T) {
+	publicTestDB(t)
+	retentionTestSettings(t, 7)
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, beijingLocation)
+	k := publicTestKey(t, "history-sort", 100, 0, false)
+	if err := dbInsertUpstream(&Upstream{Type: "openai", Weight: 1, Enabled: true,
+		Models: "recent,steady,quiet,unused,future"}); err != nil {
+		t.Fatal(err)
+	}
+	publicTestLog(t, k, "recent", 200, 10, 5, now.Add(-10*time.Minute))
+	publicTestLog(t, k, "recent", 503, 0, 0, now.Add(-2*time.Hour))
+	publicTestLog(t, k, "recent", 200, 10, 5, now.Add(-23*time.Hour).UTC())
+	publicTestLog(t, k, "recent", 200, 10, 5, now.Add(-24*time.Hour).UTC())
+	publicTestLog(t, k, "recent", 200, 10, 5, now.Add(-24*time.Hour-time.Second))
+	publicTestLog(t, k, "recent", 503, 0, 0, now.Add(time.Second))
+	for i := 0; i < 3; i++ {
+		publicTestLog(t, k, "steady", 200, 10, 5, now.Add(-2*time.Hour))
+	}
+	for i := 0; i < 6; i++ {
+		publicTestLog(t, k, "quiet", 200, 10, 5, now.Add(-5*24*time.Hour))
+	}
+	publicTestLog(t, k, "future", 200, 10, 5, now.Add(time.Second))
+	want := map[string]int64{"recent": 4, "steady": 3, "quiet": 0, "unused": 0, "future": 0}
+	for _, interval := range []string{"auto", "hour", "minute"} {
+		t.Run(interval, func(t *testing.T) {
+			got, err := buildPublicOverview(now, interval)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got.Models) != len(want) {
+				t.Fatalf("model count = %d, want %d", len(got.Models), len(want))
+			}
+			for _, m := range got.Models {
+				expected, ok := want[m.Model]
+				if !ok || m.Calls24H != expected {
+					t.Errorf("%s 24h calls = %d, want %d", m.Model, m.Calls24H, expected)
+				}
+				if interval == "auto" {
+					var displayed int64
+					for _, bucket := range m.History {
+						displayed += bucket.Calls
+					}
+					expected := map[string]int64{"recent": 1, "steady": 3, "quiet": 6, "unused": 0, "future": 0}[m.Model]
+					if displayed != expected {
+						t.Errorf("%s displayed calls = %d, want %d", m.Model, displayed, expected)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestPublicAutoHistoryRetainedRequestsAndFixedAxis(t *testing.T) {
 	publicTestDB(t)
 	retentionTestSettings(t, 7)

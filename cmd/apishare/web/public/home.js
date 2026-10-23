@@ -307,9 +307,9 @@ function renderModels() {
  const minute=overview.history_interval==="minute";
  const query=$("modelSearch").value.trim().toLowerCase(),status=$("statusFilter").value;
  const denied=m=>!!keyOverview&&!Object.hasOwn(keyOverview.models,m.model);
- const recent=m=>(m.history||[]).reduce((sum,d)=>sum+(Number(d.calls)||0),0);
+ const recent=m=>Number(m.calls_24h)||0;
  const list=overview.models.filter(m=>(!query||(m.model+" "+m.family).toLowerCase().includes(query))&&(!status||m.status===status));
- // Heat first: most requested in the displayed window on top, idle models sink.
+ // Heat first: compare the same rolling 24 hours, even with per-model auto windows.
  // When a key is verified, models it cannot use sink below every usable one.
  list.sort((a,b)=>{
   const access=(denied(a)?1:0)-(denied(b)?1:0);
