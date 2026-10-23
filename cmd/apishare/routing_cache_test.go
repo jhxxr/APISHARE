@@ -63,6 +63,37 @@ func TestRoutingSnapshotTracksEditsAndKeepsAdmittedCopies(t *testing.T) {
 	}
 }
 
+func TestRoutingManyCandidatesReturnIndependentCopies(t *testing.T) {
+	modelsTestDB(t)
+	const count = 65
+	for i := 0; i < count; i++ {
+		up := &Upstream{Type: "openai", Models: "model", Weight: 1, Enabled: true}
+		if err := dbInsertUpstream(up); err != nil {
+			t.Fatal(err)
+		}
+	}
+	excluded := make(map[int64]bool, count)
+	for i := 0; i < count; i++ {
+		up, err := pickUpstream(FormatOpenAIChat, "model", excluded, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id := up.ID
+		if excluded[id] || up.Weight != 1 || !up.Enabled || up.Models != "model" {
+			t.Fatalf("invalid candidate on selection %d: %+v", i, up)
+		}
+		excluded[id] = true
+		up.ID, up.Weight, up.Enabled, up.Models = -1, 0, false, "changed"
+		cached, err := cachedRoutingUpstream(id)
+		if err != nil || cached.ID != id || cached.Weight != 1 || !cached.Enabled || cached.Models != "model" {
+			t.Fatalf("selected configuration modified the snapshot: %+v / %v", cached, err)
+		}
+	}
+	if _, err := pickUpstream(FormatOpenAIChat, "model", excluded, false); err == nil {
+		t.Fatal("exhausted candidates remained routable")
+	}
+}
+
 func TestCompiledHeadersKeepVariablesPerRequest(t *testing.T) {
 	up := &Upstream{APIKey: "upstream-secret", HeaderOverrides: `{"*":true,"re:^X-Private-.*$":false,"Authorization":"Bearer {api_key}","X-Tenant":"{client_header:X-Tenant}"}`}
 	compileUpstreamConfig(up)

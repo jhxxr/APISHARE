@@ -140,11 +140,16 @@ func pickUpstream(format clientFormat, model string, exclude map[int64]bool, nat
 	if err != nil {
 		return nil, err
 	}
-	var best []Upstream
+	// Keep candidate indexes on the stack for typical pools. Only the selected
+	// configuration is copied, so callers cannot mutate the shared snapshot.
+	var candidates [32]int
+	best := candidates[:0]
+	total := 0
 	var limited *openCodeRateLimitError
 	bestPriority := int(^uint(0) >> 1)
 	bestTier := 99
-	for _, u := range snapshot.upstreams {
+	for index := range snapshot.upstreams {
+		u := &snapshot.upstreams[index]
 		if !u.Enabled || exclude[u.ID] || u.Weight <= 0 {
 			continue
 		}
@@ -155,7 +160,7 @@ func pickUpstream(format clientFormat, model string, exclude map[int64]bool, nat
 		if !serves {
 			continue
 		}
-		if nativeOnly && !supportsNativeEndpoint(&u, format) {
+		if nativeOnly && !supportsNativeEndpoint(u, format) {
 			continue
 		}
 		if limit := u.openCodeRateLimit(); limit != nil {
@@ -200,13 +205,16 @@ func pickUpstream(format clientFormat, model string, exclude map[int64]bool, nat
 			bestPriority = u.Priority
 			bestTier = tier
 			best = best[:0]
+			total = 0
 		} else if tier < bestTier {
 			bestTier = tier
 			best = best[:0]
+			total = 0
 		} else if tier > bestTier {
 			continue
 		}
-		best = append(best, u)
+		best = append(best, index)
+		total += u.Weight
 	}
 	if len(best) == 0 {
 		if limited != nil {
@@ -214,18 +222,16 @@ func pickUpstream(format clientFormat, model string, exclude map[int64]bool, nat
 		}
 		return nil, errors.New("no available upstream for model " + model)
 	}
-	total := 0
-	for _, u := range best {
-		total += u.Weight
-	}
 	r := rand.Intn(total)
-	for i := range best {
-		r -= best[i].Weight
+	for _, index := range best {
+		r -= snapshot.upstreams[index].Weight
 		if r < 0 {
-			return &best[i], nil
+			selected := snapshot.upstreams[index]
+			return &selected, nil
 		}
 	}
-	return &best[len(best)-1], nil
+	selected := snapshot.upstreams[best[len(best)-1]]
+	return &selected, nil
 }
 
 // upstreamURL 拼接上游地址：base_url 以 /v1 或 /v1beta 结尾时自动去重。

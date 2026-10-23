@@ -30,6 +30,10 @@ export APISHARE_API_KEY="sk-your-apishare-key"
 codex
 ```
 
+### Responses WebSocket 状态
+
+Codex 支持 Responses WebSocket，自定义 provider 的能力字段为 `supports_websockets`。当前 API Share 外层仅提供 `POST /v1/responses`，尚未接入其 WebSocket Upgrade；以上配置继续使用 HTTP。内置 CLIProxyAPI 虽然提供 Responses WS，仍需要外层代理、逐轮鉴权、限流与计费配套接通，之后才能对对应 provider 声明 `supports_websockets = true`。核查结果与接入边界见 [性能优化文档](PERFORMANCE.md)。
+
 ## Anthropic Claude Code
 
 将 Claude Code 直接指向 API Share 网关端点，即使后端挂载的是 OpenAI 或 Gemini 上游，也能顺畅运行：

@@ -15,6 +15,10 @@ func nativeSSEPrelude(format clientFormat, payload string) bool {
 	if json.Unmarshal([]byte(payload), &event) != nil {
 		return false
 	}
+	return nativeSSEPreludeObject(format, event)
+}
+
+func nativeSSEPreludeObject(format clientFormat, event map[string]any) bool {
 	emptyFields := func(value map[string]any, ignored ...string) bool {
 		for field, v := range value {
 			skip := false
@@ -103,6 +107,10 @@ func nativeSSETerminal(format clientFormat, payload string) (bool, error) {
 	if json.Unmarshal([]byte(payload), &event) != nil {
 		return false, fmt.Errorf("invalid upstream SSE JSON")
 	}
+	return nativeSSETerminalObject(format, event)
+}
+
+func nativeSSETerminalObject(format clientFormat, event map[string]any) (bool, error) {
 	response := object(event["response"])
 	if event["error"] != nil || str(event["type"]) == "error" || str(event["type"]) == "response.failed" || response["error"] != nil || str(response["status"]) == "failed" {
 		return false, fmt.Errorf("upstream stream returned an error")
@@ -191,17 +199,17 @@ func collectNativeResponsesSSE(reader io.Reader, info *relayInfo) ([]byte, error
 	var terminal map[string]any
 	var baseResponse map[string]any
 	err := readSSEFrames(wire, func(payload string) (bool, error) {
-		done, err := nativeSSETerminal(FormatOpenAIResponse, payload)
+		event, err := decodeProtocolObject([]byte(payload))
+		if err != nil {
+			return false, err
+		}
+		done, err := nativeSSETerminalObject(FormatOpenAIResponse, event)
 		if err != nil {
 			return false, err
 		}
 		// Buffered for a non-streaming client: nothing is delivered incrementally,
 		// so no first-token time is recorded and TPS uses the full duration.
-		recordNativeEvent(FormatOpenAIResponse, payload, info)
-		event, err := decodeProtocolObject([]byte(payload))
-		if err != nil {
-			return false, err
-		}
+		recordNativeEventObject(FormatOpenAIResponse, event, info)
 		typ := str(event["type"])
 		index := intFromAny(event["output_index"])
 		if index < 0 || index > 65536 {

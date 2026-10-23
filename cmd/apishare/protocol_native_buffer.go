@@ -17,21 +17,22 @@ func collectNativeProtocolSSE(reader io.Reader, format clientFormat, info *relay
 	wire := &io.LimitedReader{R: reader, N: limit + 1}
 	b := nativeProtocolBuffer{format: format, root: map[string]any{}, entries: map[int]map[string]any{}, tools: map[int]map[int]map[string]any{}, arguments: map[int]string{}}
 	err := readSSEFrames(wire, func(payload string) (bool, error) {
-		done, err := nativeSSETerminal(format, payload)
-		if err != nil {
-			return false, err
-		}
-		// Buffered for a non-streaming client: nothing is delivered incrementally,
-		// so no first-token time is recorded and TPS uses the full duration.
-		recordNativeEvent(format, payload, info)
-		b.terminal = b.terminal || done
 		if payload == "[DONE]" {
+			b.terminal = b.terminal || format == FormatOpenAIChat
 			return true, nil
 		}
 		event, err := decodeProtocolObject([]byte(payload))
 		if err != nil {
 			return false, err
 		}
+		done, err := nativeSSETerminalObject(format, event)
+		if err != nil {
+			return false, err
+		}
+		// Buffered for a non-streaming client: nothing is delivered incrementally,
+		// so no first-token time is recorded and TPS uses the full duration.
+		recordNativeEventObject(format, event, info)
+		b.terminal = b.terminal || done
 		switch format {
 		case FormatOpenAIChat:
 			err = b.chat(event)

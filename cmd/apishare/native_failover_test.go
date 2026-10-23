@@ -179,3 +179,70 @@ func TestNativeStreamStopsAtExplicitTerminal(t *testing.T) {
 		})
 	}
 }
+
+func TestNativeMalformedEventKeepsCommitBoundary(t *testing.T) {
+	for _, format := range protocolFormats {
+		for _, committed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/committed=%v", format, committed), func(t *testing.T) {
+				frames := nativePrelude(format)
+				if committed {
+					// Output before the malformed event prevents a retry.
+					switch format {
+					case FormatOpenAIChat:
+						frames += "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n"
+					case FormatOpenAIResponse:
+						frames += "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n"
+					case FormatAnthropic:
+						frames += "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"partial\"}}\n\n"
+					case FormatGemini:
+						frames += "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"partial\"}]}}]}\n\n"
+					}
+				}
+				frames += "data: {broken\n\n"
+				rec := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(rec)
+				info := relayInfo{}
+				err := relaySSENative(c, &http.Response{Body: io.NopCloser(strings.NewReader(frames))}, format, &info)
+				if err == nil || c.Writer.Written() != committed {
+					t.Fatalf("malformed event changed commit boundary: committed=%v err=%v", c.Writer.Written(), err)
+				}
+				if committed {
+					if rec.Body.String() != frames || info.OutputText.String() != "partial" {
+						t.Fatalf("committed stream changed: %s / %s", rec.Body.String(), info.OutputText.String())
+					}
+				} else if rec.Body.Len() != 0 {
+					t.Fatal("malformed prelude leaked into the downstream response")
+				}
+			})
+		}
+	}
+}
+
+func TestNativeMultilineFramesPreserveBytesAndUsage(t *testing.T) {
+	for _, format := range protocolFormats {
+		t.Run(string(format), func(t *testing.T) {
+			frames := ": heartbeat\r\n\r\n" + strings.ReplaceAll(fixtureSSE(format), "data: {", "data: {\r\ndata: ")
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			info := relayInfo{}
+			err := relaySSENative(c, &http.Response{Body: io.NopCloser(strings.NewReader(frames))}, format, &info)
+			if err != nil || rec.Body.String() != frames {
+				t.Fatalf("native multiline frames changed: %v / %s", err, rec.Body.String())
+			}
+			if info.OutputText.String() != "Hello" || !info.InKnown || info.PromptTok != 17 || !info.OutKnown || info.CompletionTok != 0 {
+				t.Fatalf("multiline accounting lost text or known zero usage: %+v", info)
+			}
+		})
+	}
+}
+
+func TestNativeUncheckedStreamPreservesMalformedFrames(t *testing.T) {
+	frames := "data: {broken\n\n" + fixtureSSE(FormatOpenAIChat)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	info := relayInfo{}
+	err := relaySSENative(c, &http.Response{Body: io.NopCloser(strings.NewReader(frames))}, FormatOpenAIChat, &info, false)
+	if err != nil || rec.Body.String() != frames || info.OutputText.String() != "Hello" || !info.OutKnown {
+		t.Fatalf("unchecked stream changed frames or accounting: %v / %s / %+v", err, rec.Body.String(), info)
+	}
+}

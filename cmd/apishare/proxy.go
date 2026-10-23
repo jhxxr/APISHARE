@@ -773,24 +773,35 @@ func relaySSENative(c *gin.Context, resp *http.Response, format clientFormat, in
 	var pending, frame strings.Builder
 	consume := func() (bool, error) {
 		payload := strings.Join(data, "\n")
-		data = nil
+		clear(data)
+		data = data[:0]
 		var done, output bool
 		var eventErr error
+		var event map[string]any
+		var parsed bool
 		if strings.TrimSpace(payload) != "" {
+			// Validation, prelude detection, keepalive and accounting share the
+			// same decoded event instead of parsing each frame independently.
+			decodeErr := json.Unmarshal([]byte(payload), &event)
+			parsed = decodeErr == nil
 			if verify {
-				done, eventErr = nativeSSETerminal(format, payload)
+				switch {
+				case payload == "[DONE]":
+					done = format == FormatOpenAIChat
+				case decodeErr != nil:
+					eventErr = fmt.Errorf("invalid upstream SSE JSON")
+				default:
+					done, eventErr = nativeSSETerminalObject(format, event)
+				}
 				terminal = terminal || done
 			}
 			// An error before output must leave both headers and body untouched.
 			if eventErr != nil && !committed {
 				return false, eventErr
 			}
-			output = !committed && !nativeSSEPrelude(format, payload)
-			if keepalive != nil {
-				var event map[string]any
-				if json.Unmarshal([]byte(payload), &event) == nil {
-					keepalive.observe(event)
-				}
+			output = !committed && (!parsed || !nativeSSEPreludeObject(format, event))
+			if keepalive != nil && parsed {
+				keepalive.observe(event)
 			}
 		}
 		if committed || !verify || output || done {
@@ -823,7 +834,7 @@ func relaySSENative(c *gin.Context, resp *http.Response, format clientFormat, in
 			pending.WriteString(frame.String())
 		}
 		frame.Reset()
-		if recordNativeEvent(format, payload, info) {
+		if parsed && recordNativeEventObject(format, event, info) {
 			info.markFirstToken()
 		}
 		// Chat/Gemini finish reasons may precede usage. Only explicit closing
@@ -871,6 +882,10 @@ func recordNativeEvent(format clientFormat, payload string, info *relayInfo) boo
 	if json.Unmarshal([]byte(payload), &j) != nil {
 		return false
 	}
+	return recordNativeEventObject(format, j, info)
+}
+
+func recordNativeEventObject(format clientFormat, j map[string]any, info *relayInfo) bool {
 	var delta string
 	if format == FormatOpenAIResponse {
 		delta, _ = parseResponsesSSEObject(j)
