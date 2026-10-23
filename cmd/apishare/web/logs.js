@@ -1,6 +1,6 @@
 /* Request records: server-wide filters, configurable columns and detail drawer. */
 const logColumnDefinitions = [
-  ["time", "时间", 100], ["model", "模型", 170], ["upstream", "上游", 155], ["key", "密钥", 115],
+  ["time", "时间", 100], ["model", "模型", 170], ["upstream", "上游", 155], ["key", "密钥", 115], ["client", "客户端", 160],
   ["tokens", "Tokens", 135], ["performance", "性能", 145], ["cost", "费用", 100], ["status", "状态", 65],
 ];
 let visibleLogColumns = new Set(logColumnDefinitions.map(([id]) => id));
@@ -63,7 +63,7 @@ function logQueryParams(page = 1) {
   if (start && end && new Date(start) > new Date(end)) throw new Error("开始时间不能晚于结束时间");
   if (start) params.set("start", start);
   if (end) params.set("end", end);
-  for (const [field, id] of [["q", "logSearch"], ["status", "logStatusFilter"], ["key_id", "logKeyFilter"], ["upstream_id", "logUpstreamFilter"], ["model", "logModelFilter"]]) {
+  for (const [field, id] of [["q", "logSearch"], ["status", "logStatusFilter"], ["key_id", "logKeyFilter"], ["upstream_id", "logUpstreamFilter"], ["model", "logModelFilter"], ["client_id", "logClientFilter"], ["client_version", "logClientVersionFilter"]]) {
     const value = $(id).value.trim(); if (value) params.set(field, value);
   }
   if (logFeatures.size) params.set("features", [...logFeatures].join(","));
@@ -84,6 +84,7 @@ async function loadLogs(page = 1) {
   if (logAbortController) logAbortController.abort();
   logAbortController = new AbortController();
   $("logsTable").setAttribute("aria-busy", "true");
+  loadClientOptions().catch((error) => reportError(error, "客户端选项加载失败"));
   $("logPrev").disabled = true; $("logNext").disabled = true;
   try {
     const result = await api("api/logs?" + params, {signal: logAbortController.signal});
@@ -133,7 +134,7 @@ function toggleLogFilters() {
   if (opening) $("logStatusFilter").focus();
 }
 function resetLogFilters() {
-  for (const id of ["logSearch", "logStatusFilter", "logKeyFilter", "logUpstreamFilter", "logModelFilter"]) $(id).value = "";
+  for (const id of ["logSearch", "logStatusFilter", "logKeyFilter", "logUpstreamFilter", "logModelFilter", "logClientFilter", "logClientVersionFilter"]) $(id).value = "";
   logFeatures.clear();
   document.querySelectorAll("[data-log-feature]").forEach((button) => button.setAttribute("aria-pressed", "false"));
   loadLogs(1);
@@ -154,7 +155,7 @@ function renderLogs() {
     const performance = logPerformance(log), usage = log.billing?.usage, failed = !(log.status >= 200 && log.status < 300);
     const open = 'onclick="openLogDetails(' + log.id + ')"';
     const cache = usage?.cache_read || usage?.cache_write ? '<small class="log-cache" title="缓存创建 / 缓存读取">' + icon("layers") + compactUpstreamNumber(usage.cache_write) + ' / ' + compactUpstreamNumber(usage.cache_read) + '</small>' : '';
-    return '<tr class="' + (failed ? 'log-failed-row' : '') + '"><td data-log-column="time"><button class="log-cell-button log-time" ' + open + ' title="' + esc(fmtTime(log.created_at)) + '">' + esc(logTimeLabel(log.created_at)) + '</button><small>' + esc(fmtTime(log.created_at).slice(5, 10)) + '</small></td><td data-log-column="model"><button class="log-cell-button log-model" ' + open + ' title="' + esc(log.model) + '">' + modelIcon(log.model) + '<span>' + esc(log.model || "未识别模型") + '</span></button></td><td data-log-column="upstream"><button class="log-cell-button log-upstream" ' + open + ' title="' + esc(log.upstream_name || "未分配上游") + '">' + esc(log.upstream_name || "未分配上游") + '</button><small class="log-endpoint" title="' + esc(log.endpoint) + '">' + esc(log.endpoint || '—') + '</small></td><td data-log-column="key"><button class="log-cell-button" ' + open + ' title="' + esc(log.key_name) + '">' + esc(log.key_name || '—') + '</button></td><td data-log-column="tokens"><button class="log-cell-button log-token-count" ' + open + ' title="输入 / 输出 Tokens">↑' + compactUpstreamNumber(log.prompt_tokens) + ' ↓' + compactUpstreamNumber(log.completion_tokens) + '</button>' + cache + (usage?.reasoning ? '<small class="log-reasoning">推理 ' + compactUpstreamNumber(usage.reasoning) + '</small>' : '') + '</td><td data-log-column="performance"><button class="log-cell-button log-performance" ' + open + ' title="总耗时 / 首 Token 延迟">' + (performance.total ? fmtDuration(performance.total) : '—') + '<span> / ' + (performance.first ? fmtDuration(performance.first) : '—') + '</span></button><small>' + (performance.tps ? performance.tps + ' TPS' : '暂无速度数据') + '</small></td><td data-log-column="cost"><button class="log-cell-button log-cost" ' + open + '>' + fmtUSD(log.cost_usd) + '</button>' + (log.billing?.usage?.estimated_input || log.billing?.usage?.estimated_output ? '<small class="log-estimate">含估算用量</small>' : '') + '</td><td data-log-column="status"><button class="log-status-button" ' + open + ' aria-label="请求 #' + log.id + ' 详情，状态 ' + Number(log.status) + '"><span class="badge ' + (failed ? 'error' : 'on') + '">' + Number(log.status) + '</span></button></td></tr>';
+    return '<tr class="' + (failed ? 'log-failed-row' : '') + '"><td data-log-column="time"><button class="log-cell-button log-time" ' + open + ' title="' + esc(fmtTime(log.created_at)) + '">' + esc(logTimeLabel(log.created_at)) + '</button><small>' + esc(fmtTime(log.created_at).slice(5, 10)) + '</small></td><td data-log-column="model"><button class="log-cell-button log-model" ' + open + ' title="' + esc(log.model) + '">' + modelIcon(log.model) + '<span>' + esc(log.model || "未识别模型") + '</span></button></td><td data-log-column="upstream"><button class="log-cell-button log-upstream" ' + open + ' title="' + esc(log.upstream_name || "未分配上游") + '">' + esc(log.upstream_name || "未分配上游") + '</button><small class="log-endpoint" title="' + esc(log.endpoint) + '">' + esc(log.endpoint || '—') + '</small></td><td data-log-column="key"><button class="log-cell-button" ' + open + ' title="' + esc(log.key_name) + '">' + esc(log.key_name || '—') + '</button></td><td data-log-column="client"><button class="log-cell-button" ' + open + ' title="' + esc(log.client?.user_agent || logClientLabel(log)) + '">' + esc(logClientLabel(log)) + '</button><small class="log-client-note">' + esc(logClientNote(log)) + '</small></td><td data-log-column="tokens"><button class="log-cell-button log-token-count" ' + open + ' title="输入 / 输出 Tokens">↑' + compactUpstreamNumber(log.prompt_tokens) + ' ↓' + compactUpstreamNumber(log.completion_tokens) + '</button>' + cache + (usage?.reasoning ? '<small class="log-reasoning">推理 ' + compactUpstreamNumber(usage.reasoning) + '</small>' : '') + '</td><td data-log-column="performance"><button class="log-cell-button log-performance" ' + open + ' title="总耗时 / 首 Token 延迟">' + (performance.total ? fmtDuration(performance.total) : '—') + '<span> / ' + (performance.first ? fmtDuration(performance.first) : '—') + '</span></button><small>' + (performance.tps ? performance.tps + ' TPS' : '暂无速度数据') + '</small></td><td data-log-column="cost"><button class="log-cell-button log-cost" ' + open + '>' + fmtUSD(log.cost_usd) + '</button>' + (log.billing?.usage?.estimated_input || log.billing?.usage?.estimated_output ? '<small class="log-estimate">含估算用量</small>' : '') + '</td><td data-log-column="status"><button class="log-status-button" ' + open + ' aria-label="请求 #' + log.id + ' 详情，状态 ' + Number(log.status) + '"><span class="badge ' + (failed ? 'error' : 'on') + '">' + Number(log.status) + '</span></button></td></tr>';
   }).join("") || emptyRow(visibleLogColumns.size, "当前范围没有请求记录", "调整时间范围或筛选条件后重试。", "", "", "activity");
   applyLogColumns();
 }
@@ -198,7 +199,7 @@ function renderLogDetails() {
     return;
   }
   const fields = [["模型", log.model || "—"], ["上游服务", log.upstream_name || "未分配"], ["API 密钥", log.key_name || "—"], ["请求端点", log.endpoint || "—"], ["总耗时", perf.total ? fmtDuration(perf.total) : "—"], ["首 Token 延迟", perf.first ? fmtDuration(perf.first) : "—"], ["输出速度", perf.tps ? perf.tps + " tok/s" : "—"], ["费用", fmtUSD(log.cost_usd)]];
-  $("logDetailBody").innerHTML = '<div class="log-detail-status">' + statusBadge(log.status) + '<strong>' + (log.status >= 200 && log.status < 300 ? "请求成功" : "请求失败") + '</strong></div><dl class="log-detail-fields">' + fields.map(([label, value]) => '<div><dt>' + label + '</dt><dd>' + (label === "模型" ? modelLabel(log.model) : esc(value)) + '</dd></div>').join("") + '</dl>' + (log.error ? '<section class="log-error-box"><h3>错误信息</h3><pre>' + esc(log.error) + '</pre></section>' : '');
+  $("logDetailBody").innerHTML = '<div class="log-detail-status">' + statusBadge(log.status) + '<strong>' + (log.status >= 200 && log.status < 300 ? "请求成功" : "请求失败") + '</strong></div><dl class="log-detail-fields">' + fields.map(([label, value]) => '<div><dt>' + label + '</dt><dd>' + (label === "模型" ? modelLabel(log.model) : esc(value)) + '</dd></div>').join("") + '</dl>' + logClientDetails(log) + (log.error ? '<section class="log-error-box"><h3>错误信息</h3><pre>' + esc(log.error) + '</pre></section>' : '');
   renderGatewayAccountAttempts(log);
 }
 function closeLogDetails() {

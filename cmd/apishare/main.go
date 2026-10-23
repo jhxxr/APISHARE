@@ -103,7 +103,7 @@ func newRouter() *gin.Engine {
 	r.GET("/healthz", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 
 	v1 := r.Group("/v1")
-	v1.Use(corsV1(), keyAuth(), keyRateLimit())
+	v1.Use(corsV1(), keyAuth(), trackRequestClient(), keyRateLimit())
 	v1.POST("/chat/completions", relayHandler(FormatOpenAIChat, false))
 	v1.POST("/responses", relayHandler(FormatOpenAIResponse, false))
 	v1.POST("/responses/compact", relayHandler(FormatOpenAIResponse, true))
@@ -113,7 +113,7 @@ func newRouter() *gin.Engine {
 	registerModelRoutes(v1)
 
 	v1beta := r.Group("/v1beta")
-	v1beta.Use(corsV1(), keyAuth(), keyRateLimit())
+	v1beta.Use(corsV1(), keyAuth(), trackRequestClient(), keyRateLimit())
 	v1beta.POST("/models/*action", relayHandler(FormatGemini, false))
 
 	registerAdmin(r)

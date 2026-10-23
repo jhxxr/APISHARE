@@ -2,7 +2,7 @@
 
 API Share 同时提供 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 与 Google Gemini 入站端点。客户端使用网关签发的 API Key 即可接入，由网关完成协议转换与上游路由。
 
-客户端识别与调用统计的前置调研见 [客户端 User-Agent 样本与识别限制](CLIENT_USER_AGENTS.md)。
+调用日志会记录客户端、版本与 User-Agent，仪表盘提供按客户端统计的请求数、成功率、Token 和费用；详见 [客户端识别、统计与 User-Agent 样本](CLIENT_USER_AGENTS.md)。
 
 ## OpenAI Codex CLI
 

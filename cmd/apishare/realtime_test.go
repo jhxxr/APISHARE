@@ -88,7 +88,7 @@ func TestRealtimeWebSocketRoundTripBillingAndConcurrency(t *testing.T) {
 	defer cancel()
 	conn, resp, err := websocket.Dial(ctx, server.URL+"/v1/realtime?model=voice-alias", &websocket.DialOptions{
 		Subprotocols: []string{"realtime", "openai-insecure-api-key." + ak.Key},
-		HTTPHeader:   http.Header{"Openai-Beta": []string{"realtime=v1"}},
+		HTTPHeader:   http.Header{"Openai-Beta": []string{"realtime=v1"}, "User-Agent": []string{"codex_vscode/1.2.3"}},
 	})
 	if err != nil {
 		t.Fatalf("connect: %v / %v", err, resp)
@@ -143,6 +143,9 @@ func TestRealtimeWebSocketRoundTripBillingAndConcurrency(t *testing.T) {
 		t.Fatalf("terminal response billed more than once or normal close logged as failure: %+v / %v", logs, err)
 	}
 	for _, entry := range logs {
+		if entry.Client.ID != "codex" || entry.Client.Version != "1.2.3" {
+			t.Fatalf("Realtime client identity lost: %+v", entry.Client)
+		}
 		if entry.Status != 200 || entry.PromptTokens != 100 || entry.CompletionTokens != 30 || entry.Billing.Usage.InputAudio != 50 || entry.Billing.Usage.CacheReadAudio != 10 || entry.Billing.Usage.OutputAudio != 20 {
 			t.Fatalf("incorrect audio receipt: %+v", entry)
 		}
@@ -490,6 +493,7 @@ func TestAudioHTTPMultipartSDPAndBinary(t *testing.T) {
 			req := httptest.NewRequest("POST", path+query, &body)
 			req.Header.Set("Authorization", "Bearer "+ak.Key)
 			req.Header.Set("Content-Type", contentType)
+			req.Header.Set("User-Agent", "QwenCode/1.2.3 (linux; x64)")
 			rec := httptest.NewRecorder()
 			router.ServeHTTP(rec, req)
 			want := 200
@@ -505,6 +509,9 @@ func TestAudioHTTPMultipartSDPAndBinary(t *testing.T) {
 			logs, err := dbListLogs(10, 0)
 			if err != nil || len(logs) != 1 {
 				t.Fatalf("missing audio log: %+v / %v", logs, err)
+			}
+			if logs[0].Client.ID != "qwen_code" || logs[0].Client.Version != "1.2.3" {
+				t.Fatalf("HTTP audio client identity lost: %+v", logs[0].Client)
 			}
 			if strings.HasPrefix(path, "/v1/realtime") && (logs[0].Billing != nil || logs[0].PromptTokens != 0) {
 				t.Fatal("SDP was billed as audio/text")

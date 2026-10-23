@@ -16,6 +16,12 @@ import (
 
 const logExportLimit = 10000
 
+const logClientSearch = `CASE WHEN json_valid(client_json) THEN
+	COALESCE(json_extract(client_json,'$.name'),'') || ' ' ||
+	COALESCE(json_extract(client_json,'$.version'),'') || ' ' ||
+	COALESCE(json_extract(client_json,'$.sdk_name'),'') || ' ' ||
+	COALESCE(json_extract(client_json,'$.user_agent'),'') ELSE '' END`
+
 type logQuery struct {
 	Page, Size int
 	Where      string
@@ -79,7 +85,7 @@ func parseLogQuery(values url.Values) (logQuery, error) {
 		if id, err := strconv.ParseInt(idText, 10, 64); err == nil && id > 0 && strings.TrimLeft(idText, "0123456789") == "" {
 			add("id=?", id)
 		} else {
-			add("(instr(lower(model),lower(?))>0 OR instr(lower(key_name),lower(?))>0 OR instr(lower(upstream_name),lower(?))>0 OR instr(lower(error),lower(?))>0 OR instr(lower(endpoint),lower(?))>0)", text, text, text, text, text)
+			add("(instr(lower(model),lower(?))>0 OR instr(lower(key_name),lower(?))>0 OR instr(lower(upstream_name),lower(?))>0 OR instr(lower(error),lower(?))>0 OR instr(lower(endpoint),lower(?))>0 OR instr(lower(client_id),lower(?))>0 OR instr(lower("+logClientSearch+"),lower(?))>0)", text, text, text, text, text, text, text)
 		}
 	}
 	for _, field := range []string{"key_id", "upstream_id"} {
@@ -93,6 +99,22 @@ func parseLogQuery(values url.Values) (logQuery, error) {
 	}
 	if model := strings.TrimSpace(values.Get("model")); model != "" {
 		add("model=?", model)
+	}
+	if id := values.Get("client_id"); id != "" {
+		if _, exists := requestClientNames[id]; !exists {
+			return query, fmt.Errorf("客户端筛选不正确")
+		}
+		add("client_id=?", id)
+	}
+	for _, field := range []struct{ query, path string }{
+		{"client_version", "$.version"}, {"sdk_id", "$.sdk_id"},
+	} {
+		if value := values.Get(field.query); value != "" {
+			if len(value) > 96 {
+				return query, fmt.Errorf("客户端版本或 SDK 筛选过长")
+			}
+			add("(CASE WHEN json_valid(client_json) THEN json_extract(client_json,'"+field.path+"') ELSE '' END)=?", value)
+		}
 	}
 	switch values.Get("status") {
 	case "":
@@ -158,7 +180,7 @@ func queryLogs(ctx context.Context, query logQuery) (*logQueryResult, error) {
 		}
 	}
 	args := append(append([]any{}, query.Args...), limit, offset)
-	rows, err := tx.QueryContext(ctx, `SELECT id,key_id,key_name,upstream_id,upstream_name,model,endpoint,prompt_tokens,completion_tokens,cost_usd,status,latency_ms,first_token_ms,duration_ms,error,created_at,billing_json,trace_id FROM call_logs WHERE `+query.Where+` ORDER BY unixepoch(created_at) DESC,id DESC LIMIT ? OFFSET ?`, args...)
+	rows, err := tx.QueryContext(ctx, `SELECT id,key_id,key_name,upstream_id,upstream_name,model,endpoint,prompt_tokens,completion_tokens,cost_usd,status,latency_ms,first_token_ms,duration_ms,error,created_at,billing_json,trace_id,client_id,client_json FROM call_logs WHERE `+query.Where+` ORDER BY unixepoch(created_at) DESC,id DESC LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -183,10 +205,15 @@ func queryLogs(ctx context.Context, query logQuery) (*logQueryResult, error) {
 
 func scanQueriedLog(rows *sql.Rows) (CallLog, error) {
 	var log CallLog
-	var billing string
-	err := rows.Scan(&log.ID, &log.KeyID, &log.KeyName, &log.UpstreamID, &log.UpstreamName, &log.Model, &log.Endpoint, &log.PromptTokens, &log.CompletionTokens, &log.CostUSD, &log.Status, &log.LatencyMS, &log.FirstTokenMS, &log.DurationMS, &log.Error, &log.CreatedAt, &billing, &log.TraceID)
+	var billing, clientID, clientJSON string
+	err := rows.Scan(&log.ID, &log.KeyID, &log.KeyName, &log.UpstreamID, &log.UpstreamName, &log.Model, &log.Endpoint, &log.PromptTokens, &log.CompletionTokens, &log.CostUSD, &log.Status, &log.LatencyMS, &log.FirstTokenMS, &log.DurationMS, &log.Error, &log.CreatedAt, &billing, &log.TraceID, &clientID, &clientJSON)
 	if err == nil && billing != "" {
 		_ = json.Unmarshal([]byte(billing), &log.Billing)
+	}
+	if err == nil {
+		_ = json.Unmarshal([]byte(clientJSON), &log.Client)
+		log.Client.ID = clientID
+		log.Client = normalizeRequestClient(log.Client)
 	}
 	return log, err
 }
@@ -222,13 +249,15 @@ func serveLogQuery(c *gin.Context) {
 	c.Header("Content-Disposition", `attachment; filename="apishare-logs.csv"`)
 	c.Writer.Write([]byte{0xef, 0xbb, 0xbf})
 	writer := csv.NewWriter(c.Writer)
-	writer.Write([]string{"记录ID", "时间", "模型", "上游", "API密钥名称", "端点", "状态", "输入Tokens", "输出Tokens", "费用USD", "首Token毫秒", "总耗时毫秒", "错误"})
+	writer.Write([]string{"记录ID", "时间", "模型", "上游", "API密钥名称", "端点", "状态", "输入Tokens", "输出Tokens", "费用USD", "首Token毫秒", "总耗时毫秒", "错误",
+		"客户端ID", "客户端", "客户端版本", "SDK", "SDK版本", "User-Agent", "识别来源", "标识冲突", "身份歧义"})
 	for _, log := range result.Items {
 		duration := log.DurationMS
 		if duration <= 0 {
 			duration = log.LatencyMS
 		}
-		writer.Write([]string{strconv.FormatInt(log.ID, 10), log.CreatedAt, csvLogCell(log.Model), csvLogCell(log.UpstreamName), csvLogCell(log.KeyName), csvLogCell(log.Endpoint), strconv.Itoa(log.Status), strconv.Itoa(log.PromptTokens), strconv.Itoa(log.CompletionTokens), strconv.FormatFloat(log.CostUSD, 'f', -1, 64), strconv.FormatInt(log.FirstTokenMS, 10), strconv.FormatInt(duration, 10), csvLogCell(log.Error)})
+		writer.Write([]string{strconv.FormatInt(log.ID, 10), log.CreatedAt, csvLogCell(log.Model), csvLogCell(log.UpstreamName), csvLogCell(log.KeyName), csvLogCell(log.Endpoint), strconv.Itoa(log.Status), strconv.Itoa(log.PromptTokens), strconv.Itoa(log.CompletionTokens), strconv.FormatFloat(log.CostUSD, 'f', -1, 64), strconv.FormatInt(log.FirstTokenMS, 10), strconv.FormatInt(duration, 10), csvLogCell(log.Error),
+			csvLogCell(log.Client.ID), csvLogCell(log.Client.Name), csvLogCell(log.Client.Version), csvLogCell(log.Client.SDKName), csvLogCell(log.Client.SDKVersion), csvLogCell(log.Client.UserAgent), csvLogCell(log.Client.Source), strconv.FormatBool(log.Client.Conflict), strconv.FormatBool(log.Client.Ambiguous)})
 	}
 	writer.Flush()
 }

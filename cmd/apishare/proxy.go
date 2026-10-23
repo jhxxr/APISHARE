@@ -98,6 +98,7 @@ func (i *relayInfo) protocolUsage() upstreamUsage {
 
 // relayTask 一次转发所需的全部上下文。
 type relayTask struct {
+	client                    *requestClientState
 	traceID                   string
 	format                    clientFormat
 	endpoint                  string    // 原生透传时的上游路径
@@ -139,6 +140,7 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			writeFormatError(c, format, http.StatusBadRequest, "missing or invalid 'model' in request")
 			return
 		}
+		requestClientFor(c).model = cr.Model
 		// Enforce permissions before affinity, routing, retries or billing.
 		if !ak.allowsModel(cr.Model) {
 			writeFormatError(c, format, http.StatusForbidden, "model is not allowed for this API key")
@@ -158,6 +160,7 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			endpoint = c.Request.URL.Path
 		}
 		task := &relayTask{
+			client:     requestClientFor(c),
 			format:     format,
 			endpoint:   endpoint,
 			body:       body,
@@ -271,6 +274,10 @@ func nativeEndpoint(format clientFormat, cr *canonReq) string {
 }
 
 func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wrote bool, lastErr error, inputTokensEst int) {
+	if task.client == nil {
+		task.client = requestClientFor(c)
+	}
+	task.markClientRecorded()
 	if !wrote {
 		if (c.Request != nil && c.Request.Context().Err() != nil) || errors.Is(lastErr, errDownstreamWrite) {
 			insertFailureLog(ak, info, task, http.StatusBadGateway, "client disconnected")
@@ -331,6 +338,7 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 			logError = "stream interrupted: " + lastErr.Error()
 		}
 		entry := &CallLog{
+			Client:  task.clientIdentity(),
 			TraceID: task.traceID,
 			KeyID:   ak.ID, KeyName: ak.Name,
 			UpstreamID: info.UpstreamID, UpstreamName: info.UpstreamName,
@@ -359,7 +367,9 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 }
 
 func insertFailureLog(ak ApiKey, info relayInfo, task *relayTask, status int, errMsg string) {
+	task.markClientRecorded()
 	dbInsertLog(&CallLog{
+		Client:  task.clientIdentity(),
 		TraceID: task.traceID,
 		KeyID:   ak.ID, KeyName: ak.Name,
 		UpstreamID: info.UpstreamID, UpstreamName: info.UpstreamName,

@@ -140,6 +140,7 @@ func audioHTTPHandler(c *gin.Context) {
 		errJSON(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	requestClientFor(c).model = request.model
 	if status, msg := audioPermission(ak, request.model); status != 0 {
 		errJSON(c, status, msg)
 		return
@@ -148,7 +149,7 @@ func audioHTTPHandler(c *gin.Context) {
 	if request.signaling {
 		format = FormatRealtime
 	}
-	task := &relayTask{format: format, endpoint: c.Request.URL.Path, model: request.model, apiKeyID: ak.ID}
+	task := &relayTask{client: requestClientFor(c), format: format, endpoint: c.Request.URL.Path, model: request.model, apiKeyID: ak.ID}
 	tried := map[int64]bool{}
 	var info relayInfo
 	for attempt := 0; attempt <= getSettings().Retry; attempt++ {
@@ -225,7 +226,8 @@ func audioHTTPHandler(c *gin.Context) {
 			if err != nil {
 				status, message = 502, "WebRTC signaling response interrupted"
 			}
-			dbInsertLog(&CallLog{KeyID: ak.ID, KeyName: ak.Name, UpstreamID: up.ID, UpstreamName: up.Name, Model: task.model, Endpoint: string(format), Status: status, LatencyMS: info.LatencyMS, DurationMS: info.DurationMS, Error: message})
+			task.markClientRecorded()
+			dbInsertLog(&CallLog{Client: task.clientIdentity(), KeyID: ak.ID, KeyName: ak.Name, UpstreamID: up.ID, UpstreamName: up.Name, Model: task.model, Endpoint: string(format), Status: status, LatencyMS: info.LatencyMS, DurationMS: info.DurationMS, Error: message})
 		} else {
 			finalizeCall(c, ak, task, info, true, err, 0)
 		}

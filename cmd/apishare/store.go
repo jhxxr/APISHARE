@@ -359,6 +359,9 @@ CREATE INDEX IF NOT EXISTS idx_log_daily_day ON call_log_daily(day);
 			return err
 		}
 	}
+	if err := migrateRequestClientSchema(); err != nil {
+		return err
+	}
 	return migrateTimestampsToBeijing()
 }
 
@@ -403,24 +406,25 @@ type Upstream struct {
 }
 
 type CallLog struct {
-	ID               int64           `json:"id"`
-	KeyID            int64           `json:"key_id"`
-	KeyName          string          `json:"key_name"`
-	UpstreamID       int64           `json:"upstream_id"`
-	UpstreamName     string          `json:"upstream_name"`
-	Model            string          `json:"model"`
-	Endpoint         string          `json:"endpoint"`
-	PromptTokens     int             `json:"prompt_tokens"`
-	CompletionTokens int             `json:"completion_tokens"`
-	CostUSD          float64         `json:"cost_usd"`
-	Billing          *billingDetails `json:"billing,omitempty"`
-	Status           int             `json:"status"`
-	LatencyMS        int64           `json:"latency_ms"`
-	FirstTokenMS     int64           `json:"first_token_ms"`
-	DurationMS       int64           `json:"duration_ms"`
-	Error            string          `json:"error"`
-	CreatedAt        string          `json:"created_at"`
-	TraceID          string          `json:"trace_id,omitempty"`
+	Client           requestClientIdentity `json:"client"`
+	ID               int64                 `json:"id"`
+	KeyID            int64                 `json:"key_id"`
+	KeyName          string                `json:"key_name"`
+	UpstreamID       int64                 `json:"upstream_id"`
+	UpstreamName     string                `json:"upstream_name"`
+	Model            string                `json:"model"`
+	Endpoint         string                `json:"endpoint"`
+	PromptTokens     int                   `json:"prompt_tokens"`
+	CompletionTokens int                   `json:"completion_tokens"`
+	CostUSD          float64               `json:"cost_usd"`
+	Billing          *billingDetails       `json:"billing,omitempty"`
+	Status           int                   `json:"status"`
+	LatencyMS        int64                 `json:"latency_ms"`
+	FirstTokenMS     int64                 `json:"first_token_ms"`
+	DurationMS       int64                 `json:"duration_ms"`
+	Error            string                `json:"error"`
+	CreatedAt        string                `json:"created_at"`
+	TraceID          string                `json:"trace_id,omitempty"`
 }
 
 func nowStr() string { return beijingNow().Format(time.RFC3339) }
@@ -765,6 +769,11 @@ type logExecutor interface {
 }
 
 func insertCallLog(executor logExecutor, l *CallLog) error {
+	l.Client = normalizeRequestClient(l.Client)
+	clientJSON, err := json.Marshal(l.Client)
+	if err != nil {
+		return err
+	}
 	billingJSON := ""
 	if l.Billing != nil {
 		encoded, err := json.Marshal(l.Billing)
@@ -773,17 +782,17 @@ func insertCallLog(executor logExecutor, l *CallLog) error {
 		}
 		billingJSON = string(encoded)
 	}
-	_, err := executor.Exec(`INSERT INTO call_logs(key_id,key_name,upstream_id,upstream_name,model,endpoint,
-		prompt_tokens,completion_tokens,cost_usd,status,latency_ms,first_token_ms,duration_ms,error,created_at,billing_json,trace_id)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	_, err = executor.Exec(`INSERT INTO call_logs(key_id,key_name,upstream_id,upstream_name,model,endpoint,
+		prompt_tokens,completion_tokens,cost_usd,status,latency_ms,first_token_ms,duration_ms,error,created_at,billing_json,trace_id,client_id,client_json)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		l.KeyID, l.KeyName, l.UpstreamID, l.UpstreamName, l.Model, l.Endpoint,
-		l.PromptTokens, l.CompletionTokens, l.CostUSD, l.Status, l.LatencyMS, l.FirstTokenMS, l.DurationMS, l.Error, nowStr(), billingJSON, l.TraceID)
+		l.PromptTokens, l.CompletionTokens, l.CostUSD, l.Status, l.LatencyMS, l.FirstTokenMS, l.DurationMS, l.Error, nowStr(), billingJSON, l.TraceID, l.Client.ID, string(clientJSON))
 	return err
 }
 
 func dbListLogs(limit, offset int) ([]CallLog, error) {
 	rows, err := db.Query(`SELECT id,key_id,key_name,upstream_id,upstream_name,model,endpoint,
-		prompt_tokens,completion_tokens,cost_usd,status,latency_ms,first_token_ms,duration_ms,error,created_at,billing_json,trace_id
+		prompt_tokens,completion_tokens,cost_usd,status,latency_ms,first_token_ms,duration_ms,error,created_at,billing_json,trace_id,client_id,client_json
 		FROM call_logs ORDER BY id DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, err
@@ -791,14 +800,9 @@ func dbListLogs(limit, offset int) ([]CallLog, error) {
 	defer rows.Close()
 	var out []CallLog
 	for rows.Next() {
-		var l CallLog
-		var billingJSON string
-		if err := rows.Scan(&l.ID, &l.KeyID, &l.KeyName, &l.UpstreamID, &l.UpstreamName, &l.Model, &l.Endpoint,
-			&l.PromptTokens, &l.CompletionTokens, &l.CostUSD, &l.Status, &l.LatencyMS, &l.FirstTokenMS, &l.DurationMS, &l.Error, &l.CreatedAt, &billingJSON, &l.TraceID); err != nil {
+		l, err := scanQueriedLog(rows)
+		if err != nil {
 			return nil, err
-		}
-		if billingJSON != "" {
-			_ = json.Unmarshal([]byte(billingJSON), &l.Billing)
 		}
 		out = append(out, l)
 	}

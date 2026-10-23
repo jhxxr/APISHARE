@@ -2,7 +2,7 @@
 
 采集日期：2026-10-23（Asia/Shanghai）。
 
-本轮为“识别请求客户端、记录调用日志、按客户端统计”收集依据，尚未接入运行时识别。配套的 [JSON 样本库](client-user-agents.json) 保存候选正则、版本捕获位置、辅助请求头、适用范围和固定版本源码链接。
+已接入入站客户端识别、调用日志、日志筛选与导出，以及仪表盘客户端统计。配套的 [JSON 样本库](client-user-agents.json) 保存调研正则、版本捕获位置、辅助请求头、适用范围和固定版本源码链接；它是调研与回归样本，运行时使用 `cmd/apishare/request_client.go` 中的固定规则，不会在请求路径联网查询客户端版本。
 
 **以下是从官方源码或官方发布包提取的格式，不是本项目实际抓到的请求。** `{version}` 等表示变量；JSON 中的示例也是依据源码构造的样本，不代表当前最新版本。没有确认的 UA 不补猜测值。
 
@@ -58,7 +58,7 @@ Qwen Code 的 Anthropic provider 在 **非 Anthropic 官方 Base URL** 下，会
 | Anthropic JavaScript/TypeScript | `Anthropic/JS {version}` | 只能识别 SDK。[S34] |
 | Google Gen AI Python | `google-genai-sdk/{version} gl-python/{python_version}` | 也会设置 `x-goog-api-client`；用户 UA 可以与库标识组合。[S35] |
 
-浏览器 UA、空 UA、只有运行时/HTTP 库标识的 UA，应进入单独的“浏览器/通用 HTTP/未知”回退分类，不据此猜测应用名称。
+浏览器 UA、空 UA、只有运行时/HTTP 库标识的 UA，统一归入未知客户端，保留 UA 供后续补样，不据此猜测应用名称。
 
 ## 需要实际请求补样的客户端
 
@@ -74,16 +74,29 @@ Qwen Code 的 Anthropic provider 在 **非 Anthropic 官方 Base URL** 下，会
 | Windsurf | 待补样；本轮没有确认可作为网关入站规则的官方 UA 格式。 | 自定义 API 路径实际到达网关的头。 |
 | NextChat | 待补样；本轮没有核实其各部署方式的默认 UA。 | Web 直连与服务端转发分别采样。 |
 
-## 接入本项目时的记录与统计建议
+## 已接入的记录与统计
 
-1. **在入站处提取一次。** 从 `c.Request.Header` 提取原始 UA 和有限的身份辅助字段，再进入重试/上游转换。项目的 `client_versions.go`、`headers.go`、`opencode.go`、`cline.go` 会生成或覆盖出站 UA，不能用出站头判断用户的客户端。
-2. **分别保存应用与 SDK。** 建议字段为 `client_id`、`client_name`、`client_version`、`sdk_id`、`sdk_version`、`user_agent`、`client_source`、`client_rule_version`；无法判断时明确记录 `unknown`，版本也允许为空。
-3. **保留来源和冲突。** `client_source` 可区分 `user_agent`、`auxiliary_headers`、`sdk_only`、`unknown`；互相冲突的证据不要静默覆盖，保留冲突状态。`client_version` 与 `sdk_version` 分别提取，通用 SDK 不能覆盖已识别的应用。
-4. **按稳定 ID 聚合。** 客户端排行按 `client_id` 统计请求数、成功数、Token、费用；版本和时间可作为筛选维度，不按完整 UA 建无限增长的统计分组。
-5. **覆盖所有入站和结果。** 后续实现需要覆盖普通模型请求、失败请求、音频、Realtime，并沿用现有“一次调用/一次计费事件”的口径，避免故障切换重试被重复记数。
-6. **一起处理日志保留策略。** 当前 `call_log_daily` 按日期和模型汇总；客户端维度需要进入长期聚合或另建聚合表，否则明细清理后客户端历史排行会丢失。旧数据没有 UA，应标为未知，不反向猜测。
+1. **在入站处提取一次。** 鉴权通过后、限流前，从 `c.Request.Header` 提取 UA 与身份辅助特征，随后重试和上游头覆盖共用同一份快照。UA 最多记录 2048 字节，并过滤控制字符、保证 UTF-8 有效。
+2. **分别保存应用与 SDK。** 日志 API 增加 `client` 对象，字段为 `id`、`name`、`version`、`sdk_id`、`sdk_name`、`sdk_version`、`user_agent`、`source`、`rule_version`。数据库用 `client_id` 索引聚合维度，用 `client_json` 保存快照。SDK 请求的应用仍是 `unknown`。
+3. **保留来源和冲突。** `source` 区分 `user_agent`、`auxiliary_headers`、`originator`、`sdk_only`、`unknown`；`conflict` 与 `candidates` 保留标识冲突，UA 优先。`claude-cli` 请求增加 `ambiguous`，不假定实际软件一定是 Claude Code。
+4. **按稳定 ID 聚合。** 仪表盘“客户端统计”按请求数排序，展示请求数、成功数、成功率、输入/输出 Token、成功请求费用和最近调用。支持本日、近 7 天、近 30 天和累计；点击客户端可查看同一时间范围内保留的调用明细。
+5. **覆盖所有入站和结果。** 四种模型协议、音频、WebRTC 信令与 Realtime 计费轮次均保留身份。限流、非法模型、配额与请求格式等鉴权后提前失败也记日志；一次故障切换只记最终调用，Realtime 继续按现有每个终止事件的口径记录。模型发现、OPTIONS 和未通过鉴权的请求不计入模型调用。
+6. **与日志保留共同提交。** 明细清理前按北京日期和客户端汇总进 `call_log_client_daily`，与原模型汇总、明细删除在同一事务内完成。升级时将已有 `call_log_daily` 中的历史数据一次性归入未知客户端；旧明细也保留为未知，`rule_version` 为 0，不推测历史身份。
 
-本次只收集客户端身份相关字段，不需要保存完整请求头、认证信息或会话 ID。后续若采集真实样本，保留 UA、必要的应用身份头、应用版本与 provider 路径即可。
+### 管理 API
+
+以下路径位于已配置后台入口的 `/api` 下，均需要管理员鉴权：
+
+| 路径 | 说明 |
+| --- | --- |
+| `GET /clients` | 返回可筛选的客户端 ID 与名称，包含 `unknown`。 |
+| `GET /client-stats?period=30d` | 返回 `items` 与 `summary`，范围支持 `today`、`7d`、`30d`、`all`，按北京时间自然日计算。 |
+| `GET /logs?client_id=codex&client_version=1.2.3` | 按应用和精确版本筛选；也支持 `sdk_id`。原有 `q` 搜索扩展到客户端名称、版本、SDK 名称和 UA。 |
+| `GET /logs?client_id=codex&export=csv` | 使用相同筛选导出，并追加客户端、SDK、UA、识别依据与歧义字段。 |
+
+日志详情展示身份快照和 UA；旧日志与未提供 UA 的请求会明确显示未采集或未知。统计包含已归档明细，因此点击统计项后，日志列表的条数可能少于累计统计。
+
+只保存客户端身份快照，不保存完整请求头、认证信息或会话 ID。后续若补采真实样本，保留 UA、必要的应用身份头、应用版本与 provider 路径即可。
 
 ## 官方依据
 

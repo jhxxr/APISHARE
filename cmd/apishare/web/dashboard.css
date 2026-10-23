@@ -178,6 +178,20 @@
 .dash-rank-empty { justify-content: center; color: var(--muted); font-size: 11px; border-bottom: 0 !important; }
 
 /* Recent calls */
+.dash-client-stats { padding: 14px; gap: 12px; }
+.dash-client-summary { margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.dash-client-period select { min-height: 36px; padding: 6px 10px; font-size: 12px; }
+.dash-client-stats .table-wrap { overflow-x: auto; }
+#clientStatsTable { min-width: 700px; }
+#clientStatsTable td { font-variant-numeric: tabular-nums; white-space: nowrap; }
+#clientStatsTable .text-btn { min-height: 32px; text-align: left; }
+.dash-client-foot { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+@media (max-width: 768px) {
+  .dash-client-stats { padding: 12px; }
+  .dash-client-stats .dash-card-head { align-items: flex-start; }
+  .dash-client-period select, #clientStatsTable .text-btn { min-height: 44px; }
+}
+
 .dash-recent .table-wrap { overflow-x: auto; background: var(--panel); border: 0; border-radius: 8px; }
 .dash-recent .tbl th { background: #faf9f8; border-color: var(--dash-line); }
 .dash-recent .tbl td { border-color: var(--dash-line); }

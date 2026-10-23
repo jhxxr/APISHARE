@@ -267,7 +267,7 @@ async function switchTab(name, updateHistory = true) {
   if (detailID && (!editorIsOpen() || editProbe.id !== Number(detailID))) openEditUpstream(Number(detailID));
 }
 async function loadCurrentTab() {
-  if (activeTab === "dashboard") return Promise.all([loadStats(), loadRecent()]);
+  if (activeTab === "dashboard") return Promise.all([loadStats(), loadRecent(), loadClientStats()]);
   if (activeTab === "keys") return loadKeys();
   if (activeTab === "upstreams") return Promise.all([loadUpstreams(), editorIsOpen() && coreUI.poolID ? loadCLIProxy() : Promise.resolve()]);
   if (activeTab === "models") return loadModelOverview();

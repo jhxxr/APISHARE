@@ -102,6 +102,28 @@ func rollupExpiredLogs(cutoff int64) (deleted int64, err error) {
 	if _, err := tx.Exec(rollup, cutoff, cutoff, cutoff); err != nil {
 		return 0, err
 	}
+	// Client aggregates contain only removed detail, just like model aggregates.
+	// Both rollups and the delete must commit together.
+	if _, err := tx.Exec(`INSERT INTO call_log_client_daily(day,client_id,calls,successes,prompt_tokens,completion_tokens,cost_usd,last_at)
+		SELECT date(created_at,'+8 hours'),client_id,COUNT(*),
+		 SUM(CASE WHEN status BETWEEN 200 AND 299 THEN 1 ELSE 0 END),
+		 COALESCE(SUM(prompt_tokens),0),COALESCE(SUM(completion_tokens),0),
+		 COALESCE(SUM(CASE WHEN status BETWEEN 200 AND 299 THEN cost_usd ELSE 0 END),0),
+		 (SELECT created_at FROM call_logs newer
+		  WHERE newer.client_id=aged.client_id
+		   AND date(newer.created_at,'+8 hours')=date(aged.created_at,'+8 hours')
+		   AND unixepoch(newer.created_at)<?
+		  ORDER BY unixepoch(newer.created_at) DESC,newer.id DESC LIMIT 1)
+		FROM call_logs aged WHERE unixepoch(created_at)<?
+		GROUP BY date(created_at,'+8 hours'),client_id
+		ON CONFLICT(day,client_id) DO UPDATE SET
+		 calls=calls+excluded.calls,successes=successes+excluded.successes,
+		 prompt_tokens=prompt_tokens+excluded.prompt_tokens,completion_tokens=completion_tokens+excluded.completion_tokens,
+		 cost_usd=cost_usd+excluded.cost_usd,
+		 last_at=CASE WHEN unixepoch(excluded.last_at)>unixepoch(last_at) THEN excluded.last_at ELSE last_at END`,
+		cutoff, cutoff); err != nil {
+		return 0, err
+	}
 	res, err := tx.Exec(`DELETE FROM call_logs WHERE unixepoch(created_at)<?`, cutoff)
 	if err != nil {
 		return 0, err

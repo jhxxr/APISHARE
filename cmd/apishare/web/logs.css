@@ -20,7 +20,7 @@
 #tab-logs .log-search-controls input { background: #f0eeee; border-color: var(--border); border-radius: 9px; min-height: 35px; font-size: 12px; box-shadow: 0 1px 2px rgb(34 43 52 / 6%); }
 #tab-logs .log-search-controls .btn { min-height: 33px; padding: 5px 11px; border-color: var(--border); border-radius: 11px; }
 #logFilterButton[aria-expanded="true"] { background: var(--panel-soft); color: var(--accent); }
-.log-advanced-filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) auto; align-items: end; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
+.log-advanced-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
 .log-advanced-filters .field { gap: 5px; }
 #tab-logs .log-advanced-filters input, #tab-logs .log-advanced-filters select { min-height: 36px; padding: 7px 9px; border-color: var(--border-strong); font-size: 12px; }
 .log-quick-filters { display: flex; align-items: center; justify-content: space-between; gap: 10px 20px; min-height: 36px; }
@@ -40,6 +40,12 @@
 #logsTable [data-log-column="model"] { width: 170px; }
 #logsTable [data-log-column="upstream"] { width: 155px; }
 #logsTable [data-log-column="key"] { width: 115px; }
+#logsTable [data-log-column="client"] { width: 160px; }
+#logsTable .log-client-note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-client-details { margin-top: 24px; }
+.log-client-details > h3 { margin-top: 16px; }
+.log-client-details .log-client-note { color: var(--muted); font-size: 12px; line-height: 1.7; }
+.log-client-details pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 #logsTable [data-log-column="tokens"] { width: 135px; }
 #logsTable [data-log-column="performance"] { width: 145px; }
 #logsTable [data-log-column="cost"] { width: 100px; }

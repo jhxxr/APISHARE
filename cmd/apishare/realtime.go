@@ -122,11 +122,12 @@ func realtimeWebSocket(c *gin.Context) {
 	}
 	ak := c.MustGet("apiKey").(ApiKey)
 	model := strings.TrimSpace(c.Query("model"))
+	requestClientFor(c).model = model
 	if status, msg := audioPermission(ak, model); status != 0 {
 		errJSON(c, status, msg)
 		return
 	}
-	task := &relayTask{format: FormatRealtime, endpoint: "/v1/realtime", model: model, apiKeyID: ak.ID, stream: true}
+	task := &relayTask{client: requestClientFor(c), format: FormatRealtime, endpoint: "/v1/realtime", model: model, apiKeyID: ak.ID, stream: true}
 	tried := map[int64]bool{}
 	skey := scopedSessionKey(ak.ID, sessionKeyFromCanon(task.endpoint, c.Request.Header, &canonReq{Model: fmt.Sprint(ak.ID) + ":" + model}))
 	var upstream *websocket.Conn

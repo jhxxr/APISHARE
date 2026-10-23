@@ -127,6 +127,7 @@ func registerAdminRoutes(r *gin.Engine) {
 	registerAnnouncementRoutes(auth)
 	registerUpstreamOverviewRoutes(auth)
 	registerDashboardRoutes(auth)
+	registerClientStatsRoutes(auth)
 	registerSiteBrandingAdmin(auth)
 
 	// ---------- API Keys ----------
