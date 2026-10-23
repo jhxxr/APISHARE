@@ -67,6 +67,7 @@ type Credential struct {
 	Provider         string          `json:"provider"`
 	Status           string          `json:"status"`
 	Disabled         bool            `json:"disabled"`
+	Websockets       *bool           `json:"websockets,omitempty"`
 	Unavailable      bool            `json:"unavailable"`
 	RuntimeOnly      bool            `json:"runtime_only"`
 	ProxyID          int64           `json:"proxy_id"`

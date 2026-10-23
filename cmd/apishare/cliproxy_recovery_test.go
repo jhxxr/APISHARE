@@ -195,7 +195,7 @@ func TestDuplicateAuthorizationWaitsForConfirmation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := manager.SeedCredentials(map[string]json.RawMessage{
-		"one.json": json.RawMessage(`{"type":"codex","email":"same@example.invalid","disabled":true,"access_token":"old"}`),
+		"one.json": json.RawMessage(`{"type":"codex","email":"same@example.invalid","disabled":true,"websockets":true,"access_token":"old"}`),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestDuplicateAuthorizationWaitsForConfirmation(t *testing.T) {
 		t.Fatalf("OAuth duplicate was not held for confirmation: %v", err)
 	}
 	name, replacing, err := prepareCredentialReplacement(manager, "generated-name.json", doc, true)
-	if err != nil || !replacing || name != "one.json" || doc["disabled"] != true {
+	if err != nil || !replacing || name != "one.json" || doc["disabled"] != true || doc["websockets"] != true {
 		t.Fatalf("OAuth confirmation lost account settings: %s %v %v %+v", name, replacing, err, doc)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -53,11 +54,12 @@ func (m *Manager) Credentials(ctx context.Context) ([]Credential, error) {
 	for name, raw := range files {
 		// Decode only fields allowed in the management view.
 		var meta struct {
-			Type     string `json:"type"`
-			Email    string `json:"email"`
-			Label    string `json:"label"`
-			Note     string `json:"note"`
-			Disabled bool   `json:"disabled"`
+			Type       string          `json:"type"`
+			Email      string          `json:"email"`
+			Label      string          `json:"label"`
+			Note       string          `json:"note"`
+			Disabled   bool            `json:"disabled"`
+			Websockets json.RawMessage `json:"websockets"`
 		}
 		if err := json.Unmarshal(raw, &meta); err != nil {
 			return nil, err
@@ -67,7 +69,7 @@ func (m *Manager) Credentials(ctx context.Context) ([]Credential, error) {
 			id = strings.ToLower(id) // Match the SDK's file-backed auth IDs.
 		}
 		out = append(out, Credential{ID: id, Name: name, Provider: strings.ToLower(strings.TrimSpace(meta.Type)),
-			Email: meta.Email, Label: meta.Label, Note: meta.Note, Disabled: meta.Disabled, Unavailable: true, Status: "stopped"})
+			Email: meta.Email, Label: meta.Label, Note: meta.Note, Disabled: meta.Disabled, Websockets: credentialWebsockets(meta.Websockets), Unavailable: true, Status: "stopped"})
 		out[len(out)-1].LiveQuota = m.CachedQuota(name)
 		var document map[string]any
 		if json.Unmarshal(raw, &document) == nil {
@@ -80,6 +82,23 @@ func (m *Manager) Credentials(ctx context.Context) ([]Credential, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+func credentialWebsockets(raw json.RawMessage) *bool {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var enabled bool
+	if json.Unmarshal(raw, &enabled) == nil {
+		return &enabled
+	}
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		if value, err := strconv.ParseBool(strings.TrimSpace(text)); err == nil {
+			return &value
+		}
+	}
+	return nil
 }
 
 // ReadCredentials is used only for server-side transfer of a completed OAuth

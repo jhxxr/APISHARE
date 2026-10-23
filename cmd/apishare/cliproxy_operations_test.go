@@ -59,7 +59,7 @@ func TestPoolAccountOperationsKeepMembershipAndSettings(t *testing.T) {
 			t.Fatalf("invalid settings accepted: %d %s", result.Code, result.Body.String())
 		}
 	}
-	if result := proxyAdminRequest(router, "PATCH", path(a, "credentials/settings"), `{"name":"first.json","priority":30,"weight":5}`, true); result.Code != 200 {
+	if result := proxyAdminRequest(router, "PATCH", path(a, "credentials/settings"), `{"name":"first.json","priority":30,"weight":5,"websockets":true}`, true); result.Code != 200 {
 		t.Fatalf("settings: %d %s", result.Code, result.Body.String())
 	}
 	proxy := testSavedProxy(t, "http://proxy.invalid:1080", "", "")
@@ -78,7 +78,7 @@ func TestPoolAccountOperationsKeepMembershipAndSettings(t *testing.T) {
 	}
 	var document map[string]any
 	json.Unmarshal(destination["first.json"], &document)
-	if document["priority"] != float64(30) || document["weight"] != float64(5) || document["label"] != "operator label" || document["disabled"] != true || document["use_siwc"] != true ||
+	if document["priority"] != float64(30) || document["weight"] != float64(5) || document["label"] != "operator label" || document["disabled"] != true || document["use_siwc"] != true || document["websockets"] != true ||
 		accountProxyID(b, "first.json") != proxy.ID {
 		t.Fatalf("migration lost operator settings: %+v", document)
 	}

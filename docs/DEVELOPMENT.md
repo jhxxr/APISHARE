@@ -53,6 +53,9 @@ go test -v ./...
 # 运行真实的 Codex CLI 协议回路测试 (需本地已安装 codex)
 export APISHARE_CODEX_BINARY="codex"
 go test ./cmd/apishare -run TestCodexCLIResponsesToolLoop -v -count=1
+
+# 原生 WebSocket 工具回路，验证长连接和增量续接
+go test ./cmd/apishare -run TestCodexCLIResponsesWebSocketToolLoop -v -count=1
 ```
 
 ## 前端资源

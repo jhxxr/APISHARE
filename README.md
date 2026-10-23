@@ -63,6 +63,7 @@ API Share 是一个用 Go 编写的 AI 网关。它统一接收 OpenAI Chat Comp
 |---|---|---|
 | OpenAI Chat Completions | `POST /v1/chat/completions` | `Authorization: Bearer` |
 | OpenAI Responses | `POST /v1/responses`、`/v1/responses/compact` | `Authorization: Bearer` |
+| OpenAI Responses WebSocket | `GET /v1/responses`（WebSocket Upgrade） | `Authorization: Bearer` |
 | OpenAI Embeddings / Audio | `POST /v1/embeddings`、`/v1/audio/*` | `Authorization: Bearer` |
 | OpenAI Realtime | `GET /v1/realtime`（WebSocket）、`POST /v1/realtime/calls`（WebRTC） | Bearer 或子协议 |
 | Anthropic Messages | `POST /v1/messages` | `x-api-key` 或 Bearer |

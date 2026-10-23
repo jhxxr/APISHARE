@@ -13,11 +13,11 @@
 | WAL 支持读写并发，但仍只有一个写者；连接池过小会让请求等待 | [S6] SQLite WAL、[S7] Go Database Connections | 当前单连接同时承担读取和写入。下一步先测 `DB.Stats()` 的 `WaitCount` / `WaitDuration`，再评估独立读连接池；计费和配额事务需要继续保持原子性。 |
 | PGO 依赖具有代表性的 CPU profile | [S8] Go PGO | 等实际网关流量的热点稳定后，再评估 PGO。单个无网络微基准不足以代表生产负载。 |
 | Go 1.26.2 的 `encoding/json/v2` 仍属于实验接口 | [S9] Go 1.26.2 `encoding/json/v2` | 本轮继续使用现有标准库接口，复用解码结果；更换 JSON 实现需要单独验证数字精度、未知字段、错误处理和协议兼容性。 |
-| Responses WebSocket 使用长连接和响应续接，适合多轮工具任务 | [S10] OpenAI WebSocket Mode、[S11] Codex Configuration Reference | 已确认外层网关缺少 `GET /v1/responses`；内置 CLIProxyAPI 有对应入口，但当前 HTTP 转发无法触发其 Codex WS 执行器。接入方案见下文，尚未实现。 |
+| Responses WebSocket 使用长连接和响应续接，适合多轮工具任务 | [S10] OpenAI WebSocket Mode、[S11] Codex Configuration Reference | 已接入 `GET /v1/responses`，覆盖原生 WS 上游及 CLIProxyAPI 账号池；真实 Codex 工具回路已确认连接复用和增量续接。 |
 
 “每条 SSE 只解析一次”和“只复制选中的配置”是结合上述原则及本项目热点提出的具体方案，并非外部资料对本项目收益的保证。
 
-## 本轮已完成
+## 已完成的 SSE 与路由优化
 
 - 原生 SSE 的终止检查、前导事件识别、保活状态及计费共享同一个解码对象；原生流聚合也复用解码对象，保留 `UseNumber` 的数字精度。
 - 路由候选保存索引，常见规模使用栈内数组；最终返回一份独立配置，保持管理端修改与请求配置之间的隔离。
@@ -26,7 +26,7 @@
 
 验证：`go test ./... -count=1` 通过。
 
-## 实测结果
+## SSE 与路由微基准
 
 环境：Windows/amd64，Go 1.26.2，Intel Core Ultra 7 265K，默认 `GOMAXPROCS=20`。
 
@@ -50,33 +50,58 @@
 
 ## 下一步优先级
 
-1. **Codex Responses WebSocket 接入。** 当前外层入口缺失；优先验证原生 Responses 上游和 CLIProxyAPI 账号池的端到端长连接，分别测多轮工具任务的首事件延迟、请求字节数和总耗时。
+1. **部署环境的 WebSocket 对比。** 接入和本地回路验证已完成；继续用实际原生上游、同一任务及相同账号，对比 HTTP 与 WS 的首事件延迟、请求字节数和总耗时。
 2. **原生 Responses 聚合的字符串拼接。** 优化后的 `alloc_space` 采样中，`collectNativeResponsesSSE` 内逐增量拼接文本所在行约占总分配的 59%。优先评估按输出项、正文位置维护追加缓冲，覆盖交错工具参数、reasoning、done 快照和终态补全，并用不同流长度确认增长趋势。
 3. **数据库连接等待。** 在真实鉴权、日志、仪表盘和计费混合负载下测量连接等待，再决定是否拆分读写连接。增加连接数本身不能消除 SQLite 的单写者限制。
 4. **部署环境下的延迟和内存。** 覆盖并发长流、慢下游、取消、重试和外层代理，记录首 token、P95/P99、CPU、存活堆、goroutine 与连接复用率。使用代表性的生产 CPU profile 再评估 PGO。
 
-## Codex WebSocket 专项核查
+## Codex WebSocket 实现与验证
 
 截至 2026-10-23，官方文档确认 Responses API 提供 `/v1/responses` WebSocket 模式，Codex 自定义 provider 有 `supports_websockets` 配置。长连接内可用 `previous_response_id` 续接并只提交新增输入；实际收益需要用多轮工具任务测量，不能从本文件的 SSE 微基准推算。
 
-### 当前断点
+### 已接通的链路
 
-| 层 | 核查结果 |
+| 层 | 当前行为 |
 | --- | --- |
-| Codex 客户端 | 官方配置有 `model_providers.<id>.supports_websockets`；它声明 provider 能力，不会替网关增加路由。 |
-| API Share 外层 | `cmd/apishare/main.go` 只注册 `POST /v1/responses` 和 `POST /v1/responses/compact`。`cmd/apishare/realtime.go` 的 WebSocket 路由为 `/v1/realtime`。 |
+| Codex 客户端 | 在原生 WS 模型对应的 provider 中声明 `supports_websockets = true`，见 [接入配置](CLIENTS.md#responses-websocket)。 |
+| API Share 外层 | `GET /v1/responses` 进入 `responses_websocket.go`；保留现有 POST、compact 与 Realtime 入口。 |
 | 内置 CLIProxyAPI v8.0.38 | 模块内 `internal/api/server_routes.go` 已注册 `GET /v1/responses`，由 `ResponsesWebsocket` 处理。 |
-| CLIProxyAPI Codex 上游 | `internal/runtime/executor/codex_websockets_executor.go` 的 `CodexAutoExecutor` 要求下游为 WebSocket，且所选凭据启用 `websockets`；否则走 HTTP。因此仅有依赖库、仅修改客户端开关或仅启用账号开关都不能接通当前外层链路。 |
+| CLIProxyAPI Codex 上游 | `CodexAutoExecutor` 要求下游为 WS、所选凭据启用 `websockets`。管理员账号设置 API 支持修改该标志，重新授权与迁移保留它；未启用时 SDK 仍可能使用 HTTP。 |
 
-### 接入时需要一起完成的行为
+### 实现边界
 
-- 为原生 Responses 上游和 CLIProxyAPI 账号池增加已鉴权的 `GET /v1/responses` 代理，复用代理出站配置，并隔离客户端 Key 与上游 Key。
-- 从首条创建事件确定模型和上游；后续每轮重新检查密钥状态、模型权限、QPS、并发与配额，空闲连接不应永久占用推理并发槽。
-- 同一续接链保持上游及账号状态；仅在明确允许的边界重连或回退。遇到缺失的上一轮响应时，按协议通知客户端恢复完整上下文，不能把相同 `previous_response_id` 盲目转交其他账号。
-- 按每个响应的终止事件及 usage 独立记账，并处理重复事件。CLIProxyAPI 当前 HTTP 请求的 `task.traceID` 也不能直接提升为整个多轮连接的唯一计费键。
-- 验证保活、取消、交错事件、预热请求、断线、额度耗尽和模型映射；普通 Chat / Anthropic / Gemini 渠道继续通过现有 HTTP 转换路径提供服务。
+- 首条创建事件决定模型和上游。原生 WS JSON 透传；模型别名修改使用 RawMessage，保留大整数、工具参数及不透明字段。复用已有 HTTP(S) / SOCKS 出站代理配置，客户端 Key 和握手状态不传入上游。
+- 每轮重新读取 Key、共享 / 独立配额和权限，检查 QPS 与并发；终止时释放并发槽。限流器配置更新保留旧请求的活跃计数，避免编辑 QPS 后绕过并发。
+- 只在尚未发送输入的握手阶段尝试其他原生候选。发送后固定上游，直接保留续接 ID；网关不缓存或重建完整对话，不重放已接受的输入。
+- 连接内按响应 ID 去重终止事件，再逐轮记录 usage 和扣费。缺少 usage 时不估算增量输入，零用量预热不生成推理账单；拒绝的创建请求记录失败日志。
+- 客户端断开或写入失败后，默认继续读取上游最多 1.5 秒，尽力保留迟到的最终 usage；不再接受新的创建请求。带有已知响应 ID 的 `error` 先保留，等待随后的 `response.failed` 权威用量；只有错误而无终态时，经过 1.2 秒短窗口释放该轮。
+- 单个处理循环管理请求、事件和账单；双向读取队列有界。独立 goroutine 处理协议 ping/pong；存活到期先发送 `1001` 关闭帧，再取消读取。连接数、待完成请求、事件大小及已记录响应 ID 数均有上限。
+- 当前支持创建、追加、取消、中断和按 `stream_id` 关联交错事件；不开放 `response.steer` 自动续轮。HTTP 协议转换继续使用原入口；仅支持 HTTP 的兼容商不能通过此入口获得原生上游 WS。
 
-该专项本次完成的是官方协议与源码核查，没有修改网关路由或用户的 Codex 配置，也没有产生真实上游调用。接通并验证端点后，才适合在对应 Codex provider 上声明 `supports_websockets = true`。
+### 本地验证
+
+- Windows 上安装的 Codex CLI `0.162.1`，在临时 `CODEX_HOME` 中连接本地确定性模型夹具，执行“创建文件 → 运行失败测试 → 修复 → 测试通过”的真实工具回路。
+- 该回路的 **6 次 `response.create` 共用 1 条 WS 连接，其中 5 次携带增量续接 ID**。这验证了传输与续接实际启用，未做真实模型服务的延迟 A/B 对比。
+- 内置 CLIProxyAPI v8.0.38 连接本地 Codex WS 提供商，连续两轮只建立 1 条上游连接，确认 SDK 的 WS 执行器及连接复用生效。
+- 回归覆盖模型映射、数字精度、交错与排队、重复终止事件、动态权限、Key 轮换、限流器更新、独立额度、预热、未知 usage、握手前重试、输入发送后断线、代理、双向 ping/pong 与连接到期关闭。
+
+上述回路使用本地响应夹具；不将工具进程执行时间或本地网络耗时解释为真实模型加速比例。用户的现有 Codex 配置与账号开关由用户按需启用。
+
+### 开源实现对照
+
+核对 sub2api 提交 `5c185c5c5d4f5e409e2139806e0964ae944e03e8` 的 `backend/internal/service/openai_ws_v2/passthrough_relay.go` 与 `openai_ws_v2_passthrough_adapter.go`，以及本项目固定依赖 CLIProxyAPI v8.0.38 的 WS handler / executor。
+
+| 重点问题 | 本项目处理与验证 |
+| --- | --- |
+| 长连接后续轮次绕过权限或额度 | 每个创建事件重新读取权限、余额、QPS 和并发；Key 停用、轮换与配置变化都有回归。 |
+| 客户端断开导致尾部用量丢失 | 有界 drain 窗口；覆盖正常关闭与 TCP 中断后的迟到 usage，不估造窗口外的用量。 |
+| `error` 与 `response.failed` 变成两个账单，或先结算错误丢失最终用量 | 已知轮次的裸错误暂存；最终失败用量替换错误兜底，单独错误可超时结算。辅助事件不会提前结束等待。 |
+| 事件 ID 被误当成响应 ID | 顶层 `id` 仅用于终止快照兼容；普通事件和错误使用明确的响应关联字段。兼容扁平终态但保持原生 JSON 不变。 |
+| 上游 `1000` / EOF 被当成推理成功，或所有关闭码都被改成 `1011` | 活跃轮次缺少终态记失败；保留真实 `1008` / `1013` 等关闭码。已明确返回的客户端请求错误不计作上游故障。 |
+| 取消控制命令影响其他连接 | 有响应 ID 的取消 / 中断只能引用当前连接已知的响应；未配套逐轮票据的自动续轮事件被拒绝。 |
+| 池内 WS 并未实际启用 | 用本地提供商验证真实 SDK 的 WS executor，确认两轮复用上游连接；账号开关兼容布尔和旧版字符串值。 |
+
+参考源码见 [S12]、[S13]。这些对照不等于真实厂商延迟压测，实际效果仍需按部署环境测量。
 
 ## 复现
 
@@ -105,3 +130,5 @@ go tool pprof -alloc_space -list 'collectNativeResponsesSSE.func1' output/native
 - [S9] Go 1.26.2 `encoding/json/v2`：`https://pkg.go.dev/encoding/json/v2@go1.26.2`
 - [S10] OpenAI Responses WebSocket Mode：`https://developers.openai.com/api/docs/guides/websocket-mode`
 - [S11] Codex Configuration Reference：`https://developers.openai.com/codex/config-reference/`
+- [S12] sub2api 固定版本 WS Relay：`https://github.com/Wei-Shaw/sub2api/blob/5c185c5c5d4f5e409e2139806e0964ae944e03e8/backend/internal/service/openai_ws_v2/passthrough_relay.go`
+- [S13] sub2api 固定版本 Passthrough Adapter：`https://github.com/Wei-Shaw/sub2api/blob/5c185c5c5d4f5e409e2139806e0964ae944e03e8/backend/internal/service/openai_ws_v2_passthrough_adapter.go`

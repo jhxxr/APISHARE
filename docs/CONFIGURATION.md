@@ -13,9 +13,13 @@
 | `UPSTREAM_MAX_IDLE_CONNS_PER_HOST` | `64` | 每个目标主机保留的最大空闲连接数 |
 | `UPSTREAM_DIAL_TIMEOUT_SEC` | `15` | TCP 建连与 TLS 握手超时时间（秒） |
 | `UPSTREAM_HEADER_TIMEOUT_SEC` | `180` | 等待上游响应首包头部的最长超时（秒，0 为不限） |
-| `UPSTREAM_IDLE_TIMEOUT_SEC` | `300` | 等待上游数据包的空闲超时（秒，不限制流式持续总长，0 为不限） |
+| `UPSTREAM_IDLE_TIMEOUT_SEC` | `300` | HTTP / Realtime 等待上游数据包的空闲超时（秒，不限制流式持续总长，0 为不限）；Responses WS 使用独立 ping/pong 保活 |
 | `STREAM_KEEPALIVE_INTERVAL_SEC` | `10` | Messages 流式请求向客户端发送保活事件的间隔（秒，0 为关闭，最大 300）；不影响上游空闲超时，其他协议和非流式请求不注入保活 |
 | `REALTIME_MAX_DURATION_SEC` | `3600` | Realtime WebSocket 单连接最长存活时间（秒，1～86400）；空闲读取另受 `UPSTREAM_IDLE_TIMEOUT_SEC` 限制 |
+| `RESPONSES_WS_MAX_DURATION_SEC` | `3300` | Responses WebSocket 单连接最长存活时间（秒，1～86400）；到期发送 `1001` 关闭帧，由客户端重连 |
+| `RESPONSES_WS_PING_INTERVAL_SEC` | `30` | Responses WebSocket 双向协议 ping 间隔（秒，1～300）；每次等待 pong 最长 10 秒 |
+| `RESPONSES_WS_MAX_CONNECTIONS_PER_KEY` | `16` | 每个 Key 的 Responses WS 连接数上限（1～1024），独立于推理并发；每连接最多 64 个待完成请求 |
+| `RESPONSES_WS_DRAIN_TIMEOUT_MS` | `1500` | 客户端断开或写入失败后，继续读取上游末尾 usage 的短窗口（毫秒，0～30000，0 关闭）；期间不再接收新轮次 |
 | `TIKTOKEN_CACHE_DIR` | 临时目录/`data-gym-cache` | 本地 Token 分词词表缓存路径 |
 
 ## 独立上游代理池

@@ -19,6 +19,20 @@ CLIProxyAPI 的 Go SDK 编入 API Share。每条 CLIProxyAPI 上游对应一个�
 
 CLIProxyAPI 上游不显示通用的「请求头覆盖」配置；厂商请求头由内置 SDK 管理。旧版本保存的网关请求头覆盖不再用于该类型，编辑保存时会清空。其他 API 上游仍支持固定请求头和透传规则。
 
+### Responses WebSocket
+
+网关已接入账号池的 `GET /v1/responses`。Codex 使用独立的 WS provider 配置，见 [客户端接入](CLIENTS.md#responses-websocket)。内置 SDK 的 Codex 上游 WS 执行器要求所选凭据启用 `websockets`；未开启时，外层长连接仍可能经 SDK 的 HTTP 实现访问厂商。
+
+新凭据可在导入 JSON 中包含 `"websockets":true`。已有 Codex / xAI 账号可由管理员会话调用 `PATCH /api/upstreams/{上游ID}/cliproxy/credentials/settings`，请求体如下：
+
+```json
+{"name":"account.json","websockets":true}
+```
+
+设为 `false` 可关闭；其他提供商会被拒绝。账号列表 API 返回可选的 `websockets` 字段，停止池子后仍可读写该设置。重新授权、确认覆盖及迁移保留原账号的 WS 设置；不会批量改动现有账号或自动启用。
+
+同一连接的池内尝试使用握手 trace 串联，网关按每个响应的终止事件独立生成账单，不能把连接 trace 当作一次调用的去重键。取消、断线与正常关闭分别处理；已发送的输入不会由外层网关重放到其他池。
+
 ### 授权恢复与重复账号
 
 - 授权由网关后台持续处理；刷新页面、离开账号池详情或关闭浏览器不会取消授权。重新打开同一池时恢复设备码、授权链接和等待状态；新账号授权完成后自动入池，不依赖浏览器轮询触发写入。

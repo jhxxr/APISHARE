@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -73,6 +74,7 @@ type keyLimit struct {
 	conc   int
 	lim    *rate.Limiter
 	sem    chan struct{}
+	active *atomic.Int64 // Shared by revisions so edits cannot reset in-flight usage.
 	lastAt time.Time
 }
 
@@ -84,8 +86,13 @@ var limReg = struct {
 func getLimit(ak ApiKey) *keyLimit {
 	limReg.Lock()
 	defer limReg.Unlock()
+	conc := max(1, ak.Concurrency)
 	kl, ok := limReg.m[ak.ID]
-	if ok && (kl.qps != ak.QPS || kl.conc != ak.Concurrency) {
+	var active *atomic.Int64
+	if ok {
+		active = kl.active
+	}
+	if ok && (kl.qps != ak.QPS || kl.conc != conc) {
 		ok = false // 管理端改过参数，重建
 	}
 	if !ok {
@@ -93,15 +100,15 @@ func getLimit(ak ApiKey) *keyLimit {
 		if burst < 1 {
 			burst = 1
 		}
-		conc := ak.Concurrency
-		if conc < 1 {
-			conc = 1
+		if active == nil {
+			active = &atomic.Int64{}
 		}
 		kl = &keyLimit{
-			qps:  ak.QPS,
-			conc: conc,
-			lim:  rate.NewLimiter(rate.Limit(ak.QPS), burst),
-			sem:  make(chan struct{}, conc),
+			qps:    ak.QPS,
+			conc:   conc,
+			lim:    rate.NewLimiter(rate.Limit(ak.QPS), burst),
+			sem:    make(chan struct{}, conc),
+			active: active,
 		}
 		limReg.m[ak.ID] = kl
 	}
@@ -109,12 +116,35 @@ func getLimit(ak ApiKey) *keyLimit {
 	return kl
 }
 
+func (limit *keyLimit) acquire() bool {
+	for {
+		active := limit.active.Load()
+		if active >= int64(limit.conc) {
+			return false
+		}
+		if limit.active.CompareAndSwap(active, active+1) {
+			select {
+			case limit.sem <- struct{}{}:
+				return true
+			default:
+				limit.active.Add(-1)
+				return false
+			}
+		}
+	}
+}
+
+func (limit *keyLimit) release() {
+	<-limit.sem
+	limit.active.Add(-1)
+}
+
 func limiterJanitorLoop() {
 	for {
 		time.Sleep(10 * time.Minute)
 		limReg.Lock()
 		for id, kl := range limReg.m {
-			if time.Since(kl.lastAt) > time.Hour && len(kl.sem) == 0 {
+			if time.Since(kl.lastAt) > time.Hour && kl.active.Load() == 0 {
 				delete(limReg.m, id)
 			}
 		}
@@ -124,6 +154,12 @@ func limiterJanitorLoop() {
 
 func keyRateLimit() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Responses sockets admit and release each turn individually. Idle
+		// connections must not consume inference slots or a turn's QPS token.
+		if c.Request.Method == http.MethodGet && c.FullPath() == "/v1/responses" {
+			c.Next()
+			return
+		}
 		ak := c.MustGet("apiKey").(ApiKey)
 		kl := getLimit(ak)
 		if !kl.lim.Allow() {
@@ -133,13 +169,10 @@ func keyRateLimit() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		select {
-		case kl.sem <- struct{}{}:
-			defer func() { <-kl.sem }()
+		if kl.acquire() {
+			defer kl.release()
 			c.Next()
-		case <-c.Request.Context().Done():
-			return
-		default:
+		} else {
 			c.Header("X-APISHARE-RateLimit-Source", "gateway-concurrency")
 			c.Header("Retry-After", "1")
 			errJSON(c, http.StatusTooManyRequests, "concurrency limit exceeded for this key")

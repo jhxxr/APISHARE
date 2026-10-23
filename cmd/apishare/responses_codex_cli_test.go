@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,15 +14,25 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
 )
 
 // Opt-in integration against the installed CLI and a deterministic local model.
 // No user configuration, credentials or external inference service is used.
 func TestCodexCLIResponsesToolLoop(t *testing.T) {
+	codexCLIResponsesToolLoop(t, false)
+}
+
+func TestCodexCLIResponsesWebSocketToolLoop(t *testing.T) {
+	codexCLIResponsesToolLoop(t, true)
+}
+
+func codexCLIResponsesToolLoop(t *testing.T, useWebSocket bool) {
 	binary := os.Getenv("APISHARE_CODEX_BINARY")
 	if binary == "" {
 		t.Skip("set APISHARE_CODEX_BINARY to run the installed Codex CLI smoke test")
@@ -166,7 +177,7 @@ func TestCodexCLIResponsesToolLoop(t *testing.T) {
 	}))
 	defer upstream.Close()
 	up := &Upstream{ID: 901, Name: "CLI smoke", Type: "openai", OpenAIProtocol: "chat", BaseURL: upstream.URL, APIKey: "local-test-key"}
-	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	gatewayHandler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/responses" {
 			http.NotFound(w, r)
 			return
@@ -191,13 +202,35 @@ func TestCodexCLIResponsesToolLoop(t *testing.T) {
 			}
 		}
 	}))
-	defer gateway.Close()
+	var wsConnections, wsRequests, wsContinuations atomic.Int32
+	if useWebSocket {
+		modelsTestDB(t)
+		key := &ApiKey{Name: "CLI WS smoke", Key: "local-fixture-key", Models: "gpt-5.4", Enabled: true, QPS: 100, Concurrency: 5}
+		if err := dbInsertKey(key); err != nil {
+			t.Fatal(err)
+		}
+		native := codexWSSmokeProvider(t, up, &wsConnections, &wsRequests, &wsContinuations)
+		defer native.Close()
+		if err := dbInsertUpstream(&Upstream{Name: "native WS smoke", Type: "openai", OpenAIProtocol: "responses",
+			BaseURL: native.URL, Models: "gpt-5.4", Weight: 1, Enabled: true}); err != nil {
+			t.Fatal(err)
+		}
+		gatewayHandler = newRouter()
+	}
+	var gatewayGroup sync.WaitGroup
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gatewayGroup.Add(1)
+		defer gatewayGroup.Done()
+		gatewayHandler.ServeHTTP(w, r)
+	}))
+	defer func() { gateway.Close(); gatewayGroup.Wait() }()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, "exec", "--ignore-user-config", "--ignore-rules", "--ephemeral", "--skip-git-repo-check", "--json", "-C", dir, "-m", "gpt-5.4", "-s", "danger-full-access",
 		"-c", "approval_policy=\"never\"", "-c", "web_search=\"disabled\"", "-c", "model_provider=\"apishare_smoke\"", "-c", "model_providers.apishare_smoke.name=\"API Share local smoke\"",
 		"-c", fmt.Sprintf("model_catalog_json=%q", catalogPath),
 		"-c", fmt.Sprintf("model_providers.apishare_smoke.base_url=%q", gateway.URL+"/v1"), "-c", "model_providers.apishare_smoke.wire_api=\"responses\"", "-c", "model_providers.apishare_smoke.env_key=\"APISHARE_CODEX_SMOKE_KEY\"", "-c", "model_providers.apishare_smoke.requires_openai_auth=false",
+		"-c", fmt.Sprintf("model_providers.apishare_smoke.supports_websockets=%t", useWebSocket),
 		"Create a Sum function and test in a Go module, run the test, repair any failure, and run it again. Finish with codex-smoke-ok.")
 	cmd.Env = smokeEnv
 	output, err := cmd.CombinedOutput()
@@ -209,8 +242,102 @@ func TestCodexCLIResponsesToolLoop(t *testing.T) {
 	if stage != 5 || !strings.Contains(firstTestResult, "FAIL") || !strings.Contains(commandResult, "PASS") || !strings.Contains(string(output), "codex-smoke-ok") {
 		t.Fatalf("incomplete CLI loop: stages=%d patch=%s first_test=%s final_test=%s\n%s", stage, patchResult, firstTestResult, commandResult, output)
 	}
+	if useWebSocket && (wsConnections.Load() != 1 || wsRequests.Load() < 5) {
+		t.Fatalf("CLI did not reuse the native WS connection: connections=%d requests=%d\n%s", wsConnections.Load(), wsRequests.Load(), output)
+	}
+	if useWebSocket {
+		t.Logf("Codex reused %d WebSocket connection for %d response.create events, including %d incremental continuations", wsConnections.Load(), wsRequests.Load(), wsContinuations.Load())
+	}
 	content, err := os.ReadFile(filepath.Join(dir, "sum.go"))
 	if err != nil || !strings.Contains(string(content), "return a + b") {
 		t.Fatalf("CLI did not apply the patch: %v / %q", err, content)
 	}
+}
+
+// Present the existing deterministic Chat fixture as a native WS provider, so
+// the installed CLI exercises real Upgrade, continuation and tool events with
+// no OpenAI credentials or inference calls.
+func codexWSSmokeProvider(t *testing.T, chat *Upstream, connections, requests, continuations *atomic.Int32) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer conn.CloseNow()
+		connections.Add(1)
+		conn.SetReadLimit(maxBodyBytes)
+		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+		defer cancel()
+		var previous map[string]any
+		var output []any
+		for {
+			_, body, err := conn.Read(ctx)
+			if err != nil {
+				return
+			}
+			event, err := decodeProtocolObject(body)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			if str(event["type"]) != "response.create" {
+				t.Errorf("unexpected CLI WebSocket event: %s", str(event["type"]))
+				return
+			}
+			requests.Add(1)
+			wire := copyProtocolObject(event)
+			if str(event["previous_response_id"]) != "" {
+				continuations.Add(1)
+				wire = copyProtocolObject(previous)
+				for field, value := range event {
+					wire[field] = value
+				}
+				input := append([]any(nil), array(previous["input"])...)
+				input = append(input, output...)
+				wire["input"] = append(input, array(event["input"])...)
+			}
+			delete(wire, "type")
+			delete(wire, "previous_response_id")
+			delete(wire, "stream_id")
+			delete(wire, "event_id")
+			delete(wire, "generate")
+			wire["stream"] = true
+			previous = wire
+			if event["generate"] == false {
+				output = nil
+				id := fmt.Sprintf("resp_warm_%d", requests.Load())
+				_ = conn.Write(ctx, websocket.MessageText, []byte(fmt.Sprintf(`{"type":"response.created","response":{"id":%q,"status":"in_progress"}}`, id)))
+				_ = conn.Write(ctx, websocket.MessageText, []byte(responsesWSTerminal(id, "", 0, 0)))
+				continue
+			}
+			encoded, _ := json.Marshal(wire)
+			cr, err := parseClientRequest(FormatOpenAIResponse, encoded, "")
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest("POST", "/v1/responses", bytes.NewReader(encoded)).WithContext(ctx)
+			_, _, err = doRelay(c, chat, &relayTask{apiKeyID: 901, format: FormatOpenAIResponse,
+				endpoint: "/v1/responses", body: encoded, canon: cr, model: cr.Model, stream: true})
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			err = readSSEFrames(strings.NewReader(rec.Body.String()), func(payload string) (bool, error) {
+				snapshot, _ := decodeProtocolObject([]byte(payload))
+				if str(snapshot["type"]) == "response.completed" {
+					output = array(object(snapshot["response"])["output"])
+				}
+				return false, conn.Write(ctx, websocket.MessageText, []byte(payload))
+			})
+			if err != nil {
+				t.Error(err)
+				return
+			}
+		}
+	}))
 }

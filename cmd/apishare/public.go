@@ -39,12 +39,13 @@ type PublicInterval struct {
 
 type PublicModel struct {
 	PublicUsage
-	Family   string           `json:"family"`
-	Status   string           `json:"status"`
-	Uptime   *float64         `json:"uptime_percent"`
-	AvgTPS   *float64         `json:"avg_tps"`
-	LastCall string           `json:"last_call"`
-	History  []PublicInterval `json:"history"`
+	Family               string           `json:"family"`
+	Status               string           `json:"status"`
+	Uptime               *float64         `json:"uptime_percent"`
+	AvgTPS               *float64         `json:"avg_tps"`
+	LastCall             string           `json:"last_call"`
+	HistoryWindowMinutes int              `json:"history_window_minutes"`
+	History              []PublicInterval `json:"history"`
 }
 type PublicSummary struct {
 	Calls            int64    `json:"calls"`
@@ -90,9 +91,9 @@ func registerPublic(r *gin.Engine) {
 	r.GET("/api/public/overview", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 		c.Header("X-Content-Type-Options", "nosniff")
-		interval := c.DefaultQuery("interval", "hour")
-		if interval != "hour" && interval != "minute" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "请选择按小时或分钟查看调用历史。"})
+		interval := c.DefaultQuery("interval", "auto")
+		if interval != "auto" && interval != "hour" && interval != "minute" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请选择自动、按小时或分钟查看调用历史。"})
 			return
 		}
 		body, err := publicOverviews.get(c.Request.Context(), db, interval, func() ([]byte, error) {
@@ -200,14 +201,15 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 	now = now.In(beijingLocation)
 	bucketSize := time.Hour
 	switch interval {
+	case "auto":
 	case "hour":
 	case "minute":
 		bucketSize = time.Minute
 	default:
 		return nil, fmt.Errorf("unsupported public history interval: %q", interval)
 	}
-	// Both resolutions cover the same rolling 24 hours. Request timestamps are
-	// stored to the second; switching resolution only changes the grouping.
+	// Manual resolutions cover a rolling 24 hours; automatic mode chooses a
+	// separate window per model below. Request timestamps are stored to seconds.
 	windowEnd := now.Truncate(time.Second)
 	historyStart := windowEnd.Add(-24 * time.Hour)
 	bucketCount := int(24 * time.Hour / bucketSize)
@@ -338,50 +340,57 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 		return nil, err
 	}
 	histories := make(map[string][]PublicInterval)
+	windows := make(map[string]int)
+	speeds := make(map[string]*float64)
 	var allCalls, allSuccess int64
-	bucketSeconds := int64(bucketSize / time.Second)
-	err = publicRows(tx, `SELECT l.model,MIN(CAST((unixepoch(l.created_at)-?)/? AS INTEGER),?) AS slot,
+	if interval == "auto" {
+		histories, windows, speeds, allCalls, allSuccess, err = publicAutoHistories(tx, windowEnd, getSettings().LogRetentionDays)
+		// Each model has its own window in automatic mode.
+		result.HistoryWindowMinutes = 0
+	} else {
+		bucketSeconds := int64(bucketSize / time.Second)
+		err = publicRows(tx, `SELECT l.model,MIN(CAST((unixepoch(l.created_at)-?)/? AS INTEGER),?) AS slot,
  COUNT(*),SUM(CASE WHEN l.status BETWEEN 200 AND 299 THEN 1 ELSE 0 END)
  FROM call_logs l
  WHERE unixepoch(l.created_at) BETWEEN ? AND ? GROUP BY l.model,slot`,
-		func(rows *sql.Rows) error {
-			var model string
-			var slot, calls, successes int64
-			if err := rows.Scan(&model, &slot, &calls, &successes); err != nil {
-				return err
-			}
-			if histories[model] == nil {
-				histories[model] = newHistory()
-			}
-			bucket := &histories[model][slot]
-			bucket.Calls, bucket.Successes = calls, successes
-			allCalls += calls
-			allSuccess += successes
-			return nil
-		}, historyStart.Unix(), bucketSeconds, bucketCount-1, historyStart.Unix(), windowEnd.Unix())
-	if err != nil {
-		return nil, err
-	}
-	// Average output speed uses the same rolling 24 hours as the model uptime.
-	// Only successful calls with measured output tokens and generation time
-	// contribute; first-token time is subtracted when it is a meaningful part
-	// of the total, mirroring the per-log TPS shown in the console.
-	speeds := make(map[string]*float64)
-	err = publicRows(tx, `SELECT l.model,COALESCE(SUM(l.completion_tokens),0),
+			func(rows *sql.Rows) error {
+				var model string
+				var slot, calls, successes int64
+				if err := rows.Scan(&model, &slot, &calls, &successes); err != nil {
+					return err
+				}
+				if histories[model] == nil {
+					histories[model] = newHistory()
+				}
+				bucket := &histories[model][slot]
+				bucket.Calls, bucket.Successes = calls, successes
+				allCalls += calls
+				allSuccess += successes
+				return nil
+			}, historyStart.Unix(), bucketSeconds, bucketCount-1, historyStart.Unix(), windowEnd.Unix())
+		if err != nil {
+			return nil, err
+		}
+		// Average output speed uses the same rolling 24 hours as the model uptime.
+		// Only successful calls with measured output tokens and generation time
+		// contribute; first-token time is subtracted when it is a meaningful part
+		// of the total, mirroring the per-log TPS shown in the console.
+		err = publicRows(tx, `SELECT l.model,COALESCE(SUM(l.completion_tokens),0),
  COALESCE(SUM(CASE WHEN l.first_token_ms>0 AND (l.duration_ms-l.first_token_ms)*10>=l.duration_ms
   THEN l.duration_ms-l.first_token_ms ELSE l.duration_ms END),0)
  FROM call_logs l
  WHERE l.status BETWEEN 200 AND 299 AND l.duration_ms>0 AND l.completion_tokens>0
   AND unixepoch(l.created_at) BETWEEN ? AND ? GROUP BY l.model`,
-		func(rows *sql.Rows) error {
-			var model string
-			var completion, generating int64
-			if err := rows.Scan(&model, &completion, &generating); err != nil {
-				return err
-			}
-			speeds[model] = averageTPS(completion, generating)
-			return nil
-		}, historyStart.Unix(), windowEnd.Unix())
+			func(rows *sql.Rows) error {
+				var model string
+				var completion, generating int64
+				if err := rows.Scan(&model, &completion, &generating); err != nil {
+					return err
+				}
+				speeds[model] = averageTPS(completion, generating)
+				return nil
+			}, historyStart.Unix(), windowEnd.Unix())
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -428,7 +437,12 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 		}
 		history := histories[model]
 		if history == nil {
-			history = newHistory()
+			if interval == "auto" {
+				history = publicHistoryBuckets(windowEnd, time.Hour)
+				windows[model] = 60
+			} else {
+				history = newHistory()
+			}
 		}
 		var calls, success int64
 		for _, d := range history {
@@ -437,7 +451,8 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 		}
 		last := latest[model]
 		status := "idle"
-		if at, err := time.Parse(time.RFC3339, last.at); err == nil && !at.Before(historyStart) {
+		start, _ := time.Parse(time.RFC3339, history[0].Start)
+		if at, err := time.Parse(time.RFC3339, last.at); calls > 0 && err == nil && !at.Before(start) {
 			if last.status >= 200 && last.status < 300 {
 				status = "operational"
 			} else {
@@ -445,7 +460,8 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 			}
 		}
 		result.Models = append(result.Models, PublicModel{PublicUsage: u, Family: family, Status: status,
-			Uptime: requestUptime(success, calls), AvgTPS: speeds[model], LastCall: last.at, History: history})
+			Uptime: requestUptime(success, calls), AvgTPS: speeds[model], LastCall: last.at,
+			HistoryWindowMinutes: result.HistoryWindowMinutes + windows[model], History: history})
 	}
 	sort.Slice(result.Models, func(i, j int) bool {
 		if result.Models[i].Family != result.Models[j].Family {

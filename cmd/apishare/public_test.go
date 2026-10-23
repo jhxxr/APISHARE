@@ -196,7 +196,7 @@ func TestPublicHTTPAndPrivateAdmin(t *testing.T) {
 	r := gin.New()
 	registerPublic(r)
 	registerAdmin(r)
-	for _, url := range []string{"/", "/public/static/home.css", "/public/static/home.js", "/api/public/overview", "/api/public/overview?interval=hour", "/api/public/overview?interval=minute"} {
+	for _, url := range []string{"/", "/public/static/home.css", "/public/static/home.js", "/api/public/overview", "/api/public/overview?interval=auto", "/api/public/overview?interval=hour", "/api/public/overview?interval=minute"} {
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, httptest.NewRequest("GET", url, nil))
 		if w.Code != http.StatusOK {
@@ -220,8 +220,8 @@ func TestPublicHTTPAndPrivateAdmin(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &overview); err != nil {
 		t.Fatal(err)
 	}
-	if overview.HistoryInterval != "hour" || overview.HistoryWindowMinutes != 1440 {
-		t.Fatalf("default hourly 24-hour window: %+v", overview)
+	if overview.HistoryInterval != "auto" || overview.HistoryWindowMinutes != 0 {
+		t.Fatalf("default model-specific automatic windows: %+v", overview)
 	}
 	for _, interval := range []string{"day", "", "invalid"} {
 		w = httptest.NewRecorder()

@@ -34,7 +34,7 @@ func TestProductionRouterStartupAndPreflight(t *testing.T) {
 			}
 		})
 	}
-	for _, path := range []string{"/v1/models", "/v1/realtime"} {
+	for _, path := range []string{"/v1/models", "/v1/realtime", "/v1/responses"} {
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 		if w.Code != http.StatusUnauthorized {

@@ -105,6 +105,7 @@ func newRouter() *gin.Engine {
 	v1 := r.Group("/v1")
 	v1.Use(corsV1(), keyAuth(), trackRequestClient(), keyRateLimit())
 	v1.POST("/chat/completions", relayHandler(FormatOpenAIChat, false))
+	v1.GET("/responses", responsesWebSocket)
 	v1.POST("/responses", relayHandler(FormatOpenAIResponse, false))
 	v1.POST("/responses/compact", relayHandler(FormatOpenAIResponse, true))
 	v1.POST("/messages", relayHandler(FormatAnthropic, false))

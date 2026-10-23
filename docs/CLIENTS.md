@@ -30,9 +30,31 @@ export APISHARE_API_KEY="sk-your-apishare-key"
 codex
 ```
 
-### Responses WebSocket 状态
+### Responses WebSocket
 
-Codex 支持 Responses WebSocket，自定义 provider 的能力字段为 `supports_websockets`。当前 API Share 外层仅提供 `POST /v1/responses`，尚未接入其 WebSocket Upgrade；以上配置继续使用 HTTP。内置 CLIProxyAPI 虽然提供 Responses WS，仍需要外层代理、逐轮鉴权、限流与计费配套接通，之后才能对对应 provider 声明 `supports_websockets = true`。核查结果与接入边界见 [性能优化文档](PERFORMANCE.md)。
+原生 Responses WS 上游和内置 CLIProxyAPI 账号池可通过 `GET /v1/responses` 使用长连接，模型在首条 `response.create` 中指定。Codex 可在同一连接上通过 `previous_response_id` 续接，只发送新增输入。为这些模型单独添加 provider，并将 `model_provider` 设为 `apishare_ws`：
+
+```toml
+[model_providers.apishare_ws]
+name = "API Share WebSocket"
+base_url = "https://your-gateway.example/v1"
+env_key = "APISHARE_API_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+supports_websockets = true
+```
+
+上游选择 `OpenAI Responses`，且目标服务本身必须支持 Responses WebSocket；只支持 HTTP Responses 的兼容商仍使用前面的 HTTP 配置。Chat / Anthropic / Gemini 的跨协议转换继续走 HTTP。反向代理需要允许该 GET 路径的 WebSocket Upgrade。
+
+CLIProxyAPI 账号池还需为目标 Codex / xAI 凭据启用 `websockets`；导入文件可包含 `"websockets":true`，管理员也可通过账号设置 API 修改，见 [账号池文档](CLIPROXY.md#responses-websocket)。账号未开启时，内置 SDK 可能继续使用 HTTP 上游；外层 WS 建连成功本身不保证到厂商的一跳已使用 WS。
+
+每轮创建请求都会重新检查 Key、模型权限、QPS、并发和共享 / 独立额度；空闲连接不占推理并发。支持 `response.create`、`response.append` 和取消 / 中断事件，服务器事件按原生 JSON 转发；当前不开放 `response.steer` 自动续轮。带 `stream_id` 的交错事件分别跟踪，内置 SDK 的串行输出缺少该字段时由网关恢复路由字段。
+
+连接在首条请求发送后固定上游，不自动换号或重放输入；握手失败可在发送输入前尝试其他原生候选。到达连接存活上限时返回关闭码 `1001`；客户端需要重连，上一轮上下文不可用时重新提交完整输入。网关发送双向协议 ping/pong，不在 Responses JSON 中插入 SSE 心跳。
+
+终止事件按连接内的 `response.id` 去重并逐轮记账；零用量 `generate:false` 预热不记作推理调用，仍受权限、QPS 与并发限制。缺少上游 usage 时记录未知用量，不用本轮增量输入估算整段历史。配置和本地验证结果见 [性能文档](PERFORMANCE.md#codex-websocket-实现与验证)。
+
+客户端断开后默认短暂保留上游读取 1.5 秒，尽力收齐已接受请求的最终 usage，并按实际用量记账；这类调用日志状态为 `499`。`error` 后紧跟 `response.failed` 时使用后者的最终 usage 结算一次。上游仅正常关闭连接、却未发送终止事件时，仍视为调用中断。
 
 ## Anthropic Claude Code
 

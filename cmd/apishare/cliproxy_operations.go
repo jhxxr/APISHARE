@@ -45,12 +45,13 @@ func registerCLIProxyOperationRoutes(group *gin.RouterGroup) {
 	})
 	group.PATCH("/credentials/settings", func(c *gin.Context) {
 		var request struct {
-			Name     string  `json:"name"`
-			Priority *int    `json:"priority"`
-			Weight   *int    `json:"weight"`
-			Location *string `json:"location"`
-			Label    *string `json:"label"`
-			Note     *string `json:"note"`
+			Name       string  `json:"name"`
+			Priority   *int    `json:"priority"`
+			Weight     *int    `json:"weight"`
+			Location   *string `json:"location"`
+			Label      *string `json:"label"`
+			Note       *string `json:"note"`
+			Websockets *bool   `json:"websockets"`
 		}
 		if c.ShouldBindJSON(&request) != nil || !validCoreCredentialName(request.Name) {
 			c.JSON(400, gin.H{"error": "账号设置无效"})
@@ -92,6 +93,17 @@ func registerCLIProxyOperationRoutes(group *gin.RouterGroup) {
 		if err != nil || files[request.Name] == nil {
 			c.JSON(404, gin.H{"error": "账号不属于当前池"})
 			return
+		}
+		if request.Websockets != nil {
+			var document struct {
+				Type string `json:"type"`
+			}
+			_ = json.Unmarshal(files[request.Name], &document)
+			if document.Type != "codex" && document.Type != "xai" {
+				c.JSON(400, gin.H{"error": "仅 Codex / xAI 账号支持此 WebSocket 设置"})
+				return
+			}
+			fields["websockets"] = *request.Websockets
 		}
 		if request.Location != nil {
 			var document struct {

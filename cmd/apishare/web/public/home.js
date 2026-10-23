@@ -64,7 +64,7 @@ function rollHeroNumber(value) {
 }
 window.addEventListener("public-motion-change",()=>{if(!window.pageMotion?.isRunning())finishHeroRoll();});
 const statusText = {operational:"运行正常",incident:"最近调用失败",idle:"暂无近期调用"};
-let overview=null, metric="calls", historyInterval="hour", historyModel=null, autoUpdate=true, refreshing=false, toastTimer=0, heroAnimated=false;
+let overview=null, metric="calls", historyInterval="auto", historyModel=null, autoUpdate=true, refreshing=false, toastTimer=0, heroAnimated=false;
 let announcements=null, announcementVersion="";
 function announcementDate(value) {
  return new Date(value).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
@@ -153,6 +153,8 @@ function renderOverview() {
  $("inputTokenShare").style.width=(total>0?s.prompt_tokens/total*100:0)+"%";
  $("outputTokenShare").style.width=(total>0?s.completion_tokens/total*100:0)+"%";
  $("totalUptime").textContent=rate(s.uptime_percent);
+ $("totalUptimeLabel").textContent=overview.history_interval==="auto"?"动态 Uptime":"近 24 小时 Uptime";
+ $("totalUptimeNote").textContent=overview.history_interval==="auto"?"按各模型显示范围内的真实请求加权计算":"按真实请求成功率计算";
  $("uptimeShare").style.width=(Number.isFinite(s.uptime_percent)?Math.max(0,Math.min(100,s.uptime_percent)):0)+"%";
  const state=overview.models.some(m=>m.status==="incident")?"incident":overview.models.some(m=>m.status==="operational")?"operational":"idle";
  $("overallStatus").className="status-badge "+state;
@@ -197,11 +199,16 @@ function historyTime(value,withDate=true,withSeconds=false) {
  return new Date(value).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",...(withDate?{month:"2-digit",day:"2-digit"}:{}),hour:"2-digit",minute:"2-digit",...(withSeconds?{second:"2-digit"}:{}),hourCycle:"h23"});
 }
 function intervalTitle(d) { return historyTime(d.start,true,true)+" – "+historyTime(d.end,true,true)+(d.calls?" · "+fmt(d.calls)+" 次调用 · "+rate(d.successes/d.calls*100):" · 无调用记录"); }
+function historyWindowLabel(model) {
+ if(overview.history_interval!=="auto")return "24 小时";
+ const minutes=model.history_window_minutes||overview.history_window_minutes||1440;
+ return minutes>=1440&&minutes%1440===0?minutes/1440+" 天":minutes>=60&&minutes%60===0?minutes/60+" 小时":minutes+" 分钟";
+}
 function renderHistoryControls() {
- const minute=(overview?.history_interval||historyInterval)==="minute";
- $("uptimeHour").setAttribute("aria-pressed",String(!minute));
- $("uptimeMinute").setAttribute("aria-pressed",String(minute));
- $("uptimeWindowLabel").textContent="最近 24 小时 · 每格 1 "+(minute?"分钟 · 横向滚动查看":"小时");
+ const interval=overview?.history_interval||historyInterval;
+ document.querySelectorAll("[data-history-interval]").forEach(button=>button.setAttribute("aria-pressed",String(button.dataset.historyInterval===interval)));
+ $("historyAxisLabel").textContent=interval==="auto"?"请求轨迹 / 动态范围":"请求轨迹 / 24 小时";
+ $("uptimeWindowLabel").textContent=interval==="auto"?"按各模型最近请求自动缩放 · 固定 24 格 · 最远至明细保留边界":"最近 24 小时 · 每格 1 "+(interval==="minute"?"分钟 · 横向滚动查看":"小时");
 }
 function drawMinuteHistory(canvas,history) {
  const step=4,height=26,colors=getComputedStyle(document.documentElement),ctx=canvas.getContext("2d");
@@ -302,7 +309,7 @@ function renderModels() {
  const denied=m=>!!keyOverview&&!Object.hasOwn(keyOverview.models,m.model);
  const recent=m=>(m.history||[]).reduce((sum,d)=>sum+(Number(d.calls)||0),0);
  const list=overview.models.filter(m=>(!query||(m.model+" "+m.family).toLowerCase().includes(query))&&(!status||m.status===status));
- // Heat first: most requested in the last 24 hours on top, idle models sink.
+ // Heat first: most requested in the displayed window on top, idle models sink.
  // When a key is verified, models it cannot use sink below every usable one.
  list.sort((a,b)=>{
   const access=(denied(a)?1:0)-(denied(b)?1:0);
@@ -315,8 +322,9 @@ function renderModels() {
  $("modelsGrid").innerHTML=list.map(m=>{
   const unavailable=denied(m);
   const familyTag=window.APIShareModelIcons.html(m.model,m.family);
-  const track=minute?'<div class="minute-track" data-model="'+esc(m.model)+'" tabindex="0" role="region" aria-label="'+esc(m.model)+' 的 24 小时分钟轨迹，可横向滚动"><canvas class="minute-canvas" aria-hidden="true"></canvas></div>':'<div class="uptime-bars" style="--history-buckets:'+m.history.length+'" aria-hidden="true">'+m.history.map(d=>'<span class="interval-bar '+(!d.calls?"":d.successes===d.calls?"success":!d.successes?"failure":"partial")+'" title="'+esc(intervalTitle(d))+'"></span>').join("")+'</div>';
-  return '<article class="model-card state-'+m.status+(unavailable?" is-unavailable":"")+'" data-motion-key="'+esc(m.model)+'"><div class="model-identity"><span class="family-symbol" aria-hidden="true">'+familyTag+'</span><div class="model-name"><span class="family">'+esc(m.family)+'</span><h3>'+esc(m.model)+'</h3><span class="model-state"><i class="dot"></i>'+statusText[m.status]+'</span>'+(unavailable?'<span class="unavailable-tag">当前密钥不可用</span>':'')+'</div></div><div class="model-timeline">'+track+'<div class="history-labels"><span>'+esc(historyTime(m.history[0].start))+'</span><span>'+esc(historyTime(m.history.at(-1).end))+'</span></div></div><div class="model-uptime '+(m.uptime_percent===null?'no-results':'has-results')+'"><strong>'+rate(m.uptime_percent)+'</strong><span>24 小时请求成功率</span><span class="model-speed'+(m.avg_tps==null?" is-empty":"")+'" title="'+(m.avg_tps==null?"最近 24 小时没有可测量的输出速度样本":"按输出 Token ÷ 生成时长加权平均")+'">平均 '+speed(m.avg_tps)+'</span></div><div class="model-consumption"><div><strong title="'+fmt(tokens(m))+' Tokens">'+compact(tokens(m))+'</strong><span>Tokens</span></div><div><strong>'+ fmt(m.calls)+'</strong><span>次调用</span></div><span class="last-call">'+relativeTime(m.last_call)+'</span></div><button class="model-history" type="button" data-model="'+esc(m.model)+'" aria-label="查看 '+esc(m.model)+' 的 24 小时调用历史">'+svg("clock")+'<span>调用历史</span></button>'+renderModelQuota(m)+'</article>';
+  const windowLabel=historyWindowLabel(m);
+  const track=minute?'<div class="minute-track" data-model="'+esc(m.model)+'" tabindex="0" role="region" aria-label="'+esc(m.model)+' 的 '+windowLabel+'分钟轨迹，可横向滚动"><canvas class="minute-canvas" aria-hidden="true"></canvas></div>':'<div class="uptime-bars" style="--history-buckets:'+m.history.length+'" aria-hidden="true">'+m.history.map(d=>'<span class="interval-bar '+(!d.calls?"":d.successes===d.calls?"success":!d.successes?"failure":"partial")+'" title="'+esc(intervalTitle(d))+'"></span>').join("")+'</div>';
+  return '<article class="model-card state-'+m.status+(unavailable?" is-unavailable":"")+'" data-motion-key="'+esc(m.model)+'"><div class="model-identity"><span class="family-symbol" aria-hidden="true">'+familyTag+'</span><div class="model-name"><span class="family">'+esc(m.family)+'</span><h3>'+esc(m.model)+'</h3><span class="model-state"><i class="dot"></i>'+statusText[m.status]+'</span>'+(unavailable?'<span class="unavailable-tag">当前密钥不可用</span>':'')+'</div></div><div class="model-timeline">'+track+'<div class="history-labels"><span>'+esc(historyTime(m.history[0].start))+'</span><span>'+esc(historyTime(m.history.at(-1).end))+'</span></div></div><div class="model-uptime '+(m.uptime_percent===null?'no-results':'has-results')+'"><strong>'+rate(m.uptime_percent)+'</strong><span>近 '+windowLabel+'请求成功率</span><span class="model-speed'+(m.avg_tps==null?" is-empty":"")+'" title="'+(m.avg_tps==null?"显示范围内没有可测量的输出速度样本":"显示范围内按输出 Token ÷ 生成时长加权平均")+'">平均 '+speed(m.avg_tps)+'</span></div><div class="model-consumption"><div><strong title="'+fmt(tokens(m))+' Tokens">'+compact(tokens(m))+'</strong><span>Tokens</span></div><div><strong>'+ fmt(m.calls)+'</strong><span>次调用</span></div><span class="last-call">'+relativeTime(m.last_call)+'</span></div><button class="model-history" type="button" data-model="'+esc(m.model)+'" aria-label="查看 '+esc(m.model)+' 的 '+windowLabel+'调用历史">'+svg("clock")+'<span>调用历史</span></button>'+renderModelQuota(m)+'</article>';
  }).join("")||'<div class="empty-state">'+svg("layers")+'<h3>'+(query||status?"没有匹配的模型":overview.models_loading?"模型列表正在更新":"模型服务即将上线")+'</h3><p>'+(query||status?"试试其他模型名称或状态。":"模型准备就绪后，将在这里展示服务状态。")+'</p></div>';
  if(activeModel){[...$("modelsGrid").querySelectorAll(activeTrack?".minute-track":"button")].find(b=>b.dataset.model===activeModel)?.focus({preventScroll:true});}
  if(minute){const models=new Map(list.map(m=>[m.model,m]));$("modelsGrid").querySelectorAll(".minute-track").forEach(track=>{drawMinuteHistory(track.querySelector("canvas"),models.get(track.dataset.model).history);track.scrollLeft=scrollPositions.get(track.dataset.model)??track.scrollWidth;});}
@@ -327,7 +335,7 @@ function showHistory(model) {
  historyModel=model;
  $("historyHeading").innerHTML=modelLabel(m.model,m.family);
  const minute=overview.history_interval==="minute";
- $("historyDescription").textContent="最近 24 小时的真实调用，按"+(minute?"分钟":"小时")+"汇总。灰色时段表示没有调用。"+(minute?"选择时段可查看这 24 小时内任意一小时的分钟记录。":"");
+ $("historyDescription").textContent="最近 "+historyWindowLabel(m)+"的真实调用，"+(overview.history_interval==="auto"?"自动缩放为 24 个时段":"按"+(minute?"分钟":"小时")+"汇总")+"。灰色时段表示没有调用。"+(minute?"选择时段可查看这 24 小时内任意一小时的分钟记录。":"");
  $("historyHourControl").classList.toggle("hidden",!minute);
  if(minute){$("historyHour").innerHTML=Array.from({length:24},(_,i)=>'<option value="'+i+'">'+esc(historyTime(m.history[i*60].start)+" – "+historyTime(m.history[(i+1)*60-1].end,false))+'</option>').join("");$("historyHour").value="23";}
  renderHistoryRows();
@@ -337,7 +345,7 @@ function renderHistoryRows() {
  const m=overview?.models.find(m=>m.model===historyModel);if(!m)return;
  const start=Number($("historyHour").value)*60;
  const rows=overview.history_interval==="minute"?m.history.slice(start,start+60):m.history;
- $("historyRows").innerHTML=[...rows].reverse().map(d=>'<tr class="'+(!d.calls?"no-calls":"")+'"><td title="'+esc(intervalTitle(d))+'"><time datetime="'+esc(d.start)+'">'+esc(historyTime(d.start,true,true))+'</time><span class="history-end">– '+esc(historyTime(d.end,false,true))+'</span></td><td>'+fmt(d.calls)+'</td><td>'+fmt(d.successes)+'</td><td>'+(d.calls?rate(d.successes/d.calls*100):"无调用")+'</td></tr>').join("");
+ $("historyRows").innerHTML=[...rows].reverse().map(d=>'<tr class="'+(!d.calls?"no-calls":"")+'"><td title="'+esc(intervalTitle(d))+'"><time datetime="'+esc(d.start)+'">'+esc(historyTime(d.start,true,true))+'</time><span class="history-end">– '+esc(historyTime(d.end,historyTime(d.start).slice(0,5)!==historyTime(d.end).slice(0,5),true))+'</span></td><td>'+fmt(d.calls)+'</td><td>'+fmt(d.successes)+'</td><td>'+(d.calls?rate(d.successes/d.calls*100):"无调用")+'</td></tr>').join("");
  $("historyRows").closest(".history-scroll").scrollTop=0;
 }
 function closeHistory() { $("historyDialog").close();historyModel=null;document.body.classList.remove("modal-open"); }
@@ -367,8 +375,8 @@ async function loadPublicBranding() {
 async function refresh() {
  if(refreshing)return;
  refreshing=true;$("refreshNow").disabled=true;$("refreshNow").setAttribute("aria-busy","true");
- $("uptimeHour").disabled=true;$("uptimeMinute").disabled=true;$("modelsGrid").setAttribute("aria-busy","true");
- if(overview&&overview.history_interval!==historyInterval)$("uptimeWindowLabel").textContent="正在读取"+(historyInterval==="minute"?"分钟":"小时")+"记录…";
+ document.querySelectorAll("[data-history-interval]").forEach(button=>button.disabled=true);$("modelsGrid").setAttribute("aria-busy","true");
+ if(overview&&overview.history_interval!==historyInterval)$("uptimeWindowLabel").textContent="正在读取"+(historyInterval==="auto"?"自动缩放":historyInterval==="minute"?"分钟":"小时")+"记录…";
  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),10000);
  const announcementTask=refreshAnnouncements(controller.signal);
  const keyTask=refreshKeyOverview(controller.signal);
@@ -379,7 +387,7 @@ async function refresh() {
   overview=next;renderOverview();$("errorBanner").classList.add("hidden");
   $("refreshNote").textContent=autoUpdate?"每 30 秒更新":"已暂停自动更新";
  } catch {
-  historyInterval=overview?.history_interval||"hour";renderHistoryControls();
+  historyInterval=overview?.history_interval||"auto";renderHistoryControls();
   $("heroDataStatus").textContent=overview?"更新失败 · 暂示上次数据":"暂时无法读取全站数据";$("heroDataStatus").classList.add("is-stale");
   if(!overview) {
    $("todayModels").textContent="暂时无法读取模型";
@@ -390,7 +398,7 @@ async function refresh() {
   $("errorBanner").classList.remove("hidden");
   $("overallStatus").className="status-badge idle";$("overallStatus").innerHTML='<span class="dot"></span>数据更新异常';
   $("refreshNote").textContent="更新失败";
- } finally { await Promise.allSettled([announcementTask,keyTask]);clearTimeout(timeout);refreshing=false;$("refreshNow").disabled=false;$("refreshNow").setAttribute("aria-busy","false");$("uptimeHour").disabled=false;$("uptimeMinute").disabled=false;$("modelsGrid").setAttribute("aria-busy","false"); }
+ } finally { await Promise.allSettled([announcementTask,keyTask]);clearTimeout(timeout);refreshing=false;$("refreshNow").disabled=false;$("refreshNow").setAttribute("aria-busy","false");document.querySelectorAll("[data-history-interval]").forEach(button=>button.disabled=false);$("modelsGrid").setAttribute("aria-busy","false"); }
 }
 $("keyForm").addEventListener("submit",verifyKey);
 $("switchKey").addEventListener("click",()=>clearKey(true));
