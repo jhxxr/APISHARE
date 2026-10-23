@@ -1,14 +1,12 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
-	"net/url"
 	"regexp"
 	"sort"
-	"time"
+	"strings"
+	"unicode/utf8"
 
 	"apishare/internal/cliproxy"
 	"github.com/gin-gonic/gin"
@@ -26,93 +24,6 @@ type poolAccountResult struct {
 	Name    string `json:"name"`
 	OK      bool   `json:"ok"`
 	Message string `json:"message,omitempty"`
-}
-
-func movePoolCredential(ctx context.Context, source *cliproxy.Manager, sourceID int64, target *cliproxy.Manager, targetID int64, name string) error {
-	files, err := source.ReadCredentials()
-	if err != nil {
-		return err
-	}
-	raw, exists := files[name]
-	if !exists {
-		return errors.New("账号已不在源池中，请刷新列表")
-	}
-	var original map[string]any
-	if json.Unmarshal(raw, &original) != nil {
-		return errors.New("源账号凭据无效")
-	}
-	preview := make(map[string]any, len(original))
-	for key, value := range original {
-		preview[key] = value
-	}
-	if _, _, err := prepareCredentialReplacement(target, name, preview, false); err != nil {
-		var duplicate *duplicatePoolCredential
-		if errors.As(err, &duplicate) {
-			return errors.New("目标池已有此账号，源账号已保留；请先处理目标池中的重复账号")
-		}
-		return errors.New("目标池：" + err.Error())
-	}
-	if !source.Running() || !target.Running() {
-		return errors.New("迁移前请先启动源池和目标池")
-	}
-	disabled, _ := original["disabled"].(bool)
-	if err := source.PatchCredential(ctx, name, gin.H{"disabled": true}); err != nil {
-		return err
-	}
-	rollbackCtx, cancelRollback := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
-	defer cancelRollback()
-	restoreSource := func() { _ = source.PatchCredential(rollbackCtx, name, gin.H{"disabled": disabled}) }
-	rollbackTarget := func() {
-		_ = target.Client().Do(rollbackCtx, "DELETE", "/credentials?name="+url.QueryEscape(name), nil, nil)
-		_, _ = db.Exec(`DELETE FROM cliproxy_account_proxies WHERE upstream_id=? AND name=?`, targetID, name)
-	}
-	files, err = source.ReadCredentials()
-	if err != nil {
-		restoreSource()
-		return err
-	}
-	if err := json.Unmarshal(files[name], &original); err != nil {
-		restoreSource()
-		return err
-	}
-	// Keep both sides out of dispatch until the destination is verified.
-	original["disabled"] = true
-	raw, err = json.Marshal(original)
-	if err != nil {
-		restoreSource()
-		return err
-	}
-	proxyID := accountProxyID(sourceID, name)
-	if err := importPoolCredential(ctx, target, targetID, name, raw, proxyID); err != nil {
-		rollbackTarget()
-		restoreSource()
-		return err
-	}
-	copied, err := target.ReadCredentials()
-	if err != nil || len(copied[name]) == 0 {
-		rollbackTarget()
-		restoreSource()
-		return errors.New("无法确认目标凭据已保存，源账号已保留")
-	}
-	if err := source.Client().Do(ctx, "DELETE", "/credentials?name="+url.QueryEscape(name), nil, nil); err != nil {
-		// The source remains authoritative if removing it fails. Never overwrite
-		// a destination conflict, and never remove the source before a safe copy.
-		rollbackTarget()
-		restoreSource()
-		return errors.New("目标写入后源账号移除失败，已尝试恢复源池，请刷新两侧列表")
-	}
-	_, err = db.Exec(`DELETE FROM cliproxy_account_proxies WHERE upstream_id=? AND name=?`, sourceID, name)
-	source.Touch()
-	target.Touch()
-	if err != nil {
-		return errors.New("凭据已迁移，源池代理索引清理失败，请刷新列表")
-	}
-	if !disabled {
-		if err := target.PatchCredential(rollbackCtx, name, gin.H{"disabled": false}); err != nil {
-			return errors.New("账号已安全移入目标池，但尚未启用，请在目标池手动启用")
-		}
-	}
-	return err
 }
 
 func registerCLIProxyOperationRoutes(group *gin.RouterGroup) {
@@ -138,6 +49,8 @@ func registerCLIProxyOperationRoutes(group *gin.RouterGroup) {
 			Priority *int    `json:"priority"`
 			Weight   *int    `json:"weight"`
 			Location *string `json:"location"`
+			Label    *string `json:"label"`
+			Note     *string `json:"note"`
 		}
 		if c.ShouldBindJSON(&request) != nil || !validCoreCredentialName(request.Name) {
 			c.JSON(400, gin.H{"error": "账号设置无效"})
@@ -146,6 +59,20 @@ func registerCLIProxyOperationRoutes(group *gin.RouterGroup) {
 		proxyConfigMu.Lock()
 		defer proxyConfigMu.Unlock()
 		fields := make(map[string]any)
+		if request.Label != nil {
+			if utf8.RuneCountInString(*request.Label) > 80 {
+				c.JSON(400, gin.H{"error": "账号名称最多 80 字"})
+				return
+			}
+			fields["label"] = strings.TrimSpace(*request.Label)
+		}
+		if request.Note != nil {
+			if utf8.RuneCountInString(*request.Note) > 500 {
+				c.JSON(400, gin.H{"error": "账号备注最多 500 字"})
+				return
+			}
+			fields["note"] = strings.TrimSpace(*request.Note)
+		}
 		if request.Priority != nil {
 			if *request.Priority < 0 || *request.Priority > 1000 {
 				c.JSON(400, gin.H{"error": "账号优先级需在 0–1000 之间，数值越大越优先"})

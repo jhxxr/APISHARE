@@ -21,6 +21,7 @@ func withTestCLIProxyPools(t *testing.T) {
 	cliProxyPools.root, cliProxyPools.items = filepath.Join(t.TempDir(), "pools"), make(map[int64]*cliproxy.Manager)
 	cliProxyPools.Unlock()
 	t.Cleanup(func() {
+		stopPoolJobs()
 		cliProxyPools.Lock()
 		items := cliProxyPools.items
 		cliProxyPools.root, cliProxyPools.items = oldRoot, oldItems

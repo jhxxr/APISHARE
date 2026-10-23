@@ -59,6 +59,7 @@ func main() {
 		if err := resumeCLIProxyPools(ctx); err != nil {
 			fmt.Println("CLIProxyAPI pools:", err)
 		}
+		resumePoolJobs(ctx)
 	}()
 	go affinityCleanupLoop()
 	go limiterJanitorLoop()

@@ -20,8 +20,20 @@ func (m *Manager) Credentials(ctx context.Context) ([]Credential, error) {
 		}
 		err := m.Client().Do(ctx, "GET", "/credentials", nil, &result)
 		if err == nil {
+			// Project operator metadata ourselves instead of depending on the
+			// SDK management response exposing these optional fields.
+			files, _ := m.ReadCredentials()
 			snapshot := m.Runtime()
 			for i := range result.Files {
+				result.Files[i].LiveQuota = m.CachedQuota(result.Files[i].Name)
+				var meta struct {
+					Label string `json:"label"`
+					Note  string `json:"note"`
+				}
+				if json.Unmarshal(files[result.Files[i].Name], &meta) == nil {
+					result.Files[i].Label = meta.Label
+					result.Files[i].Note = meta.Note
+				}
 				for j := range snapshot.Accounts {
 					if snapshot.Accounts[j].ID == result.Files[i].ID {
 						details := snapshot.Accounts[j]
@@ -44,6 +56,7 @@ func (m *Manager) Credentials(ctx context.Context) ([]Credential, error) {
 			Type     string `json:"type"`
 			Email    string `json:"email"`
 			Label    string `json:"label"`
+			Note     string `json:"note"`
 			Disabled bool   `json:"disabled"`
 		}
 		if err := json.Unmarshal(raw, &meta); err != nil {
@@ -54,7 +67,8 @@ func (m *Manager) Credentials(ctx context.Context) ([]Credential, error) {
 			id = strings.ToLower(id) // Match the SDK's file-backed auth IDs.
 		}
 		out = append(out, Credential{ID: id, Name: name, Provider: strings.ToLower(strings.TrimSpace(meta.Type)),
-			Email: meta.Email, Label: meta.Label, Disabled: meta.Disabled, Unavailable: true, Status: "stopped"})
+			Email: meta.Email, Label: meta.Label, Note: meta.Note, Disabled: meta.Disabled, Unavailable: true, Status: "stopped"})
+		out[len(out)-1].LiveQuota = m.CachedQuota(name)
 		var document map[string]any
 		if json.Unmarshal(raw, &document) == nil {
 			auth := &coreauth.Auth{ID: id, FileName: name, Provider: meta.Type, Metadata: document, Disabled: meta.Disabled}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,6 +108,8 @@ func (m *Manager) SetRouting(ctx context.Context, routing PoolRouting) error {
 }
 
 func (m *Manager) PatchCredential(ctx context.Context, name string, fields map[string]any) error {
+	m.op.Lock()
+	defer m.op.Unlock()
 	if filepath.Base(name) != name || !strings.HasSuffix(name, ".json") {
 		return errors.New("凭据文件名无效")
 	}
@@ -138,4 +141,22 @@ func (m *Manager) PatchCredential(ctx context.Context, name string, fields map[s
 		return err
 	}
 	return m.SeedCredentials(map[string]json.RawMessage{name: raw})
+}
+
+// Reconciliation may run while an operator has stopped a pool. Serialize with
+// startup and remove only the named file; live pools retain SDK ownership.
+func (m *Manager) DeleteCredential(ctx context.Context, name string) error {
+	if filepath.Base(name) != name || !strings.HasSuffix(name, ".json") {
+		return errors.New("凭据文件名无效")
+	}
+	m.op.Lock()
+	defer m.op.Unlock()
+	if m.Running() {
+		return m.Client().Do(ctx, "DELETE", "/credentials?name="+url.QueryEscape(name), nil, nil)
+	}
+	err := os.Remove(filepath.Join(m.root, "auths", name))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
 }

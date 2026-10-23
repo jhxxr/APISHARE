@@ -62,6 +62,7 @@ type Credential struct {
 	ID               string          `json:"id"`
 	Name             string          `json:"name"`
 	Label            string          `json:"label,omitempty"`
+	Note             string          `json:"note,omitempty"`
 	Email            string          `json:"email,omitempty"`
 	Provider         string          `json:"provider"`
 	Status           string          `json:"status"`
@@ -72,6 +73,7 @@ type Credential struct {
 	EffectiveProxyID int64           `json:"effective_proxy_id"`
 	Uptime           *AccountUptime  `json:"uptime,omitempty"`
 	Details          *AccountRuntime `json:"details,omitempty"`
+	LiveQuota        *AccountQuota   `json:"live_quota,omitempty"`
 }
 
 type Login struct {

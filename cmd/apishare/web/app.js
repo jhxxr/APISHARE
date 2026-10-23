@@ -942,6 +942,8 @@ $("editorScroll").addEventListener("scroll", () => {
   });
 }, { passive: true });
 function finishCloseEditor() {
+  closePoolInspector();
+  clearTimeout(poolManagement.jobTimer);
   clearTimeout(coreUI.refreshTimer);
   cancelCoreLogin(false);
   cancelClineLogin();
@@ -1287,7 +1289,7 @@ async function saveSettings(event) {
 }
 
 /* Reusable accessible confirmation and quota dialogs. */
-function syncModalLock() { document.body.classList.toggle("modal-open", $("editModal").open || $("actionDialog").open || $("keyModelsDialog").open || $("modelTestDialog").open || $("logDetailDialog").open); }
+function syncModalLock() { document.body.classList.toggle("modal-open", $("editModal").open || $("actionDialog").open || $("keyModelsDialog").open || $("modelTestDialog").open || $("logDetailDialog").open || $("poolInspectorDialog").open); }
 function setPricingError(message) {
   $("pricingError").textContent = message;
   $("pricingError").classList.toggle("hidden", !message);

@@ -157,6 +157,8 @@ func registerCLIProxyHandlers(group *gin.RouterGroup) {
 	registerCLIProxyOperationRoutes(group)
 	registerCLIProxyAttemptRoutes(group)
 	registerCLIProxySessionRoutes(group)
+	registerCLIProxyJobRoutes(group)
+	registerCLIProxyQuotaRoutes(group)
 	group.GET("/status", func(c *gin.Context) {
 		status := requestCLIProxyCore(c).Status()
 		status.ProxyID = requestCLIProxyProxyID(c)

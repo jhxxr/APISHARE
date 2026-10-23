@@ -138,7 +138,7 @@ func prepareCredentialReplacement(manager *cliproxy.Manager, name string, docume
 	if !replace {
 		return "", false, &duplicatePoolCredential{Name: target, Provider: provider}
 	}
-	for _, field := range []string{"disabled", "label", "proxy_url", "prefix", "priority", "weight", "excluded_models", "oauth_model_aliases", "request_retry", "headers", "siwc", "use_siwc", "location"} {
+	for _, field := range []string{"disabled", "label", "note", "proxy_url", "prefix", "priority", "weight", "excluded_models", "oauth_model_aliases", "request_retry", "headers", "siwc", "use_siwc", "location"} {
 		if value, exists := old[field]; exists {
 			document[field] = value
 		} else {

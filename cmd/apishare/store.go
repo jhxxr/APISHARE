@@ -97,6 +97,22 @@ CREATE TABLE IF NOT EXISTS cliproxy_account_proxies (
   proxy_id INTEGER NOT NULL DEFAULT -1,
   PRIMARY KEY(upstream_id,name)
 );
+CREATE TABLE IF NOT EXISTS cliproxy_migrations(
+ id TEXT PRIMARY KEY, source_id INTEGER NOT NULL,target_id INTEGER NOT NULL,name TEXT NOT NULL,
+ disabled INTEGER NOT NULL,proxy_id INTEGER NOT NULL,phase TEXT NOT NULL,message TEXT NOT NULL DEFAULT '',
+ updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS cliproxy_jobs(
+ id TEXT PRIMARY KEY,pool_id INTEGER NOT NULL,action TEXT NOT NULL,proxy_id INTEGER NOT NULL DEFAULT -1,
+ target_id INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL,canceled INTEGER NOT NULL DEFAULT 0,
+ created_at TEXT NOT NULL,updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cliproxy_jobs_pool ON cliproxy_jobs(pool_id,created_at);
+CREATE TABLE IF NOT EXISTS cliproxy_job_items(
+ job_id TEXT NOT NULL,position INTEGER NOT NULL,name TEXT NOT NULL,status TEXT NOT NULL,
+ message TEXT NOT NULL DEFAULT '',existing_name TEXT NOT NULL DEFAULT '',confirmed INTEGER NOT NULL DEFAULT 0,
+ PRIMARY KEY(job_id,position)
+);
 CREATE TABLE IF NOT EXISTS outbound_proxies (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL DEFAULT '',

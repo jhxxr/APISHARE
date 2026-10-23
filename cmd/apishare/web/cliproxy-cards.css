@@ -1,0 +1,85 @@
+/* Account surfaces adapt without changing their information hierarchy. */
+.account-grid-shell {container-type:inline-size;min-width:0;scroll-margin-top:120px}
+.account-grid-topline {display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px;color:var(--muted);font-size:11px}
+.account-grid-topline label {display:flex;align-items:center;gap:8px;min-height:36px;cursor:pointer}
+.account-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:stretch}
+.account-card {position:relative;display:flex;flex-direction:column;min-width:0;padding:16px 16px 0;border:1px solid var(--border);border-radius:18px;background:var(--panel);box-shadow:0 3px 12px rgb(30 35 45 / 2%);transition:border-color 180ms ease,box-shadow 180ms ease,transform 180ms ease}
+.account-card:hover {border-color:var(--border-strong);box-shadow:0 7px 22px rgb(30 35 45 / 5%)}
+.account-card.is-selected {border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.account-card-header {display:flex;align-items:center;gap:10px;min-width:0}
+.account-card-brand {display:grid;place-items:center;flex:none;width:38px;height:38px;border:1px solid var(--border);border-radius:12px;background:var(--panel-soft)}
+.account-card-brand img,.account-card-brand .model-icon {width:26px;height:26px}
+.account-card-title {display:block;flex:1;min-width:0;padding:3px 0;border:0;background:transparent;text-align:left}
+.account-card-title strong {display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:650;line-height:1.6;letter-spacing:-.2px}
+.account-card-title small {display:block;margin-top:2px;font-size:10px;color:var(--muted)}
+.account-card-controls {display:flex;align-items:center;gap:1px;flex:none;margin-right:-6px}
+.account-card-select {display:grid;place-items:center;width:30px;height:38px;cursor:pointer}
+.pool-section .account-card-select input[type="checkbox"] {width:16px;min-height:16px;height:16px}
+.account-card-more,.account-card-menu>summary {display:grid;place-items:center;width:32px;height:38px;border:0;border-radius:9px;background:transparent;color:var(--muted);list-style:none;cursor:pointer}
+.account-card-menu>summary::-webkit-details-marker {display:none}
+.account-card-menu>summary svg {width:20px;height:20px;fill:currentColor}
+.account-card-menu>summary:hover,.account-card-menu[open]>summary {background:var(--panel-soft);color:var(--text)}
+.account-card-menu>div {position:absolute;right:10px;top:57px;z-index:20;display:grid;min-width:174px;padding:6px;background:var(--panel);border:1px solid var(--border);border-radius:12px;box-shadow:0 12px 35px rgb(25 35 50 / 13%)}
+.account-card-menu>div button {min-height:40px;padding:8px 12px;border:0;border-radius:7px;background:transparent;text-align:left;font-size:12px}
+.account-card-menu>div button:hover {background:var(--panel-soft)}
+.account-card-context {display:flex;align-items:center;gap:9px;min-width:0;margin:12px 0 14px}
+.account-card-state {display:inline-flex;align-items:center;flex:none;gap:5px;font-size:10px;line-height:1.5;color:var(--muted)}
+.account-card-state i {width:5px;height:5px;border-radius:50%;background:currentColor}
+.account-card-state.good {color:var(--green)}
+.account-card-state.warm {color:var(--amber)}
+.account-card-state.bad {color:var(--red)}
+.account-card-note {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:var(--muted)}
+.account-card-duo {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0;min-width:0;min-height:91px;padding:12px 0;border:1px solid var(--border);border-radius:13px;background:linear-gradient(135deg,var(--panel-soft),var(--panel));text-align:left;color:var(--text)}
+.account-card-duo:hover {border-color:var(--border-strong)}
+.account-card-duo>span {display:flex;flex-direction:column;min-width:0;padding:0 15px}
+.account-card-duo>span+span {border-left:1px solid var(--border)}
+.account-card-duo small {font-size:10px;line-height:1.5;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.account-card-quota strong {margin:4px 0 7px;font:600 23px/1.15 var(--font);font-variant-numeric:tabular-nums;letter-spacing:-.7px;color:var(--text)}
+.account-card-quota.low strong {color:var(--red)}
+.account-card-quota.warm strong {color:var(--amber)}
+.account-card-quota.unknown strong {color:var(--border-strong)}
+.account-card-quota i {height:3px;border-radius:4px;background:var(--border);overflow:hidden}
+.account-card-quota i b {display:block;height:100%;border-radius:inherit;background:var(--green)}
+.account-card-quota.low i b {background:var(--red)}
+.account-card-quota.warm i b {background:var(--amber)}
+.account-card-quota em {margin-top:5px;font-size:9px;font-style:normal;line-height:1.5;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.account-card-duo.is-service {min-height:91px;align-items:center}
+.account-card-duo.is-service strong {display:block;margin-top:5px;font-size:12px;font-weight:550;overflow-wrap:anywhere}
+.account-card-waiting {display:flex;justify-content:center;flex-direction:column;gap:6px;min-height:91px;padding:14px 16px;border:1px dashed var(--border);border-radius:13px;background:var(--panel-soft)}
+.account-card-waiting span {font-size:10px;color:var(--muted)}
+.account-card-waiting strong {font-size:13px;font-weight:500}
+.account-card-uptime {display:block;width:100%;min-height:44px;margin:12px 0 8px;padding:3px 0;border:0;background:transparent;text-align:left}
+.account-card-uptime-label {display:flex;align-items:baseline;justify-content:space-between;gap:8px;font-size:10px;color:var(--muted)}
+.account-card-uptime-label small {margin-left:4px;font:9px var(--mono)}
+.account-card-uptime-label strong {font-size:10px;font-weight:500;font-variant-numeric:tabular-nums}
+.account-card-uptime .pool-uptime-bars {height:6px;gap:3px;margin-top:6px}
+.account-card-uptime .pool-uptime-bars>span {height:4px;border-radius:2px}
+.account-card-uptime .pool-uptime-bars>span.idle {height:3px}
+.account-card-footer {display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:44px;margin-top:auto;border-top:1px solid var(--border)}
+.account-card-egress {display:flex;align-items:center;gap:5px;min-width:0;flex:1;color:var(--muted)}
+.account-card-egress .icon {width:13px;height:13px}
+.pool-section .account-card-egress select {width:100%;max-width:180px;min-width:0;min-height:40px;padding:4px 16px 4px 0;border:0;border-radius:0;background:transparent;color:var(--muted);font-size:10px;text-overflow:ellipsis}
+.account-card-open {display:flex;align-items:center;gap:7px;flex:none;min-height:40px;padding:5px 0 5px 9px;border:0;background:transparent;font-size:11px;color:var(--muted)}
+.account-card-open:hover {color:var(--accent)}
+.account-card-open>span {font-size:15px}
+.account-grid-empty {grid-column:1/-1;border:1px dashed var(--border);border-radius:16px;background:var(--panel)}
+.admin-console .pool-account-inspector {inset:16px 16px 16px auto;width:min(620px,calc(100vw - 32px));height:calc(100dvh - 32px);max-height:none;max-width:calc(100vw - 32px);margin:0;padding:0;border:1px solid var(--border);border-radius:22px;background:var(--panel);color:var(--text);box-shadow:0 18px 70px rgb(25 35 50 / 16%);overflow:auto}
+.pool-account-inspector::backdrop {background:rgb(25 35 50 / 12%);backdrop-filter:blur(2px)}
+.pool-account-inspector .pool-uptime-detail {border:0;border-radius:0;margin:0;padding:24px}
+.pool-account-inspector .pool-kicker {font-size:9px;margin-bottom:6px}
+.pool-account-inspector .pool-uptime-detail-heading .icon-btn {min-width:40px;min-height:40px}
+.pool-account-inspector .pool-detail-tabs {margin-top:20px}
+.pool-account-inspector .pool-detail-tabs button {font-size:11px}
+@container (min-width:1150px){.account-grid {grid-template-columns:repeat(4,minmax(0,1fr))}}
+@container (max-width:579px){.account-grid {grid-template-columns:minmax(0,1fr)}}
+@media(max-width:760px){
+  .account-card {padding:16px 16px 0}
+  .account-card-menu>summary,.account-card-more {height:44px;min-width:36px}
+  .account-card-select {height:44px;min-width:30px}
+  .account-card-menu>div button,.account-card-open {min-height:44px}
+  .pool-section .account-card-egress select {min-height:44px;font-size:11px}
+  .admin-console .pool-account-inspector {inset:12px 0 0;width:100%;max-width:100%;height:calc(100dvh - 12px);border-radius:22px 22px 0 0;border-bottom:0}
+  .pool-account-inspector .pool-uptime-detail {padding:20px 16px}
+  .pool-account-inspector .pool-uptime-detail-heading .icon-btn {min-width:44px;min-height:44px}
+}
+@media(prefers-reduced-motion:reduce){.account-card {transition:none}}

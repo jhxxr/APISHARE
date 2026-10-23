@@ -547,6 +547,17 @@ func registerAdminRoutes(r *gin.Engine) {
 		proxyConfigMu.Lock()
 		defer proxyConfigMu.Unlock()
 		id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+		var activePoolOperations int
+		if err := db.QueryRow(`SELECT
+		 (SELECT count(*) FROM cliproxy_jobs WHERE (pool_id=? OR target_id=?) AND status IN('queued','running','recovering','needs_confirmation'))+
+		 (SELECT count(*) FROM cliproxy_migrations WHERE (source_id=? OR target_id=?) AND phase NOT IN('done','rolled_back'))`, id, id, id, id).Scan(&activePoolOperations); err != nil {
+			c.JSON(500, gin.H{"error": "无法核对账号任务状态"})
+			return
+		}
+		if activePoolOperations > 0 {
+			c.JSON(409, gin.H{"error": "账号池仍有执行中、待确认或恢复中的任务，请先处理任务再删除"})
+			return
+		}
 		if err := dbDeleteUpstream(id); err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return

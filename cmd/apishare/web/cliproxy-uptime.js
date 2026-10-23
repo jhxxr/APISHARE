@@ -27,10 +27,11 @@ function showPoolAccountUptime(item) {
   coreUI.uptimeAccount = item.id || item.name;
   renderCoreAccounts();
   const panel = $("poolAccountUptimeDetail");
-  panel.scrollIntoView({block: "nearest", behavior: motionBehavior()});
+  openPoolInspector("uptime",item.name||item.id);
   panel.focus({preventScroll: true});
 }
 function closePoolAccountUptime() {
+  closePoolInspector();
   const key = coreUI.uptimeAccount;
   coreUI.uptimeAccount = null;
   renderCoreAccounts();

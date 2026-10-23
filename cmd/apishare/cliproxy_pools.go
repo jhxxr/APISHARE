@@ -239,6 +239,7 @@ func setPoolProxy(ctx context.Context, manager *cliproxy.Manager, poolID, proxyI
 }
 
 func closeCLIProxyPools() {
+	stopPoolJobs()
 	cliProxyPools.Lock()
 	items := make([]*cliproxy.Manager, 0, len(cliProxyPools.items))
 	for _, manager := range cliProxyPools.items {

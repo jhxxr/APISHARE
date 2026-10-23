@@ -16,6 +16,8 @@ function syncPoolAccountSettings(item) {
   const detail=item.details||{};
   if(poolAccountPanel.settingsLoaded!==item.name){
     $("poolAccountPriority").value=detail.priority||0;
+    $("poolAccountLabel").value=item.label||"";
+    $("poolAccountNote").value=item.note||"";
     $("poolAccountWeight").value=detail.weight>0?detail.weight:1;
     $("poolAccountVertexLocation").value=detail.location||"us-central1";
     $("poolAccountSettingsResult").textContent="";
@@ -25,20 +27,23 @@ function syncPoolAccountSettings(item) {
   $("poolAccountSIWC").classList.toggle("hidden",item.provider!=="codex");
   $("poolAccountSIWCState").textContent=({off:"尚未绑定",valid:"已绑定 · 当前有效",invalid:"绑定已失效，请重新绑定"})[detail.siwc_status]||"尚未绑定";
   $("poolAccountSIWCExpiry").textContent=detail.siwc_expires_at?"有效期至 "+fmtTime(detail.siwc_expires_at):"状态来自本地凭据检查";
+  renderPoolAccountPriorityHint();
 }
 async function savePoolAccountSettings(button) {
   const name=poolAccountPanel.name,item=coreUI.credentials.find(item=>item.name===name);
+  const id=coreUI.poolID,epoch=coreUI.epoch,generation=poolAccountPanel.generation;
   if(!item)return;
   const priority=Number($("poolAccountPriority").value),weight=Number($("poolAccountWeight").value);
   if(!Number.isInteger(priority)||priority<0||priority>1000||!Number.isInteger(weight)||weight<1||weight>1000000){toast("请输入有效的优先级与权重","error");return;}
-  const payload={name,priority,weight};
+  const payload={name,priority,weight,label:$("poolAccountLabel").value,note:$("poolAccountNote").value};
   if(item.provider==="vertex")payload.location=$("poolAccountVertexLocation").value.trim();
   setBusy(button,true,"应用中…");
   try{
-    await api(poolAPI("credentials/settings"),{method:"PATCH",body:JSON.stringify(payload)});
+    await api(poolAPI("credentials/settings",id),{method:"PATCH",body:JSON.stringify(payload)});
+    if(epoch!==coreUI.epoch||generation!==poolAccountPanel.generation)return;
     $("poolAccountSettingsResult").textContent="账号设置已应用";
     await loadCLIProxy();toast("账号设置已更新");
-  }catch(error){$("poolAccountSettingsResult").textContent=error.message;reportError(error);}
+  }catch(error){if(epoch===coreUI.epoch&&generation===poolAccountPanel.generation){$("poolAccountSettingsResult").textContent=error.message;reportError(error);}}
   finally{setBusy(button,false);}
 }
 async function bindSelectedSIWC(button) {

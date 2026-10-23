@@ -21,13 +21,17 @@ function poolAccountStatusHint(item) {
   if (!item.details) return "";
   const details=item.details;
   if (details.retry_at) return '<small class="pool-account-status-hint" data-retry-at="'+esc(details.retry_at)+'">'+esc(poolCountdown(details.retry_at))+'后重试</small>';
+  if(details.ready&&details.cooldowns?.length)return '<small class="pool-account-status-hint">部分模型冷却 · '+details.cooldowns.length+' 项</small>';
   if (details.reason) return '<small class="pool-account-status-hint">'+esc(poolReason(details.reason))+'</small>';
   return "";
 }
 function resetPoolAccountDetails() {
+  if($("poolInspectorDialog").dataset.mode==="details")closePoolInspector();
   poolAccountPanel.generation++;
   poolAccountPanel.name="";poolAccountPanel.busy=false;
   poolAccountPanel.settingsLoaded="";poolAccountPanel.trace="";
+  poolAccountPanel.quotaBusy=false;poolAccountPanel.quotaName="";
+  document.querySelector(".pool-quota-more").open=false;
   $("poolAccountSettingsFields").disabled=true;
   $("poolAccountDetails").classList.add("hidden");
   $("poolAccountTestResult").textContent="";
@@ -54,6 +58,7 @@ function renderPoolAccountDetails() {
   const quota=[...(details?.quota||[]),...(details?.model_quotas||[]).flatMap(group=>group.metrics.map(metric=>({...metric,model:group.model})))];
   $("poolAccountQuota").innerHTML=quota.length ? quota.map(metric=>'<div><span>'+esc((metric.model?metric.model+" · ":"")+quotaMetricLabel(metric.name))+'</span><strong>'+esc(metric.value)+'</strong></div>').join("") : '<p class="muted">厂商尚未返回额度信息。完成调用后，如有额度反馈会显示在这里。</p>';
   $("poolAccountQuotaTime").textContent=details?.quota_observed_at ? "来自最近一次响应 · "+fmtTime(details.quota_observed_at) : "只展示厂商返回的数据";
+  renderPoolLiveQuota(item);
   const current=$("poolAccountTestModel").value;
   $("poolAccountTestModel").replaceChildren(...(details?.models||[]).map(model=>{
     const option=new Option(model.id+(model.ready?"":" · 暂不可用"),model.id);
@@ -67,14 +72,23 @@ function renderPoolAccountDetails() {
   $("poolAccountDetails").classList.remove("hidden");
 }
 async function showPoolAccountDetails(item) {
+  poolAccountPanel.quotaBusy=false;poolAccountPanel.quotaName="";
+  document.querySelector(".pool-quota-more").open=false;
+  poolAccountPanel.trace="";
+  poolAccountPanel.nextID=0;
+  poolAccountPanel.logRequest=(poolAccountPanel.logRequest||0)+1;
+  $("poolAccountAttemptList").replaceChildren();
+  $("poolAccountLogMore").classList.add("hidden");
+  $("poolAccountLogBack").classList.add("hidden");
   poolAccountPanel.name=item.name||item.id;
   poolAccountPanel.generation++;
   $("poolAccountTestResult").textContent="";
   renderPoolAccountDetails();
   setPoolAccountView("status");
   coreUI.uptimeAccount=null;renderPoolAccountUptime();
-  $("poolAccountDetails").scrollIntoView({block:"nearest",behavior:motionBehavior()});
+  openPoolInspector("details",item.name||item.id);
   $("poolAccountDetails").focus({preventScroll:true});
+  loadPoolAccountQuota(false);
 }
 async function refreshPoolAccountDetails(button) {
   setBusy(button,true);

@@ -33,11 +33,15 @@ function preparePoolEditor(upstream) {
   cancelCoreLogin(false);
   resetPoolAccountDetails();
   coreUI.poolID = upstream?.type === "cliproxy" ? upstream.id : null;
-  coreUI.status = null; coreUI.credentials = []; coreUI.pending = []; coreUI.busy = false;
+  coreUI.status = null; coreUI.lastRuntimeError=""; coreUI.credentials = []; coreUI.pending = []; coreUI.busy = false;
   coreUI.defaultProxy = Number(upstream?.pool_proxy_id || 0);
   $("poolAccountSearch").value = "";
   $("coreLoginProxy").value="-1";
   $("coreVertexLocation").value="us-central1";
+  $("coreVertexOverride").checked=false;
+  poolAccountList.page=1;
+  ["poolStatusFilter","poolProviderFilter","poolProxyFilter"].forEach(id=>$(id).value="");
+  $("poolOnlyErrors").checked=false;$("poolAccountSort").value="name";
   $("poolSIWCPicker").classList.add("hidden");
   togglePoolProxyComposer(false);
   coreMessage();
@@ -47,11 +51,11 @@ function preparePoolEditor(upstream) {
 function renderCoreStatus() {
   const s = coreUI.status, running = !!s?.running;
   $("coreVersion").textContent = s?.version || "内置";
-  $("coreRuntime").textContent = coreUI.poolID ? running ? s.ready ? "运行中" : "运行中 · 等待账号就绪" : s ? "已停止" : "正在连接…" : "创建后启动";
+  $("coreRuntime").textContent = coreUI.poolID ? s?.restarting ? "正在自动恢复 · "+s.restart_attempts+"/"+s.restart_limit : s?.recovery_exhausted ? "自动恢复已暂停" : running ? s.ready ? "运行中" : "运行中 · 等待账号就绪" : s ? "已停止" : "正在连接…" : "创建后启动";
   $("coreRuntime").className = "badge " + (running ? "on" : "off");
   $("coreAutoStart").textContent = s?.auto_start ? "随网关启动" : coreUI.poolID ? "手动启动" : "保存后自动启动";
-  $("coreStart").disabled = coreUI.busy || !coreUI.poolID || running;
-  $("coreStop").disabled = coreUI.busy || !running;
+  $("coreStart").disabled = coreUI.busy || !coreUI.poolID || running || s?.restarting;
+  $("coreStop").disabled = coreUI.busy || (!running&&!s?.restarting);
   const stopped = !!coreUI.poolID && !!s && !running;
   $("poolResumeButton").classList.toggle("hidden", !stopped);
   $("poolResumeButton").disabled = coreUI.busy;
@@ -82,7 +86,8 @@ async function loadCLIProxy() {
     if (id !== coreUI.poolID || epoch !== coreUI.epoch || !editorIsOpen()) return;
     coreUI.status = status; coreUI.defaultProxy = status.proxy_id;
     renderCoreStatus(); renderCoreProxy();
-    if (status.error) coreMessage(status.error, true);
+    if (status.error) coreMessage(status.error, true);else if(coreUI.lastRuntimeError)coreMessage();
+    coreUI.lastRuntimeError=status.error||"";
     const result = await api(poolAPI("credentials", id), {cache: "no-store"});
     if (id !== coreUI.poolID || epoch !== coreUI.epoch || !editorIsOpen()) return;
     coreUI.credentials = result.files || [];
@@ -90,6 +95,8 @@ async function loadCLIProxy() {
     if (!poolManagement.routing) await loadPoolRouting();
     if (!coreUI.login) await restoreCoreLogin(id,epoch);
     renderCoreAccounts(); stampRefresh();
+    renderPoolRoutingPreview();
+    if(!poolManagement.jobsLoading)loadBackgroundPoolJobs();
   } catch (error) {
     if (id !== coreUI.poolID || epoch !== coreUI.epoch) return;
     coreMessage(error.message, true); renderCoreStatus(); renderCoreAccounts();
@@ -114,7 +121,7 @@ async function saveCoreProxy(select) {
 function renderCoreAccounts() {
   const all = [...coreUI.credentials, ...coreUI.pending.map((item, index) => ({name: item.name, provider: item.provider, pending: true, proxy_id: item.proxy_id, pendingIndex: index}))];
   const query = $("poolAccountSearch").value.trim().toLowerCase();
-  const rows = all.filter(item => [item.name, item.provider, item.label, item.email].join(" ").toLowerCase().includes(query));
+  const rows = filteredPoolAccounts(all);
   const ready = coreUI.credentials.filter(item => item.details?.ready && !item.disabled).length;
   const stopped = !!coreUI.poolID && !!coreUI.status && !coreUI.status.running;
   $("poolAccountCount").textContent = stopped ? coreUI.status.account_count || 0 : all.length; $("poolReadyCount").textContent = ready;
@@ -122,44 +129,9 @@ function renderCoreAccounts() {
   const explicit = coreUI.credentials.filter(item => item.proxy_id > 0).map(item => item.proxy_id);
   if (coreUI.defaultProxy) explicit.push(coreUI.defaultProxy);
   $("poolProxyCount").textContent = new Set(explicit).size ? new Set(explicit).size + " 个代理" : "默认";
-  $("poolFilteredCount").textContent = query ? rows.length + " / " + all.length : all.length;
   renderPoolAccountUptime();
   if (poolAccountPanel.name) renderPoolAccountDetails();
-  const tbody = $("coreAccountsTable").querySelector("tbody");
-  if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="6"><div class="pool-empty"><span class="pool-empty-icon">' + icon("layers") + '</span><strong>' + (stopped ? "账号池已停止" : query ? "没有找到匹配的账号" : "这个池子，等待第一个账号") + '</strong><p>' + (stopped ? "启动后即可授权和管理池内账号。" : query ? "试试其他账号名称或提供商。" : "从下方选择提供商授权，或一次导入多个 JSON 凭据。") + '</p>' + (stopped ? '<button type="button" class="btn ghost" onclick="runCoreAction(\'start\',this)">启动当前池</button>' : '') + '</div></td></tr>';
-    syncPoolSelection();
-    return;
-  }
-  tbody.innerHTML = rows.map((item, index) => {
-    const unavailable = item.details ? !item.details.ready : item.unavailable || ["error","invalid","expired"].includes(item.status);
-    const statusName = ({active:"就绪",ready:"就绪",error:"异常",invalid:"凭据无效",expired:"已过期",refreshing:"刷新中",stopped:"账号池已停止"})[item.status] || item.status || "就绪";
-    const label = item.pending ? "待保存" : item.disabled ? "已停用" : item.details?.ready ? "就绪" : unavailable && statusName === "就绪" ? "暂不可用" : statusName;
-    const state = item.pending || item.disabled || stopped ? "off" : unavailable ? "warn" : "on";
-    const proxy = Number(item.proxy_id ?? -1);
-    return '<tr><td class="pool-select-cell">' + (!item.pending && !item.runtime_only ? '<input type="checkbox" data-pool-select="' + esc(item.name) + '" aria-label="选择 ' + esc(item.name) + '">' : '') + '</td><td class="pool-account-identity-cell"><div class="pool-account-identity"><span class="pool-account-icon">' + modelIcon(item.provider === "codex" ? "gpt" : item.provider || "") + '</span><div><strong>' + esc(item.label || item.email || item.name || item.id) + '</strong><small>' + esc(item.provider || "待识别") + (item.label || item.email ? ' · ' + esc(item.name) : '') + '</small></div></div></td><td class="pool-account-state-cell"><span class="badge ' + state + '">' + esc(label) + '</span>' + poolAccountStatusHint(item) + '</td><td class="pool-account-uptime-cell">' + poolAccountUptimeHTML(item, index) + '</td><td class="pool-account-proxy-cell"><select data-account-proxy="' + index + '" aria-label="' + esc(item.name) + '的出站代理"' + (stopped && !item.pending ? ' disabled' : '') + '>' + proxyOptions(proxy) + '</select><small class="pool-effective-proxy">' + esc(proxy === -1 ? "当前：" + (coreUI.defaultProxy ? upstreamProxyLabel(coreUI.defaultProxy) : "系统默认连接") : proxy === 0 ? "绕过池子默认代理" : upstreamProxyLabel(proxy)) + '</small></td><td class="pool-account-actions-cell"><div class="core-row-actions">' + (item.pending ? '<button type="button" class="text-btn danger" data-pending-remove="' + item.pendingIndex + '">移除</button>' : '<button type="button" class="text-btn" data-account-details="' + index + '">详情 / 测试</button><button type="button" class="text-btn" data-core-action="toggle" data-index="' + index + '"' + (stopped ? ' disabled' : '') + '>' + (item.disabled ? "启用" : "停用") + '</button>' + (!item.runtime_only ? '<button type="button" class="text-btn" data-core-action="refresh" data-index="' + index + '"' + (stopped ? ' disabled' : '') + '>刷新</button><button type="button" class="icon-btn danger" data-core-action="delete" data-index="' + index + '" aria-label="删除 ' + esc(item.name) + '"' + (stopped ? ' disabled' : '') + '>' + icon("trash") + '</button>' : '')) + '</div></td></tr>';
-  }).join("");
-  tbody.querySelectorAll("[data-account-proxy]").forEach(select => {
-    const item = rows[Number(select.dataset.accountProxy)];
-    select.value = String(item.proxy_id ?? -1);
-    select.addEventListener("change", async () => {
-      if (item.pending) { coreUI.pending[item.pendingIndex].proxy_id = Number(select.value); renderCoreAccounts(); updateEditorDirty(); return; }
-      const previous = item.proxy_id, id = coreUI.poolID;
-      select.disabled = true;
-      try {
-        await api(poolAPI("credentials/proxy", id), {method: "PATCH", body: JSON.stringify({name: item.name || item.id, proxy_id: Number(select.value)})});
-        item.proxy_id = Number(select.value); renderCoreAccounts(); toast("账号代理已更新");
-      } catch (error) { select.value = String(previous); reportError(error); }
-      finally { select.disabled = false; }
-    });
-  });
-  tbody.querySelectorAll("[data-core-action]").forEach(button => button.addEventListener("click", () => coreAccountAction(button.dataset.coreAction, rows[Number(button.dataset.index)], button)));
-  tbody.querySelectorAll("[data-account-details]").forEach(button=>button.addEventListener("click",()=>showPoolAccountDetails(rows[Number(button.dataset.accountDetails)])));
-  tbody.querySelectorAll("[data-account-uptime]").forEach(button => button.addEventListener("click", () => showPoolAccountUptime(rows[Number(button.dataset.accountUptime)])));
-  tbody.querySelectorAll("[data-pending-remove]").forEach(button => button.addEventListener("click", () => { coreUI.pending.splice(Number(button.dataset.pendingRemove), 1); renderCoreAccounts(); updateEditorDirty(); }));
-  tbody.querySelectorAll("[data-pool-select]").forEach(box=>box.addEventListener("change",()=>selectPoolAccount(box.dataset.poolSelect,box.checked)));
-  syncPoolSelection();
-  labelTableCells("coreAccountsTable");
+  renderPoolAccountCards(rows,all);
 }
 function showPoolAuthorization() { setPoolWorkspace("authorization"); $("poolAuthorization").scrollIntoView({behavior: motionBehavior(), block: "start"}); $("coreLoginProxy").focus({preventScroll: true}); }
 async function ensureCorePool() {
@@ -183,7 +155,7 @@ async function importCoreCredential(input) {
 }
 
 async function coreAccountAction(action, item, button) {
-  if(poolManagement.busy)return;
+    if(poolManagement.busy||poolManagement.serverBusy)return;
   if (action === "delete" && !await askAction({title: "删除此账号凭据？", description: item.name + " 将从当前池移除，恢复需要重新授权或导入。", confirm: "删除账号", danger: true})) return;
   setBusy(button, true);
   try {

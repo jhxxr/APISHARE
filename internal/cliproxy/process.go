@@ -107,17 +107,27 @@ func (m *Manager) startProcess(path string) (chan struct{}, error) {
 	}
 	m.mu.Lock()
 	m.cancel, m.done, m.lastError = cancel, done, ""
+	m.process = cmd.Process
 	m.mu.Unlock()
+	m.runtimeMu.Lock()
+	m.runtimeFetched = time.Time{}
+	m.runtimeMu.Unlock()
 	go func() {
 		err := cmd.Wait()
 		input.Close()
 		m.mu.Lock()
-		m.cancel = nil
-		if err != nil {
-			m.lastError = "账号池已停止，请检查运行状态后重试"
+		if m.done == done {
+			m.cancel = nil
+			m.process = nil
+			if m.wantRun {
+				m.lastError = fmt.Sprintf("账号池核心意外退出（退出码 %d）", cmd.ProcessState.ExitCode())
+			} else if err != nil {
+				m.lastError = "账号池已停止"
+			}
 		}
 		close(done)
 		m.mu.Unlock()
+		go m.recoverProcess()
 	}()
 	return done, nil
 }

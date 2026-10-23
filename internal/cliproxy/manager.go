@@ -41,14 +41,19 @@ type diskState struct {
 }
 
 type Status struct {
-	Version       string `json:"version"`
-	Embedded      bool   `json:"embedded"`
-	Running       bool   `json:"running"`
-	AutoStart     bool   `json:"auto_start"`
-	Error         string `json:"error,omitempty"`
-	AccountCount  int    `json:"account_count"`
-	Ready         bool   `json:"ready"`
-	ReadyAccounts int    `json:"ready_accounts"`
+	Version           string `json:"version"`
+	Embedded          bool   `json:"embedded"`
+	Running           bool   `json:"running"`
+	AutoStart         bool   `json:"auto_start"`
+	Error             string `json:"error,omitempty"`
+	AccountCount      int    `json:"account_count"`
+	Ready             bool   `json:"ready"`
+	ReadyAccounts     int    `json:"ready_accounts"`
+	Restarting        bool   `json:"restarting"`
+	RestartAttempts   int    `json:"restart_attempts"`
+	RestartLimit      int    `json:"restart_limit"`
+	NextRestart       string `json:"next_restart,omitempty"`
+	RecoveryExhausted bool   `json:"recovery_exhausted"`
 	// ProxyID is filled by the gateway from its outbound proxy binding.
 	ProxyID int64 `json:"proxy_id"`
 }
@@ -65,6 +70,16 @@ type Manager struct {
 	runtimeMu       sync.RWMutex
 	runtimeSnapshot RuntimeSnapshot
 	runtimeFetched  time.Time
+	wantRun         bool
+	recoveryActive  bool
+	recoveryCancel  context.CancelFunc
+	restartAttempts int
+	nextRestart     time.Time
+	process         *os.Process
+	quotaMu         sync.Mutex
+	quotaCache      map[string]quotaCacheEntry
+	quotaFlights    map[string]chan struct{}
+	quotaSlots      chan struct{}
 }
 
 func NewManager(root string, port int) (*Manager, error) {
@@ -151,6 +166,11 @@ func (m *Manager) Touch()              { m.revision.Add(1) }
 func (m *Manager) Status() Status {
 	m.mu.Lock()
 	result := Status{Version: Version(), Embedded: true, Running: m.cancel != nil, AutoStart: m.state.AutoStart, Error: m.lastError}
+	result.Restarting = m.recoveryActive
+	result.RestartAttempts = m.restartAttempts
+	result.RestartLimit = poolRestartLimit
+	result.NextRestart = timestamp(m.nextRestart)
+	result.RecoveryExhausted = m.wantRun && !result.Running && !result.Restarting && m.restartAttempts >= poolRestartLimit
 	m.mu.Unlock()
 	result.AccountCount = m.CredentialCount()
 	result.Ready = m.Ready("")
@@ -290,14 +310,23 @@ func (m *Manager) stop() {
 }
 
 func (m *Manager) Start(ctx context.Context) error {
+	m.stopRecovery()
 	m.op.Lock()
 	defer m.op.Unlock()
 	if m.Status().Running {
+		m.mu.Lock()
+		m.wantRun = true
+		m.mu.Unlock()
 		return nil
 	}
+	m.mu.Lock()
+	m.wantRun = true
+	m.restartAttempts = 0
+	m.mu.Unlock()
 	if err := m.start(ctx); err != nil {
 		m.mu.Lock()
 		m.lastError = err.Error()
+		m.wantRun = false
 		m.mu.Unlock()
 		return err
 	}
@@ -313,6 +342,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	return nil
 }
 func (m *Manager) Stop() error {
+	m.stopRecovery()
 	m.op.Lock()
 	defer m.op.Unlock()
 	s := m.snapshot()
@@ -328,4 +358,4 @@ func (m *Manager) Stop() error {
 }
 
 // Close keeps AutoStart unchanged, so an ordinary gateway restart resumes the SDK.
-func (m *Manager) Close() { m.op.Lock(); defer m.op.Unlock(); m.stop() }
+func (m *Manager) Close() { m.stopRecovery(); m.op.Lock(); defer m.op.Unlock(); m.stop() }
