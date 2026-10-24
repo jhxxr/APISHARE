@@ -330,7 +330,7 @@ func (s *responsesWSSession) run(ctx context.Context, downstream *websocket.Conn
 					closeCode = websocket.StatusInternalError
 				}
 				if code != websocket.StatusPolicyViolation && code != websocket.StatusMessageTooBig {
-					healthMarkFailure(s.up.ID)
+					s.up.markRelayFailure(0, time.Time{})
 				}
 			}
 			return
@@ -502,28 +502,20 @@ func writeResponsesWSError(ctx context.Context, conn *websocket.Conn, request *r
 
 func (s *responsesWSSession) dial(ctx context.Context, model string) (*websocket.Conn, error) {
 	tried := make(map[int64]bool)
+	triedKeys := make(map[string]bool)
 	key := scopedSessionKey(s.keyID, sessionKeyFromCanon("/v1/responses", s.c.Request.Header, &canonReq{Model: model, SessionID: s.sessionID}))
 	var lastErr error
 	for attempt := 0; attempt <= getSettings().Retry; attempt++ {
-		var up *Upstream
-		if attempt == 0 {
-			if id, ok := affinityGet(key); ok {
-				if candidate, err := cachedRoutingUpstream(id); err == nil && nativeResponsesWS(candidate) && candidate.Enabled && candidate.Weight > 0 && candidate.servesModel(model) && candidate.availableForRelay(model) {
-					up = candidate
-				}
-			}
+		up, err := pickSessionUpstream(FormatOpenAIResponse, model, key, tried, triedKeys, true, nil)
+		if err != nil {
+			return nil, err
 		}
-		if up == nil {
-			var err error
-			up, err = pickUpstream(FormatOpenAIResponse, model, tried, true)
-			if err != nil {
-				return nil, err
-			}
-		}
-		tried[up.ID] = true
 		s.up = up
 		client, err := audioClient(up)
 		if err != nil {
+			if up.selectedKeyID != "" {
+				up.markRelayFailure(0, time.Time{})
+			}
 			lastErr = err
 			continue
 		}
@@ -533,12 +525,13 @@ func (s *responsesWSSession) dial(ctx context.Context, model string) (*websocket
 			continue
 		}
 		dialCtx, cancel := context.WithTimeout(ctx, relayNetwork.DialTimeout)
+		start := time.Now()
 		conn, response, err := websocket.Dial(dialCtx, upstreamURL(up.BaseURL, "/v1/responses"), &websocket.DialOptions{HTTPClient: client, HTTPHeader: headers})
 		cancel()
 		if err == nil {
 			conn.SetReadLimit(maxBodyBytes)
 			affinitySet(key, up.ID)
-			healthMarkSuccess(up.ID)
+			up.markRelaySuccess(start)
 			return conn, nil
 		}
 		lastErr = err
@@ -550,7 +543,13 @@ func (s *responsesWSSession) dial(ctx context.Context, model string) (*websocket
 		}
 		// Missing WebSocket support is a capability mismatch, not an outage.
 		if response == nil || isRetryableStatus(response.StatusCode) {
-			healthMarkFailure(up.ID)
+			status, retryAt := 0, time.Time{}
+			if response != nil {
+				status, retryAt = response.StatusCode, retryAfterHeader(response.Header)
+			}
+			up.markRelayFailure(status, retryAt)
+		} else {
+			tried[up.ID] = true
 		}
 	}
 	if lastErr == nil {
@@ -601,7 +600,18 @@ func (s *responsesWSSession) admit(model string, request *responsesWSRequest) (*
 	}
 	if s.up != nil && s.model != "" {
 		current, err := cachedRoutingUpstream(s.up.ID)
-		if err != nil || !current.Enabled || current.Weight <= 0 || !nativeResponsesWS(current) || !current.servesModel(model) ||
+		if err == nil && s.up.selectedKeyID != "" {
+			pool := current
+			current = nil
+			for _, key := range pool.APIKeys {
+				if key.ID == s.up.selectedKeyID && !key.Disabled {
+					current = pool.withAPIKey(key)
+					break
+				}
+			}
+		}
+		if err != nil || current == nil || !current.Enabled || current.Weight <= 0 || !nativeResponsesWS(current) || !current.servesModel(model) ||
+			current.selectedKeyID != "" && !current.availableForRelay(model) ||
 			current.mapModel(model) != s.up.mapModel(model) || current.APIKey != s.up.APIKey || current.BaseURL != s.up.BaseURL ||
 			current.Type != s.up.Type || current.ProxyID != s.up.ProxyID || current.HeaderOverrides != s.up.HeaderOverrides {
 			return nil, 503, "upstream configuration changed; reconnect before continuing"
@@ -837,6 +847,13 @@ func (s *responsesWSSession) finish(turn *responsesWSTurn, rawUsage json.RawMess
 	}
 	if s.downstreamGone && status == http.StatusOK {
 		status, detail = 499, "client disconnected after upstream accepted the request"
+	}
+	if s.up != nil && s.up.selectedKeyID != "" {
+		if isRetryableStatus(status) {
+			s.up.markRelayFailure(status, time.Time{})
+		} else if status >= 200 && status < 300 {
+			s.up.markRelaySuccess(turn.info.startedAt)
+		}
 	}
 	entry := &CallLog{
 		Client: turn.task.clientIdentity(), TraceID: turn.task.traceID, KeyID: turn.key.ID, KeyName: turn.key.Name,

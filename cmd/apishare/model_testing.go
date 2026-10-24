@@ -59,7 +59,7 @@ func registerModelTestRoutes(auth *gin.RouterGroup) {
 		result, status, err := testUpstreamModel(c.Request.Context(), up, input.Model, input.Message, input.MaxTokens, stream)
 		response := gin.H{"ok": err == nil, "latency_ms": time.Since(start).Milliseconds(), "model": input.Model, "upstream_model": up.mapModel(input.Model), "status": status, "stream": stream}
 		if err != nil {
-			response["error"] = truncate(redactModelTestError(err.Error(), up.APIKey), 2000)
+			response["error"] = truncate(up.redactAPIKeys(err.Error()), 2000)
 		} else {
 			response["reply"] = result.text()
 			response["finish_reason"] = result.Finish
@@ -85,6 +85,11 @@ func registerModelTestRoutes(auth *gin.RouterGroup) {
 // Test only the selected upstream, even when disabled or cooling down. Reuse
 // protocol rendering/parsing without routing, billing or health-state changes.
 func testUpstreamModel(ctx context.Context, up *Upstream, model, message string, maxTokens int, stream bool) (*canonResponse, int, error) {
+	selected, err := up.probeAPIKey("")
+	if err != nil {
+		return nil, 0, err
+	}
+	up = selected
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	model = up.mapModel(model)

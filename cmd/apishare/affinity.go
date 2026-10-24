@@ -56,6 +56,7 @@ func affinityCleanupLoop() {
 	for {
 		time.Sleep(affinityCleanupInterval)
 		db.Exec(`DELETE FROM session_affinity WHERE expires_at < ?`, time.Now().Unix())
+		db.Exec(`DELETE FROM upstream_key_affinity WHERE expires_at < ?`, time.Now().Unix())
 		db.Exec(`DELETE FROM opencode_sessions WHERE expires_at < ?`, time.Now().Unix())
 	}
 }

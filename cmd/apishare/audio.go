@@ -151,13 +151,14 @@ func audioHTTPHandler(c *gin.Context) {
 	}
 	task := &relayTask{client: requestClientFor(c), format: format, endpoint: c.Request.URL.Path, model: request.model, apiKeyID: ak.ID}
 	tried := map[int64]bool{}
+	triedKeys := map[string]bool{}
+	skey := scopedSessionKey(ak.ID, sessionKeyFromCanon(task.endpoint, c.Request.Header, &canonReq{Model: request.model}))
 	var info relayInfo
 	for attempt := 0; attempt <= getSettings().Retry; attempt++ {
-		up, err := pickUpstream(FormatOpenAIChat, request.model, tried, true)
+		up, err := pickSessionUpstream(FormatOpenAIChat, request.model, skey, tried, triedKeys, true, nil)
 		if err != nil {
 			break
 		}
-		tried[up.ID] = true
 		info = relayInfo{UpstreamID: up.ID, UpstreamName: up.Name, UpstreamModel: up.mapModel(request.model)}
 		mappedBody, contentType, err := request.mappedBody(info.UpstreamModel)
 		if err != nil {
@@ -184,6 +185,9 @@ func audioHTTPHandler(c *gin.Context) {
 		req.Header.Set("Content-Type", contentType)
 		client, err := audioClient(up)
 		if err != nil {
+			if up.selectedKeyID != "" {
+				up.markRelayFailure(0, time.Time{})
+			}
 			continue
 		}
 		start := time.Now()
@@ -194,7 +198,7 @@ func audioHTTPHandler(c *gin.Context) {
 			if c.Request.Context().Err() != nil {
 				return
 			}
-			healthMarkFailure(up.ID)
+			up.markRelayFailure(0, time.Time{})
 			continue
 		}
 		if relayNetwork.BodyIdleTimeout > 0 {
@@ -203,7 +207,7 @@ func audioHTTPHandler(c *gin.Context) {
 		info.Status = resp.StatusCode
 		if isRetryableStatus(resp.StatusCode) || (up.ProxyID != 0 && resp.StatusCode == http.StatusProxyAuthRequired) {
 			resp.Body.Close()
-			healthMarkFailure(up.ID)
+			up.markRelayFailure(resp.StatusCode, retryAfterHeader(resp.Header))
 			continue
 		}
 		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
@@ -211,7 +215,7 @@ func audioHTTPHandler(c *gin.Context) {
 			continue
 		}
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			healthMarkSuccess(up.ID)
+			up.markRelaySuccess(start)
 		}
 		err = copyAudioResponse(c, resp, &info)
 		info.DurationMS = time.Since(start).Milliseconds()

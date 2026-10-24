@@ -129,29 +129,23 @@ func realtimeWebSocket(c *gin.Context) {
 	}
 	task := &relayTask{client: requestClientFor(c), format: FormatRealtime, endpoint: "/v1/realtime", model: model, apiKeyID: ak.ID, stream: true}
 	tried := map[int64]bool{}
+	triedKeys := map[string]bool{}
 	skey := scopedSessionKey(ak.ID, sessionKeyFromCanon(task.endpoint, c.Request.Header, &canonReq{Model: fmt.Sprint(ak.ID) + ":" + model}))
 	var upstream *websocket.Conn
 	var up *Upstream
 	var info relayInfo
 	for attempt := 0; attempt <= getSettings().Retry; attempt++ {
 		var err error
-		if attempt == 0 {
-			if id, ok := affinityGet(skey); ok {
-				if candidate, e := cachedRoutingUpstream(id); e == nil && candidate.Type == "openai" && candidate.Enabled && candidate.Weight > 0 && candidate.servesModel(model) && healthAvailable(id) {
-					up = candidate
-				}
-			}
+		up, err = pickSessionUpstream(FormatOpenAIChat, model, skey, tried, triedKeys, true, nil)
+		if err != nil {
+			break
 		}
-		if up == nil || tried[up.ID] {
-			up, err = pickUpstream(FormatOpenAIChat, model, tried, true)
-			if err != nil {
-				break
-			}
-		}
-		tried[up.ID] = true
 		info = relayInfo{UpstreamID: up.ID, UpstreamName: up.Name, UpstreamModel: up.mapModel(model)}
 		client, err := audioClient(up)
 		if err != nil {
+			if up.selectedKeyID != "" {
+				up.markRelayFailure(0, time.Time{})
+			}
 			continue
 		}
 		headers, err := audioHeaders(c, up, "")
@@ -168,7 +162,7 @@ func realtimeWebSocket(c *gin.Context) {
 		info.LatencyMS = time.Since(start).Milliseconds()
 		info.DurationMS = info.LatencyMS
 		if err == nil {
-			healthMarkSuccess(up.ID)
+			up.markRelaySuccess(start)
 			affinitySet(skey, up.ID)
 			break
 		}
@@ -191,7 +185,11 @@ func realtimeWebSocket(c *gin.Context) {
 				resp.Body.Close()
 			}
 		}
-		healthMarkFailure(up.ID)
+		retryAt := time.Time{}
+		if resp != nil {
+			retryAt = retryAfterHeader(resp.Header)
+		}
+		up.markRelayFailure(info.Status, retryAt)
 	}
 	if upstream == nil {
 		errJSON(c, http.StatusBadGateway, "no available Realtime upstream or WebSocket handshake failed")

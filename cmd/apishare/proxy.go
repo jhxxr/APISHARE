@@ -185,6 +185,7 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 
 		s := getSettings()
 		tried := map[int64]bool{}
+		triedKeys := map[string]bool{}
 		attempts := 1 + s.Retry
 		var info relayInfo
 		var attemptErr error
@@ -197,39 +198,23 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 				attemptErr = err
 				break
 			}
-			var up *Upstream
-
-			// 第一跳：粘性优先（粘性上游必须健康并服务该模型，类型不限——
-			// 上次可能就是通过跨格式转换落到该上游的）
-			if i == 0 {
-				if id, ok := affinityGet(skey); ok {
-					if u, err := cachedRoutingUpstream(id); err == nil && !tried[u.ID] && u.Enabled && u.Weight > 0 &&
-						u.servesModel(cr.Model) && u.availableForRelay(cr.Model) && (!nativeOnly || supportsNativeEndpoint(u, format)) {
-						up = u
-					}
+			up, err := pickSessionUpstream(format, cr.Model, skey, tried, triedKeys, task.nativeOnly, cr)
+			if err != nil {
+				if attemptErr != nil && upstreamAttempted {
+					attemptErr = fmt.Errorf("%w; failover unavailable: %v", attemptErr, err)
+				} else if conversionErr != nil && !upstreamAttempted {
+					attemptErr = conversionErr
+				} else {
+					attemptErr = err
 				}
+				break // Finalize once so unavailable models also contribute a failed request.
 			}
-			if up == nil {
-				var err error
-				up, err = pickUpstream(format, cr.Model, tried, task.nativeOnly, cr)
-				if err != nil {
-					if attemptErr != nil && upstreamAttempted {
-						attemptErr = fmt.Errorf("%w; failover unavailable: %v", attemptErr, err)
-					} else if conversionErr != nil && !upstreamAttempted {
-						attemptErr = conversionErr
-					} else {
-						attemptErr = err
-					}
-					break // Finalize once so unavailable models also contribute a failed request.
-				}
-				affinitySet(skey, up.ID)
-			}
-			tried[up.ID] = true
 
 			previousInfo, previousErr := info, attemptErr
 			info, wrote, attemptErr = doRelay(c, up, task)
 			var conversion *protocolConversionError
 			if errors.As(attemptErr, &conversion) {
+				tried[up.ID] = true
 				conversionErr = attemptErr
 				if upstreamAttempted {
 					// A later local capability rejection must not replace the
@@ -535,6 +520,9 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		client, err = clientForUpstream(upstreamHTTPClient, up.ProxyID)
 	}
 	if err != nil {
+		if up.selectedKeyID != "" {
+			up.markRelayFailure(0, time.Time{})
+		}
 		return info, false, err
 	}
 	var retryAfter time.Time
@@ -545,14 +533,13 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		if c.Request.Context().Err() != nil || errors.Is(err, errDownstreamWrite) {
 			return
 		}
-		if up.isOpenCode() && rateLimit != nil {
+		if up.isOpenCode() && rateLimit != nil && up.selectedKeyID == "" {
 			return
 		}
 		if err != nil || isRetryableStatus(info.Status) {
-			healthMarkFailure(up.ID)
-			healthMarkRetryAfter(up.ID, retryAfter)
+			up.markRelayFailure(info.Status, retryAfter)
 		} else if info.Status >= 200 && info.Status < 300 {
-			healthMarkSuccess(up.ID)
+			up.markRelaySuccess(start)
 			markOpenCodeRateSuccess(up, start)
 		}
 	}()
@@ -600,6 +587,9 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	resp.Body = newMessagesKeepaliveBody(resp.Body, req.Context(), keepalive)
 	defer resp.Body.Close()
 	info.Status = resp.StatusCode
+	if up.selectedKeyID != "" && isRetryableStatus(info.Status) {
+		retryAfter = retryAfterHeader(resp.Header)
+	}
 	if up.Type == "cline" && isRetryableStatus(info.Status) {
 		retryAfter = openCodeRetryAfter(resp.Header.Get("Retry-After"), time.Now())
 	}
@@ -608,8 +598,11 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		if info.Status == http.StatusTooManyRequests {
 			rateLimit = recordOpenCodeRateLimit(up, retryAfter)
 			current, currentErr := cachedRoutingUpstream(up.ID)
-			if currentErr != nil || (current.isOpenCode() && current.openCodeRateKey() == up.openCodeRateKey()) {
+			if up.selectedKeyID == "" && (currentErr != nil || (current.isOpenCode() && current.openCodeRateKey() == up.openCodeRateKey())) {
 				healthMarkRetryAfter(up.ID, rateLimit.until)
+			}
+			if rateLimit.until.After(retryAfter) {
+				retryAfter = rateLimit.until
 			}
 		}
 	}
@@ -627,7 +620,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 			info.OutputText.WriteString(rateLimit.detail)
 			return info, false, rateLimit
 		}
-		detail := string(b)
+		detail := up.redactAPIKeys(string(b))
 		if up.isOpenCode() {
 			detail = redactModelTestError(detail, up.openCodeAPIKey())
 			if freePreviousPath != "" {

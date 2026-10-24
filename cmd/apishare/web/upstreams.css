@@ -1,4 +1,30 @@
 /* Provider-style upstream workspace; all selectors stay local to this page. */
+.upstream-keys-panel { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.upstream-keys-heading, .upstream-key-editor-heading { display: flex; align-items: center; gap: 12px; }
+.upstream-keys-heading > div { flex: 1; min-width: 0; }
+.upstream-keys-heading h4 { margin: 0 0 6px; font-size: 15px; }
+.upstream-keys-heading p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.upstream-keys-heading > button { flex-shrink: 0; }
+.upstream-key-editors { display: flex; flex-direction: column; gap: 12px; }
+.upstream-key-editor { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); min-width: 0; }
+.upstream-key-editor-heading strong { font-size: 14px; }
+.upstream-key-editor-heading > small { color: var(--muted); font-size: 12px; }
+.upstream-key-editor-heading > .upstream-key-cooling { color: var(--red); }
+.upstream-key-enabled { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; font-size: 13px; }
+.upstream-key-editor-heading > .icon-btn { min-height: 44px; min-width: 44px; }
+.upstream-key-editor .form-grid { gap: 12px; }
+.upstream-key-editor .field { margin: 0; min-width: 0; }
+.upstream-key-editor .secret-field input { min-width: 0; }
+.upstream-keys-panel details summary { cursor: pointer; color: var(--muted); font-size: 13px; padding-block: 8px; }
+.upstream-keys-panel details .field { margin-block: 12px; }
+@media (max-width: 640px) {
+  .upstream-key-editor .form-grid { grid-template-columns: minmax(0, 1fr); }
+  .upstream-keys-heading { align-items: flex-start; flex-wrap: wrap; }
+  .upstream-key-editor-heading { flex-wrap: nowrap; gap: 6px; }
+  .upstream-key-editor-heading > strong { white-space: nowrap; }
+  .upstream-key-editor-heading > small { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .upstream-key-editor-heading > .upstream-key-enabled { margin-left: 0; }
+}
 #tab-upstreams { gap: 12px; }
 #tab-upstreams .page-heading { margin-bottom: 4px; }
 #tab-upstreams .page-heading p { display: none; }

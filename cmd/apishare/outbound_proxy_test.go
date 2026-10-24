@@ -381,12 +381,22 @@ func TestProxyConnectivityProbeFallsBackAndTimesOut(t *testing.T) {
 	r := testProxyAdminRouter(t)
 	var mu sync.Mutex
 	var destinations []string
+	failedTargetReached := make(chan struct{})
 	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		mu.Lock()
 		destinations = append(destinations, req.URL.Host)
 		mu.Unlock()
 		if req.URL.Host == "broken-target.invalid" {
+			close(failedTargetReached)
 			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		// Probes race in parallel and cancel losers after the first success.
+		// Ensure this fixture really exercises both destinations rather than
+		// depending on which HTTP handler the scheduler starts first.
+		select {
+		case <-failedTargetReached:
+		case <-req.Context().Done():
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)

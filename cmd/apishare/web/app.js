@@ -745,7 +745,7 @@ async function testUpstream(id, button) {
 
 /* One editor for both creation and updates. */
 function editorValue() {
-  return JSON.stringify(["editName", "editType", "editOpenCodeTier", "editOpenCodeProtocol", "editBase", "editKey", "editProxy", "editHeaderOverrides", "editStructuredOutput", "editPriority", "editWeight", "editModels"].map((id) => $(id).value).concat($("editEnabled").checked, $("editModelInput").value, $("modelMapBatch").value, [modelMappingDirtyValue()], editorUpstreamType() === "cliproxy" ? coreUI.pending.map(item => [item.name, item.proxy_id]) : [], editorUpstreamType() === "cliproxy" && !coreUI.poolID ? coreUI.defaultProxy : 0));
+  return JSON.stringify(["editName", "editType", "editOpenCodeTier", "editOpenCodeProtocol", "editBase", "editKey", "editProxy", "editHeaderOverrides", "editStructuredOutput", "editPriority", "editWeight", "editModels", "editKeyMode", "editKeyProxyMode"].map((id) => $(id).value).concat($("editEnabled").checked, $("editModelInput").value, $("modelMapBatch").value, [modelMappingDirtyValue(), editorAPIKeysPayload(), $("editKeyBatch").value], editorUpstreamType() === "cliproxy" ? coreUI.pending.map(item => [item.name, item.proxy_id]) : [], editorUpstreamType() === "cliproxy" && !coreUI.poolID ? coreUI.defaultProxy : 0));
 }
 function editorIsOpen() { return $("editModal").open || !$("upstreamDetailPage").classList.contains("hidden"); }
 function editorDirty() { return editorIsOpen() && editorValue() !== editProbe.initial; }
@@ -783,6 +783,7 @@ async function openEditor(upstream) {
   Object.entries(values).forEach(([id, value]) => { $(id).value = value; $(id).setCustomValidity(""); $(id).removeAttribute("aria-invalid"); });
   $("editOpenCodeTier").value = upstream?.opencode_tier || ((upstream?.base_url || "").match(/\/go(?:\/|$)/) ? "go" : "zen");
   renderProxyOptions(upstream?.proxy_id || 0);
+  prepareAPIKeysEditor(upstream);
   editProbe.selected = new Set(parseAllowlist($("editModels").value));
   $("editEnabled").checked = creating || !!upstream.enabled;
   $("editEnabledRow").classList.toggle("hidden", creating);
@@ -878,9 +879,10 @@ function updateEditorProvider(changed = true) {
   $("editBase").placeholder = type === "opencode" ? openCodeURLs[$("editOpenCodeTier").value] : providerURLs[type];
   editProbe.provider = type;
   updateClineLoginProvider(changed);
+  updateAPIKeyControls();
   numberEditorSections();
   if (changed) { clearProbeResults(); updateEditorDirty(); }
-  $("probeEditorButton").innerHTML = icon("refresh") + (pool ? " 获取池内模型" : " 获取当前 Key 模型");
+  $("probeEditorButton").innerHTML = icon("refresh") + (pool ? " 获取池内模型" : editorUsesAPIKeys() ? " 获取所选密钥模型" : " 获取当前 Key 模型");
 }
 function updateOpenCodeTier() {
   const known = [...Object.values(openCodeURLs), "https://opencode.ai/inference", "https://opencode.ai/inference/go"];
@@ -950,6 +952,7 @@ function finishCloseEditor() {
   clearProbeResults();
   editProbe.saving = false;
   $("editKey").value = ""; $("editKey").type = "password";
+  editorAPIKeys = []; $("editAPIKeys").replaceChildren(); $("editKeyBatch").value = "";
   $("editModal").close();
   document.querySelector('[data-section="editorBasic"]').after($("poolEditorNav"));
   if (!$("upstreamDetailPage").classList.contains("hidden")) {
@@ -1009,15 +1012,17 @@ async function probeEditUpstream() {
   if (editorUpstreamType() === "cliproxy" && !coreUI.poolID && !await ensureCorePool()) return;
   const base = $("editBase"), key = $("editKey");
   if (!validateHeaderOverrides()) { jumpEditor("editorHeaders"); $("editHeaderOverrides").reportValidity(); return; }
+  if (!validateEditorAPIKeys()) return;
   if (!base.checkValidity()) { jumpEditor("editorConnection"); base.reportValidity(); return; }
   if (key.required && !key.value.trim()) { jumpEditor("editorConnection"); key.reportValidity(); return; }
   clearProbeResults();
   const generation = editProbe.generation;
   editProbe.controller = new AbortController();
-  const probeSignature = () => [$("editType").value, $("editOpenCodeTier").value, editorOpenAIProtocol(), base.value, key.value, $("editProxy").value, $("editHeaderOverrides").value].join("\n");
+  const probeSignature = () => [$("editType").value, $("editOpenCodeTier").value, editorOpenAIProtocol(), base.value, key.value, $("editProxy").value, $("editHeaderOverrides").value, JSON.stringify(editorAPIKeysPayload()), $("editKeyProxyMode").value, $("editProbeKey").value].join("\n");
   const signature = probeSignature();
   const body = { type: editorUpstreamType(), openai_protocol: editorOpenAIProtocol(), opencode_tier: editorUpstreamType() === "opencode-free" ? "zen" : $("editOpenCodeTier").value, base_url: base.value.trim(), proxy_id: Number($("editProxy").value), header_overrides: editorHeaderOverrides() };
   if (key.value.trim()) body.api_key = key.value.trim();
+  addAPIKeysToRequest(body, true);
   $("editProbeInfo").className = "probe-info";
   $("editProbeInfo").textContent = editorUpstreamType() === "cliproxy" ? "正在读取当前池的可用模型…" : editorUpstreamType() === "opencode-free" ? "正在获取 OpenCode 免费模型…" : key.value.trim() ? "正在使用当前填写的 Key 获取模型…" : "正在使用已保存的 Key 获取模型…";
   setBusy($("probeEditorButton"), true, "获取中…");
@@ -1044,6 +1049,7 @@ async function saveEditUpstream(event) {
   event.preventDefault();
   if(poolManagement.busy){toast("请等待账号操作完成后再保存上游","error");return false;}
   if (editProbe.saving) return false;
+  if (!validateEditorAPIKeys()) return false;
   if (!validateHeaderOverrides()) { jumpEditor("editorHeaders"); $("editHeaderOverrides").reportValidity(); return false; }
   commitModelInput();
   if ($("modelMapBatch").value.trim() && !applyModelMapBatch()) { jumpEditor("editorModels"); return false; }
@@ -1067,6 +1073,7 @@ async function saveEditUpstream(event) {
   body.opencode_tier = editorUpstreamType() === "opencode-free" ? "zen" : editorUpstreamType() === "opencode" ? $("editOpenCodeTier").value : "";
   if (!creating) body.enabled = $("editEnabled").checked;
   if ($("editKey").value.trim()) body.api_key = $("editKey").value.trim();
+  addAPIKeysToRequest(body);
   if (pool) {
     delete body.base_url; delete body.api_key;
     body.proxy_id = 0;

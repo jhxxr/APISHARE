@@ -114,6 +114,22 @@ func (up *Upstream) openCodeRateLimit(models ...string) *openCodeRateLimitError 
 	if !up.isOpenCode() {
 		return nil
 	}
+	if up.pooledKeys() {
+		var earliest *openCodeRateLimitError
+		for _, key := range up.APIKeys {
+			if key.Disabled {
+				continue
+			}
+			limit := up.withAPIKey(key).openCodeRateLimit(models...)
+			if limit == nil {
+				return nil
+			}
+			if earliest == nil || limit.until.Before(earliest.until) {
+				earliest = limit
+			}
+		}
+		return earliest
+	}
 	keys := []openCodeRateKey{up.openCodeRateKey()}
 	if up.openCodeFreeOnly() || up.openCodePublic() || len(models) > 0 && up.openCodeFreeModel(models[0]) {
 		if key, ok := up.openCodeFreeExitKey(); ok {
@@ -224,6 +240,25 @@ func markOpenCodeRateSuccess(up *Upstream, started time.Time) {
 }
 
 func (up *Upstream) availableForRelay(models ...string) bool {
+	if up.pooledKeys() {
+		model := ""
+		if len(models) > 0 {
+			model = up.mapModel(models[0])
+		}
+		for _, key := range up.APIKeys {
+			if !key.Disabled && up.withAPIKey(key).credentialAvailable(model) {
+				return true
+			}
+		}
+		return false
+	}
+	if up.selectedKeyID != "" {
+		model := ""
+		if len(models) > 0 {
+			model = up.mapModel(models[0])
+		}
+		return up.credentialAvailable(model)
+	}
 	var mapped []string
 	if len(models) > 0 {
 		mapped = []string{up.mapModel(models[0])}
@@ -241,7 +276,17 @@ func (up *Upstream) availableForRelay(models ...string) bool {
 }
 
 func (up *Upstream) relayFailures() int {
+	if up.pooledKeys() {
+		failures := 0
+		for _, key := range up.APIKeys {
+			failures += up.withAPIKey(key).relayFailures()
+		}
+		return failures
+	}
 	failures := healthFails(up.ID)
+	if up.selectedKeyID != "" {
+		failures = up.keyHealth().failures
+	}
 	if !up.isOpenCode() {
 		return failures
 	}

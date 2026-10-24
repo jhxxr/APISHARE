@@ -308,13 +308,14 @@ func registerAdminRoutes(r *gin.Engine) {
 		}
 		type upView struct {
 			Upstream
-			APIKey       string `json:"api_key"`
-			KeyMasked    string `json:"key_masked"`
-			Fails        int    `json:"fails"`
-			Healthy      bool   `json:"healthy"`
-			PoolAccounts int    `json:"pool_accounts,omitempty"`
-			PoolRunning  bool   `json:"pool_running,omitempty"`
-			ManagedPool  bool   `json:"managed_pool,omitempty"`
+			APIKey       string                   `json:"api_key"`
+			APIKeys      []upstreamCredentialView `json:"api_keys"`
+			KeyMasked    string                   `json:"key_masked"`
+			Fails        int                      `json:"fails"`
+			Healthy      bool                     `json:"healthy"`
+			PoolAccounts int                      `json:"pool_accounts,omitempty"`
+			PoolRunning  bool                     `json:"pool_running,omitempty"`
+			ManagedPool  bool                     `json:"managed_pool,omitempty"`
 		}
 		out := make([]upView, 0, len(ups))
 		for _, u := range ups {
@@ -327,6 +328,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			}
 			out = append(out, upView{
 				Upstream:     u,
+				APIKeys:      u.credentialViews(),
 				KeyMasked:    maskKey(u.APIKey),
 				Fails:        u.relayFailures(),
 				Healthy:      u.availableForRelay(),
@@ -349,6 +351,14 @@ func registerAdminRoutes(r *gin.Engine) {
 		}
 		if !validUpstreamType(u.Type) {
 			c.JSON(400, gin.H{"error": "type must be openai, cliproxy, opencode-free, opencode, cline, anthropic or gemini"})
+			return
+		}
+		if err := u.normalizeAPIKeys(nil); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		if err := u.validateAPIKeyProxies(nil); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
 		if err := u.normalizeOpenCodeFree(); err != nil {
@@ -424,22 +434,25 @@ func registerAdminRoutes(r *gin.Engine) {
 			c.JSON(404, gin.H{"error": "upstream not found"})
 			return
 		}
+		previous := *u
 		var req struct {
-			Name             *string `json:"name"`
-			Type             *string `json:"type"`
-			BaseURL          *string `json:"base_url"`
-			APIKey           *string `json:"api_key"`
-			Priority         *int    `json:"priority"`
-			Weight           *int    `json:"weight"`
-			Models           *string `json:"models"`
-			ModelMap         *string `json:"model_map"`
-			Enabled          *bool   `json:"enabled"`
-			ProxyID          *int64  `json:"proxy_id"`
-			HeaderOverrides  *string `json:"header_overrides"`
-			OpenAIProtocol   *string `json:"openai_protocol"`
-			OpenCodeTier     *string `json:"opencode_tier"`
-			StructuredOutput *string `json:"structured_output"`
-			PoolProxyID      *int64  `json:"pool_proxy_id"`
+			Name             *string               `json:"name"`
+			Type             *string               `json:"type"`
+			BaseURL          *string               `json:"base_url"`
+			APIKey           *string               `json:"api_key"`
+			APIKeys          *[]UpstreamCredential `json:"api_keys"`
+			KeyProxyMode     *string               `json:"key_proxy_mode"`
+			Priority         *int                  `json:"priority"`
+			Weight           *int                  `json:"weight"`
+			Models           *string               `json:"models"`
+			ModelMap         *string               `json:"model_map"`
+			Enabled          *bool                 `json:"enabled"`
+			ProxyID          *int64                `json:"proxy_id"`
+			HeaderOverrides  *string               `json:"header_overrides"`
+			OpenAIProtocol   *string               `json:"openai_protocol"`
+			OpenCodeTier     *string               `json:"opencode_tier"`
+			StructuredOutput *string               `json:"structured_output"`
+			PoolProxyID      *int64                `json:"pool_proxy_id"`
 		}
 		if c.BindJSON(&req) != nil {
 			return
@@ -487,6 +500,24 @@ func registerAdminRoutes(r *gin.Engine) {
 		}
 		if req.APIKey != nil && strings.TrimSpace(*req.APIKey) != "" {
 			u.APIKey = *req.APIKey // 只有显式传入非空值才更新
+			if req.APIKeys == nil && len(u.APIKeys) > 0 {
+				u.APIKeys = append([]UpstreamCredential(nil), u.APIKeys...)
+				u.APIKeys[0].APIKey = *req.APIKey
+			}
+		}
+		if req.APIKeys != nil {
+			u.APIKeys = *req.APIKeys
+		}
+		if req.KeyProxyMode != nil {
+			u.KeyProxyMode = *req.KeyProxyMode
+		}
+		if err := u.normalizeAPIKeys(&previous); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		if err := u.validateAPIKeyProxies(&previous); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
 		}
 		if req.Priority != nil {
 			if *req.Priority < 0 {
@@ -696,7 +727,7 @@ func registerAdminRoutes(r *gin.Engine) {
 		models, err := probeConfiguredModels(c.Request.Context(), up)
 		latency := time.Since(start).Milliseconds()
 		if err != nil {
-			c.JSON(200, gin.H{"ok": false, "latency_ms": latency, "error": err.Error()})
+			c.JSON(200, gin.H{"ok": false, "latency_ms": latency, "error": up.redactAPIKeys(err.Error())})
 			return
 		}
 		c.JSON(200, gin.H{"ok": true, "latency_ms": latency, "models": models, "count": len(models)})
@@ -704,13 +735,16 @@ func registerAdminRoutes(r *gin.Engine) {
 
 	auth.POST("/upstream-probe", func(c *gin.Context) {
 		var req struct {
-			Type            string `json:"type"`
-			BaseURL         string `json:"base_url"`
-			APIKey          string `json:"api_key"`
-			ProxyID         int64  `json:"proxy_id"`
-			HeaderOverrides string `json:"header_overrides"`
-			OpenAIProtocol  string `json:"openai_protocol"`
-			OpenCodeTier    string `json:"opencode_tier"`
+			Type            string               `json:"type"`
+			BaseURL         string               `json:"base_url"`
+			APIKey          string               `json:"api_key"`
+			APIKeys         []UpstreamCredential `json:"api_keys"`
+			KeyProxyMode    string               `json:"key_proxy_mode"`
+			ProbeKeyID      string               `json:"probe_key_id"`
+			ProxyID         int64                `json:"proxy_id"`
+			HeaderOverrides string               `json:"header_overrides"`
+			OpenAIProtocol  string               `json:"openai_protocol"`
+			OpenCodeTier    string               `json:"opencode_tier"`
 		}
 		if c.ShouldBindJSON(&req) != nil || req.Type == "" {
 			c.JSON(400, gin.H{"ok": false, "error": "type is required"})
@@ -720,7 +754,17 @@ func registerAdminRoutes(r *gin.Engine) {
 			c.JSON(400, gin.H{"ok": false, "error": "type must be openai, cliproxy, opencode-free, opencode, cline, anthropic or gemini"})
 			return
 		}
-		probeResult(c, &Upstream{Type: req.Type, BaseURL: req.BaseURL, APIKey: req.APIKey, ProxyID: req.ProxyID, HeaderOverrides: req.HeaderOverrides, OpenAIProtocol: req.OpenAIProtocol, OpenCodeTier: req.OpenCodeTier})
+		up := &Upstream{Type: req.Type, BaseURL: req.BaseURL, APIKey: req.APIKey, APIKeys: req.APIKeys, KeyProxyMode: req.KeyProxyMode, ProxyID: req.ProxyID, HeaderOverrides: req.HeaderOverrides, OpenAIProtocol: req.OpenAIProtocol, OpenCodeTier: req.OpenCodeTier}
+		if err := up.normalizeAPIKeys(nil); err != nil {
+			c.JSON(400, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+		selected, err := up.probeAPIKey(req.ProbeKeyID)
+		if err != nil {
+			c.JSON(400, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+		probeResult(c, selected)
 	})
 
 	auth.POST("/upstreams/:id/probe", func(c *gin.Context) {
@@ -731,13 +775,16 @@ func registerAdminRoutes(r *gin.Engine) {
 			return
 		}
 		var req struct {
-			Type            string  `json:"type"`
-			BaseURL         string  `json:"base_url"`
-			APIKey          string  `json:"api_key"`
-			ProxyID         *int64  `json:"proxy_id"`
-			HeaderOverrides *string `json:"header_overrides"`
-			OpenAIProtocol  *string `json:"openai_protocol"`
-			OpenCodeTier    *string `json:"opencode_tier"`
+			Type            string                `json:"type"`
+			BaseURL         string                `json:"base_url"`
+			APIKey          string                `json:"api_key"`
+			APIKeys         *[]UpstreamCredential `json:"api_keys"`
+			KeyProxyMode    *string               `json:"key_proxy_mode"`
+			ProbeKeyID      string                `json:"probe_key_id"`
+			ProxyID         *int64                `json:"proxy_id"`
+			HeaderOverrides *string               `json:"header_overrides"`
+			OpenAIProtocol  *string               `json:"openai_protocol"`
+			OpenCodeTier    *string               `json:"opencode_tier"`
 		}
 		// An empty body uses saved values; malformed edits must never silently
 		// fall back to the stored key and report a misleading success.
@@ -765,13 +812,32 @@ func registerAdminRoutes(r *gin.Engine) {
 			headers = *req.HeaderOverrides
 		}
 		u.Type, u.BaseURL, u.APIKey, u.ProxyID, u.HeaderOverrides = typ, base, key, proxyID, headers
+		previous := *u
+		if req.APIKeys != nil {
+			u.APIKeys = *req.APIKeys
+		} else if strings.TrimSpace(req.APIKey) != "" {
+			// A single explicitly supplied key probes exactly that key.
+			u.APIKeys = nil
+		}
+		if req.KeyProxyMode != nil {
+			u.KeyProxyMode = *req.KeyProxyMode
+		}
+		if err := u.normalizeAPIKeys(&previous); err != nil {
+			c.JSON(400, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
 		if req.OpenAIProtocol != nil {
 			u.OpenAIProtocol = *req.OpenAIProtocol
 		}
 		if req.OpenCodeTier != nil {
 			u.OpenCodeTier = *req.OpenCodeTier
 		}
-		probeResult(c, u)
+		selected, err := u.probeAPIKey(req.ProbeKeyID)
+		if err != nil {
+			c.JSON(400, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+		probeResult(c, selected)
 	})
 
 	// ---------- Logs ----------

@@ -240,6 +240,9 @@ func setPoolProxy(ctx context.Context, manager *cliproxy.Manager, poolID, proxyI
 
 func resetUpstreamCooldown(ctx context.Context, id int64, u *Upstream) error {
 	healthMarkSuccess(id)
+	if u != nil {
+		u.resetAPIKeyCooldowns()
+	}
 	if u != nil && u.isOpenCode() {
 		key := u.openCodeRateKey()
 		exitKey, hasExit := u.openCodeFreeExitKey()

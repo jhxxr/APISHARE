@@ -407,6 +407,7 @@ func registerOutboundProxyRoutes(auth *gin.RouterGroup) {
 		rows, err := db.Query(`SELECT p.id,p.name,p.url,p.username,p.password,p.enabled,p.created_at,
 			(SELECT COUNT(*) FROM (
 				SELECT id FROM upstreams u WHERE u.proxy_id=p.id
+				UNION SELECT u.id FROM upstreams u,json_each(u.api_keys) k WHERE json_extract(k.value,'$.proxy_id')=p.id
 				UNION SELECT upstream_id FROM cliproxy_pools cp WHERE cp.proxy_id=p.id
 				UNION SELECT upstream_id FROM cliproxy_account_proxies ca WHERE ca.proxy_id=p.id
 			)) FROM outbound_proxies p ORDER BY p.id`)
@@ -574,7 +575,8 @@ func registerOutboundProxyRoutes(auth *gin.RouterGroup) {
 			return
 		}
 		var count int
-		if err := db.QueryRow(`SELECT COUNT(*) FROM upstreams WHERE proxy_id=?`, id).Scan(&count); err != nil {
+		if err := db.QueryRow(`SELECT COUNT(*) FROM upstreams u WHERE proxy_id=? OR EXISTS(
+			SELECT 1 FROM json_each(u.api_keys) k WHERE json_extract(k.value,'$.proxy_id')=?)`, id, id).Scan(&count); err != nil {
 			c.JSON(500, gin.H{"error": "无法检查代理关联"})
 			return
 		}

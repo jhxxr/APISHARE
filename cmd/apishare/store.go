@@ -68,6 +68,8 @@ CREATE TABLE IF NOT EXISTS upstreams (
   type TEXT NOT NULL DEFAULT 'openai',
   base_url TEXT NOT NULL DEFAULT '',
   api_key TEXT NOT NULL DEFAULT '',
+  api_keys TEXT NOT NULL DEFAULT '[]',
+  key_proxy_mode TEXT NOT NULL DEFAULT '',
   priority INTEGER NOT NULL DEFAULT 0,
   weight INTEGER NOT NULL DEFAULT 1,
   models TEXT NOT NULL DEFAULT '',
@@ -177,6 +179,14 @@ CREATE TABLE IF NOT EXISTS session_affinity (
   upstream_id INTEGER NOT NULL,
   expires_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS upstream_key_affinity (
+  skey TEXT NOT NULL,
+  upstream_id INTEGER NOT NULL,
+  credential_id TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  PRIMARY KEY(skey, upstream_id)
+);
+CREATE INDEX IF NOT EXISTS idx_upstream_key_affinity_expiry ON upstream_key_affinity(expires_at);
 CREATE TABLE IF NOT EXISTS opencode_sessions (
   scope TEXT PRIMARY KEY,
   session_id TEXT NOT NULL,
@@ -341,6 +351,20 @@ CREATE INDEX IF NOT EXISTS idx_log_daily_day ON call_log_daily(day);
 			return err
 		}
 	}
+	for _, column := range []struct{ name, definition string }{
+		{"api_keys", "TEXT NOT NULL DEFAULT '[]'"},
+		{"key_proxy_mode", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		var exists int
+		if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('upstreams') WHERE name=?`, column.name).Scan(&exists); err != nil {
+			return err
+		}
+		if exists == 0 {
+			if _, err := db.Exec(`ALTER TABLE upstreams ADD COLUMN ` + column.name + ` ` + column.definition); err != nil {
+				return err
+			}
+		}
+	}
 	if err := migrateBillingLogSchema(); err != nil {
 		return err
 	}
@@ -386,23 +410,26 @@ type ApiKey struct {
 
 type Upstream struct {
 	config           *upstreamConfig // Immutable parsed runtime configuration; never exposed by APIs.
-	ID               int64           `json:"id"`
-	Name             string          `json:"name"`
-	Type             string          `json:"type"` // provider: openai | cliproxy | opencode-free | opencode (legacy) | cline | anthropic | gemini
-	BaseURL          string          `json:"base_url"`
-	APIKey           string          `json:"api_key"`
-	Priority         int             `json:"priority"` // Lower is preferred; only the smallest available tier receives new traffic.
-	Weight           int             `json:"weight"`
-	Models           string          `json:"models"`
-	ModelMap         string          `json:"model_map"`
-	Enabled          bool            `json:"enabled"`
-	ProxyID          int64           `json:"proxy_id"`
-	PoolProxyID      int64           `json:"pool_proxy_id,omitempty"` // CLIProxy pool default; never used on the loopback hop.
-	HeaderOverrides  string          `json:"header_overrides"`
-	OpenAIProtocol   string          `json:"openai_protocol"`   // OpenAI: auto/chat/responses; OpenCode: auto/chat/responses/anthropic
-	OpenCodeTier     string          `json:"opencode_tier"`     // zen/go; empty infers the tier from BaseURL for older channels
-	StructuredOutput string          `json:"structured_output"` // empty/json_schema, json_object compatibility, disabled; converted requests only
-	CreatedAt        string          `json:"created_at"`
+	selectedKeyID    string
+	ID               int64                `json:"id"`
+	Name             string               `json:"name"`
+	Type             string               `json:"type"` // provider: openai | cliproxy | opencode-free | opencode (legacy) | cline | anthropic | gemini
+	BaseURL          string               `json:"base_url"`
+	APIKey           string               `json:"api_key"`
+	APIKeys          []UpstreamCredential `json:"api_keys,omitempty"`
+	KeyProxyMode     string               `json:"key_proxy_mode"`
+	Priority         int                  `json:"priority"` // Lower is preferred; only the smallest available tier receives new traffic.
+	Weight           int                  `json:"weight"`
+	Models           string               `json:"models"`
+	ModelMap         string               `json:"model_map"`
+	Enabled          bool                 `json:"enabled"`
+	ProxyID          int64                `json:"proxy_id"`
+	PoolProxyID      int64                `json:"pool_proxy_id,omitempty"` // CLIProxy pool default; never used on the loopback hop.
+	HeaderOverrides  string               `json:"header_overrides"`
+	OpenAIProtocol   string               `json:"openai_protocol"`   // OpenAI: auto/chat/responses; OpenCode: auto/chat/responses/anthropic
+	OpenCodeTier     string               `json:"opencode_tier"`     // zen/go; empty infers the tier from BaseURL for older channels
+	StructuredOutput string               `json:"structured_output"` // empty/json_schema, json_object compatibility, disabled; converted requests only
+	CreatedAt        string               `json:"created_at"`
 }
 
 type CallLog struct {
@@ -683,20 +710,24 @@ func dbAddUsedUSD(keyID int64, cost float64) error {
 // ---------- upstreams ----------
 
 func dbGetUpstream(id int64) (*Upstream, error) {
-	row := db.QueryRow(`SELECT id,name,type,base_url,api_key,priority,weight,models,model_map,enabled,created_at,proxy_id,header_overrides,openai_protocol,structured_output,opencode_tier
+	row := db.QueryRow(`SELECT id,name,type,base_url,api_key,priority,weight,models,model_map,enabled,created_at,proxy_id,header_overrides,openai_protocol,structured_output,opencode_tier,api_keys,key_proxy_mode
 		FROM upstreams WHERE id=?`, id)
 	u := &Upstream{}
 	var enabled int
+	var keys string
 	if err := row.Scan(&u.ID, &u.Name, &u.Type, &u.BaseURL, &u.APIKey, &u.Priority, &u.Weight,
-		&u.Models, &u.ModelMap, &enabled, &u.CreatedAt, &u.ProxyID, &u.HeaderOverrides, &u.OpenAIProtocol, &u.StructuredOutput, &u.OpenCodeTier); err != nil {
+		&u.Models, &u.ModelMap, &enabled, &u.CreatedAt, &u.ProxyID, &u.HeaderOverrides, &u.OpenAIProtocol, &u.StructuredOutput, &u.OpenCodeTier, &keys, &u.KeyProxyMode); err != nil {
 		return nil, err
+	}
+	if err := json.Unmarshal([]byte(keys), &u.APIKeys); err != nil {
+		return nil, fmt.Errorf("invalid upstream credentials: %w", err)
 	}
 	u.Enabled = enabled == 1
 	return u, nil
 }
 
 func dbListUpstreams() ([]Upstream, error) {
-	rows, err := db.Query(`SELECT id,name,type,base_url,api_key,priority,weight,models,model_map,enabled,created_at,proxy_id,header_overrides,openai_protocol,structured_output,opencode_tier
+	rows, err := db.Query(`SELECT id,name,type,base_url,api_key,priority,weight,models,model_map,enabled,created_at,proxy_id,header_overrides,openai_protocol,structured_output,opencode_tier,api_keys,key_proxy_mode
 		FROM upstreams ORDER BY priority,id`)
 	if err != nil {
 		return nil, err
@@ -706,9 +737,13 @@ func dbListUpstreams() ([]Upstream, error) {
 	for rows.Next() {
 		var u Upstream
 		var enabled int
+		var keys string
 		if err := rows.Scan(&u.ID, &u.Name, &u.Type, &u.BaseURL, &u.APIKey, &u.Priority, &u.Weight,
-			&u.Models, &u.ModelMap, &enabled, &u.CreatedAt, &u.ProxyID, &u.HeaderOverrides, &u.OpenAIProtocol, &u.StructuredOutput, &u.OpenCodeTier); err != nil {
+			&u.Models, &u.ModelMap, &enabled, &u.CreatedAt, &u.ProxyID, &u.HeaderOverrides, &u.OpenAIProtocol, &u.StructuredOutput, &u.OpenCodeTier, &keys, &u.KeyProxyMode); err != nil {
 			return nil, err
+		}
+		if err := json.Unmarshal([]byte(keys), &u.APIKeys); err != nil {
+			return nil, fmt.Errorf("invalid upstream credentials: %w", err)
 		}
 		u.Enabled = enabled == 1
 		out = append(out, u)
@@ -717,12 +752,22 @@ func dbListUpstreams() ([]Upstream, error) {
 }
 
 func dbInsertUpstream(u *Upstream) error {
+	if err := u.normalizeAPIKeys(nil); err != nil {
+		return err
+	}
 	if err := u.normalizeOpenCodeFree(); err != nil {
 		return err
 	}
-	res, err := db.Exec(`INSERT INTO upstreams(name,type,base_url,api_key,priority,weight,models,model_map,enabled,created_at,proxy_id,header_overrides,openai_protocol,structured_output,opencode_tier)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		u.Name, u.Type, u.BaseURL, u.APIKey, u.Priority, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), nowStr(), u.ProxyID, u.HeaderOverrides, u.OpenAIProtocol, u.StructuredOutput, u.OpenCodeTier)
+	keys, err := json.Marshal(u.APIKeys)
+	if err != nil {
+		return err
+	}
+	if u.APIKeys == nil {
+		keys = []byte("[]")
+	}
+	res, err := db.Exec(`INSERT INTO upstreams(name,type,base_url,api_key,priority,weight,models,model_map,enabled,created_at,proxy_id,header_overrides,openai_protocol,structured_output,opencode_tier,api_keys,key_proxy_mode)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		u.Name, u.Type, u.BaseURL, u.APIKey, u.Priority, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), nowStr(), u.ProxyID, u.HeaderOverrides, u.OpenAIProtocol, u.StructuredOutput, u.OpenCodeTier, string(keys), u.KeyProxyMode)
 	if err == nil {
 		u.ID, _ = res.LastInsertId()
 		invalidateRoutingSnapshot()
@@ -732,11 +777,21 @@ func dbInsertUpstream(u *Upstream) error {
 }
 
 func dbUpdateUpstream(u *Upstream) error {
+	if err := u.normalizeAPIKeys(nil); err != nil {
+		return err
+	}
 	if err := u.normalizeOpenCodeFree(); err != nil {
 		return err
 	}
-	_, err := db.Exec(`UPDATE upstreams SET name=?,type=?,base_url=?,api_key=?,priority=?,weight=?,models=?,model_map=?,enabled=?,proxy_id=?,header_overrides=?,openai_protocol=?,structured_output=?,opencode_tier=? WHERE id=?`,
-		u.Name, u.Type, u.BaseURL, u.APIKey, u.Priority, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), u.ProxyID, u.HeaderOverrides, u.OpenAIProtocol, u.StructuredOutput, u.OpenCodeTier, u.ID)
+	keys, err := json.Marshal(u.APIKeys)
+	if err != nil {
+		return err
+	}
+	if u.APIKeys == nil {
+		keys = []byte("[]")
+	}
+	_, err = db.Exec(`UPDATE upstreams SET name=?,type=?,base_url=?,api_key=?,priority=?,weight=?,models=?,model_map=?,enabled=?,proxy_id=?,header_overrides=?,openai_protocol=?,structured_output=?,opencode_tier=?,api_keys=?,key_proxy_mode=? WHERE id=?`,
+		u.Name, u.Type, u.BaseURL, u.APIKey, u.Priority, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), u.ProxyID, u.HeaderOverrides, u.OpenAIProtocol, u.StructuredOutput, u.OpenCodeTier, string(keys), u.KeyProxyMode, u.ID)
 	if err == nil {
 		// A replaced OpenCode credential must not inherit the row's previous
 		// connection failure. Its credential-scoped rate cooldown is independent.
@@ -750,7 +805,11 @@ func dbUpdateUpstream(u *Upstream) error {
 }
 
 func dbDeleteUpstream(id int64) error {
-	_, err := db.Exec(`DELETE FROM upstreams WHERE id=?`, id)
+	_, err := db.Exec(`DELETE FROM upstream_key_affinity WHERE upstream_id=?`, id)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`DELETE FROM upstreams WHERE id=?`, id)
 	if err == nil {
 		invalidateRoutingSnapshot()
 		invalidatePublicOverviews()

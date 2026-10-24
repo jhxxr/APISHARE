@@ -34,6 +34,9 @@ type modelCacheKey struct {
 }
 
 func upstreamModelCacheKey(u *Upstream) modelCacheKey {
+	if selected, err := u.probeAPIKey(""); err == nil {
+		u = selected
+	}
 	var p *OutboundProxy
 	if u.ProxyID != 0 {
 		p, _ = dbGetOutboundProxy(u.ProxyID)
@@ -101,6 +104,11 @@ func fetchCachedModelCatalog(up *Upstream, proxyConfig *OutboundProxy, efforts m
 }
 
 func probeConfiguredModels(ctx context.Context, up *Upstream) ([]string, error) {
+	selected, err := up.probeAPIKey("")
+	if err != nil {
+		return nil, err
+	}
+	up = selected
 	client, err := clientForUpstream(modelsFetchClient, up.ProxyID)
 	if err != nil {
 		return nil, err
@@ -325,6 +333,11 @@ func cachedUpstreamModels(ctx context.Context, u *Upstream) ([]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	selected, err := u.probeAPIKey("")
+	if err != nil {
+		return nil, err
+	}
+	u = selected
 	var proxyConfig *OutboundProxy
 	if u.ProxyID != 0 {
 		var err error
