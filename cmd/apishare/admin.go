@@ -83,6 +83,21 @@ func maskKey(s string) string {
 	return s[:6] + "..." + s[len(s)-4:]
 }
 
+func upstreamRecoverHandler(c *gin.Context) {
+	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	u, err := dbGetUpstream(id)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "upstream not found"})
+		return
+	}
+	if err := resetUpstreamCooldown(c.Request.Context(), id, u); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	invalidatePublicOverviews()
+	c.JSON(200, gin.H{"ok": true})
+}
+
 func registerAdminRoutes(r *gin.Engine) {
 	api := r.Group("/api")
 
@@ -627,6 +642,13 @@ func registerAdminRoutes(r *gin.Engine) {
 		}
 		c.JSON(200, gin.H{"ok": true, "id": dup.ID, "name": dup.Name})
 	})
+
+	// 恢复上游冷却状态：清除内存健康冷却与 OpenCode 限流，并在账号池场景下重置所有账号的冷却。
+	auth.POST("/upstreams/:id/recover", upstreamRecoverHandler)
+	auth.POST("/upstreams/:id/reset-health", upstreamRecoverHandler)
+	auth.POST("/upstreams/:id/health/reset", upstreamRecoverHandler)
+	auth.POST("/upstreams/:id/reset-cooldown", upstreamRecoverHandler)
+	auth.POST("/upstreams/:id/cooldown/reset", upstreamRecoverHandler)
 
 	registerModelTestRoutes(auth)
 	registerModelOverviewRoutes(auth)

@@ -61,7 +61,7 @@ function upstreamHealthHTML(item) {
     const tone = !b.calls ? "empty" : b.successes === b.calls ? "good" : b.successes / b.calls >= .8 ? "mixed" : "bad";
     const time = start ? fmtTime(new Date(start + i * 600000).toISOString()).slice(11, 16) + '–' + fmtTime(new Date(start + (i + 1) * 600000).toISOString()).slice(11, 16) + ' · ' : '';
     return '<span class="' + tone + '" title="' + esc(time + (b.calls ? b.successes + '/' + b.calls + ' 次成功' : '暂无调用')) + '"></span>';
-  }).join("") + '</span><span class="upstream-health-rate">' + rate + '</span></div><span class="badge ' + state + '">' + status + '</span>' + (item.fails ? '<small class="upstream-failure-count">连续失败 ' + number(item.fails) + ' 次</small>' : '') + '</div>';
+  }).join("") + '</span><span class="upstream-health-rate">' + rate + '</span></div><span class="badge ' + state + '">' + status + '</span>' + (item.fails ? '<small class="upstream-failure-count">连续失败 ' + number(item.fails) + ' 次</small>' : '') + ((!item.healthy && item.enabled) ? ' <button class="text-btn upstream-recover" onclick="recoverUpstream(' + item.id + ', this)" aria-label="恢复 ' + esc(item.name) + '">恢复</button>' : '') + '</div>';
 }
 function upstreamToggle(item) {
   return '<button class="toggle-btn" role="switch" aria-checked="' + !!item.enabled + '" aria-label="' + (item.enabled ? "停用 " : "启用 ") + esc(item.name) + '" onclick="toggleUpstream(' + item.id + ', ' + !item.enabled + ', this)"><span></span></button>';
@@ -193,3 +193,11 @@ function runUpstreamMenuAction(action, id) {
 document.getElementById("upstreamActionMenu").addEventListener("beforetoggle", (event) => {
   if (event.newState === "closed" && upstreamMenuTrigger) upstreamMenuTrigger.setAttribute("aria-expanded", "false");
 });
+async function recoverUpstream(id, button) {
+  setBusy(button, true, "恢复中");
+  try {
+    await api("api/upstreams/" + id + "/recover", { method: "POST" });
+    await loadUpstreams();
+    toast("上游已恢复");
+  } catch (error) { reportError(error, "恢复失败"); } finally { setBusy(button, false); }
+}

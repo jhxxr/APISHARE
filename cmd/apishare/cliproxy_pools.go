@@ -238,6 +238,44 @@ func setPoolProxy(ctx context.Context, manager *cliproxy.Manager, poolID, proxyI
 	return err
 }
 
+func resetUpstreamCooldown(ctx context.Context, id int64, u *Upstream) error {
+	healthMarkSuccess(id)
+	if u != nil && u.isOpenCode() {
+		key := u.openCodeRateKey()
+		openCodeRates.Lock()
+		delete(openCodeRates.entries, key)
+		openCodeRates.Unlock()
+	}
+	if u != nil && u.Type == "cliproxy" {
+		manager, err := cliProxyPool(id)
+		if err != nil {
+			return err
+		}
+		if manager == nil || !manager.Running() {
+			return errors.New("账号池未运行，无法重置冷却")
+		}
+		var filesView struct {
+			Files []struct {
+				Name  string `json:"name"`
+				Index string `json:"auth_index"`
+			}
+		}
+		if err := manager.Client().Do(ctx, "GET", "/credentials", nil, &filesView); err != nil {
+			return fmt.Errorf("获取账号列表失败: %w", err)
+		}
+		for _, file := range filesView.Files {
+			if strings.TrimSpace(file.Index) == "" {
+				continue
+			}
+			_ = manager.Client().Do(ctx, "POST", "/routing/cooldown/reset", map[string]string{"auth_index": file.Index}, nil)
+		}
+		if err := manager.RefreshRuntime(ctx); err != nil {
+			return fmt.Errorf("刷新账号池运行状态失败: %w", err)
+		}
+		manager.Touch()
+	}
+	return nil
+}
 func closeCLIProxyPools() {
 	stopPoolJobs()
 	cliProxyPools.Lock()
