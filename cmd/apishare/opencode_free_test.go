@@ -48,8 +48,8 @@ func TestOpenCodeV2FreeBodyPreservesClientOptions(t *testing.T) {
 	if !bytes.Equal(original, unchanged) {
 		t.Fatal("shaping mutated the client's original body")
 	}
-	if !compatibility.NoClientTools {
-		t.Fatal("injected tools were not marked as unavailable to the client")
+	if !compatibility.Renames.Empty() {
+		t.Fatal("a text-only request unexpectedly acquired client aliases")
 	}
 	for _, want := range []string{`"content":"<tag>& code"`, `"large":9007199254740993`, `"literal":"\\u003c"`, `"reasoning_effort":"none"`, `"max_completion_tokens":32000`, `"stream_options":{"custom":true,"include_usage":true}`} {
 		if !bytes.Contains(body, []byte(want)) {
@@ -80,7 +80,7 @@ func TestOpenCodeV2FreeBodyPreservesClientOptions(t *testing.T) {
 			Strict      *bool  `json:"strict"`
 		} `json:"function"`
 	}
-	if err := json.Unmarshal(payload["tools"], &tools); err != nil || len(tools) != 5 {
+	if err := json.Unmarshal(payload["tools"], &tools); err != nil || len(tools) != 13 {
 		t.Fatalf("missing CLI tools: %s %v", payload["tools"], err)
 	}
 	for _, tool := range tools {
@@ -121,23 +121,19 @@ func TestOpenCodeV2FreeBodyPreservesNativeTools(t *testing.T) {
 		json.RawMessage(`{"type":"function","function":{"name":"lookup","parameters":{"type":"object","properties":{"n":{"const":9007199254740993}}},"strict":true},"cache_control":{"type":"ephemeral"}}`),
 		json.RawMessage(`{"type":"function","function":{"name":"extra","parameters":{"type":"object"}}}`))
 	original, _ := json.Marshal(map[string]any{"model": "free", "messages": []any{}, "tools": tools})
-	route, err := up.openCodeFreeRoute(original, FormatOpenAIChat, "free")
-	if err != nil || route != up {
-		t.Fatalf("native tools were redirected: %+v %v", route, err)
-	}
 	body, _, err := up.shapeOpenCodeFreeRequest(original, FormatOpenAIChat, "free")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"strict":true`, `"const":9007199254740993`, `"cache_control":{"type":"ephemeral"}`, `"name":"extra","parameters":{"type":"object"},"strict":false`} {
+	for _, want := range []string{`"strict":true`, `"const":9007199254740993`, `"cache_control":{"type":"ephemeral"}`, `"name":"clint_extra","parameters":{"type":"object"}`} {
 		if !bytes.Contains(body, []byte(want)) {
 			t.Errorf("native tool option lost: %s in %s", want, body)
 		}
 	}
 	foreign := []byte(`{"model":"free","messages":[],"tools":[{"type":"function","function":{"name":"Read","parameters":{"type":"object","properties":{"file_path":{"type":"string"}}}}}]}`)
-	route, err = up.openCodeFreeRoute(foreign, FormatOpenAIChat, "free")
-	if err != nil || route.BaseURL != "https://opencode.ai/zen" {
-		t.Fatalf("foreign tools did not retain the compatible Zen route: %+v %v", route, err)
+	body, _, err = up.shapeOpenCodeFreeRequest(foreign, FormatOpenAIChat, "free")
+	if err != nil || !bytes.Contains(body, []byte(`"name":"clint_Read"`)) || !bytes.Contains(body, []byte(`"file_path":{"type":"string"}`)) {
+		t.Fatalf("foreign tool contract did not survive inference shaping: %s %v", body, err)
 	}
 }
 

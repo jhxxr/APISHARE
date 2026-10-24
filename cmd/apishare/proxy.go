@@ -417,15 +417,10 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		}
 		url = up.endpointURL(wireFormat, nativeEndpoint(wireFormat, &canonReq{Model: upModel, Stream: task.stream}))
 	}
-	freeRoute, err := up.openCodeFreeRoute(reqBody, wireFormat, upModel)
-	if err != nil {
-		info.Status = http.StatusBadRequest
-		return info, false, &protocolConversionError{err}
-	}
 	freeOriginalBody := reqBody
 	var freeShaped bool
 	var freeTools openCodeToolCompatibility
-	reqBody, freeShaped, err = freeRoute.shapeOpenCodeFreeRequest(reqBody, wireFormat, upModel, &freeTools)
+	reqBody, freeShaped, err = up.shapeOpenCodeFreeRequest(reqBody, wireFormat, upModel, &freeTools)
 	if err != nil {
 		info.Status = http.StatusBadRequest
 		return info, false, &protocolConversionError{err}
@@ -435,7 +430,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		if !native {
 			endpoint = nativeEndpoint(wireFormat, &canonReq{Model: upModel, Stream: task.stream})
 		}
-		url = freeRoute.openCodeFreeEndpointURL(wireFormat, endpoint)
+		url = up.openCodeFreeEndpointURL(wireFormat, endpoint)
 	}
 
 	var clineTask string
@@ -651,7 +646,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		normalizeClineResponse(resp)
 	}
 	isSSE := strings.Contains(ct, "text/event-stream")
-	if freeTools.ReadAlias != "" || freeTools.NoClientTools {
+	if !freeTools.Renames.Empty() {
 		resp.Body = newOpenCodeAliasBody(resp.Body, wireFormat, freeTools, isSSE)
 	}
 

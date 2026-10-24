@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,23 @@ var claudeCodeSessionPattern = regexp.MustCompile(`_session_([0-9A-Fa-f-]{36})$`
 const openCodeSessionTTL = 30 * 24 * time.Hour
 const openCodeMessageTTL = 6 * time.Hour
 const openCodeMessageLimit = 8192
+
+// Identifier.descending stores only the low 36 timestamp bits. Compare on
+// that ring rather than interpreting the truncated milliseconds as a 1970
+// timestamp. Persisted and incoming IDs must also stay in a recent window.
+func openCodeSessionUsable(session string, now time.Time) bool {
+	if !openCodeDescendingPattern.MatchString(session) {
+		return false
+	}
+	word, err := strconv.ParseUint(session[4:16], 16, 48)
+	if err != nil {
+		return false
+	}
+	const cycle = int64(1) << 36
+	tick := int64((^word & 0xffffffffffff) >> 12)
+	delta := ((tick - (now.UnixMilli() & (cycle - 1)) + cycle/2) & (cycle - 1)) - cycle/2
+	return delta >= -openCodeSessionTTL.Milliseconds() && delta <= (24*time.Hour).Milliseconds()
+}
 
 func newOpenCodeSessionID() (string, error) {
 	var nonce [14]byte
@@ -183,7 +201,7 @@ func openCodeMessageForTask(task *relayTask, session string, incoming http.Heade
 }
 
 func openCodeSessionForTask(task *relayTask, incoming http.Header) (string, error) {
-	if openCodeDescendingPattern.MatchString(task.openCodeSession) {
+	if openCodeSessionUsable(task.openCodeSession, time.Now()) {
 		return task.openCodeSession, nil
 	}
 	task.openCodeSession = ""
@@ -192,7 +210,7 @@ func openCodeSessionForTask(task *relayTask, incoming http.Header) (string, erro
 		cr = &canonReq{Model: task.model}
 	}
 	signal := explicitSessionID(incoming, cr.SessionID)
-	if openCodeDescendingPattern.MatchString(signal) {
+	if openCodeSessionUsable(signal, time.Now()) {
 		task.openCodeSession = signal
 		return signal, nil
 	}
@@ -221,13 +239,13 @@ func openCodeSessionForTask(task *relayTask, incoming http.Header) (string, erro
 	if err != nil {
 		return "", fmt.Errorf("could not persist OpenCode session ID")
 	}
-	if !openCodeDescendingPattern.MatchString(session) {
+	if !openCodeSessionUsable(session, time.Now()) {
 		// Older releases persisted foreign encodings for up to 30 days. Repair
 		// those mappings once, keeping a concurrent repair's already valid ID.
 		err = db.QueryRow(`UPDATE opencode_sessions
 			SET session_id=CASE WHEN session_id=? THEN ? ELSE session_id END
 			WHERE scope=? RETURNING session_id`, session, newID, scopeHash).Scan(&session)
-		if err != nil || !openCodeDescendingPattern.MatchString(session) {
+		if err != nil || !openCodeSessionUsable(session, time.Now()) {
 			return "", fmt.Errorf("could not repair legacy OpenCode session ID")
 		}
 	}
@@ -284,7 +302,7 @@ func setOpenCodeV1Headers(req *http.Request, format clientFormat, session string
 	}
 	req.Header.Set("x-opencode-project", openCodeProjectID(project, true))
 	for _, name := range []string{"x-parent-session-id", "x-opencode-parent-session-id"} {
-		if parent := incoming.Get(name); openCodeDescendingPattern.MatchString(parent) {
+		if parent := incoming.Get(name); openCodeSessionUsable(parent, time.Now()) {
 			req.Header.Set(name, parent)
 		}
 	}
@@ -317,12 +335,12 @@ func setOpenCodeV2Headers(req *http.Request, format clientFormat, session string
 	req.Header.Set("x-opencode-project", openCodeProjectID(project, false))
 	if session != "" {
 		setOpenCodeSessionHeaders(req, session)
-		if child := incoming.Get("x-opencode-session-id"); openCodeDescendingPattern.MatchString(child) {
+		if child := incoming.Get("x-opencode-session-id"); openCodeSessionUsable(child, time.Now()) {
 			req.Header.Set("x-opencode-session-id", child)
 		}
 	}
 	for _, name := range []string{"x-parent-session-id", "x-opencode-parent-session-id"} {
-		if parent := incoming.Get(name); openCodeDescendingPattern.MatchString(parent) {
+		if parent := incoming.Get(name); openCodeSessionUsable(parent, time.Now()) {
 			req.Header.Set(name, parent)
 		}
 	}

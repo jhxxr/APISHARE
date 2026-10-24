@@ -1,15 +1,15 @@
 package main
 
 import (
-	"bytes"
 	"embed"
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"reflect"
-	"runtime"
+
 	"strings"
 	"sync"
+
+	"apishare/internal/opencodecompat"
 )
 
 // Model-facing OpenCode CLI definitions, with upstream MIT attribution in
@@ -24,8 +24,7 @@ type openCodeToolDefinition struct {
 }
 
 type openCodeToolCompatibility struct {
-	ReadAlias     string
-	NoClientTools bool
+	Renames *opencodecompat.ToolRenames
 }
 
 var openCodeToolDefinitions = sync.OnceValues(func() (map[string]openCodeToolDefinition, error) {
@@ -63,50 +62,6 @@ func (u *Upstream) openCodeFreeModel(model string) bool {
 		return openCodeCatalogFreeModel(latestOpenCodeCatalogLocked(), "zen", model)
 	}
 	return latestOpenCodeCatalogLocked().FreeModels[u.openCodeTier()][model]
-}
-
-// The inference gate requires CLI schemas, but the gateway cannot execute the
-// tools it declares. Clients with foreign tools use the legacy Zen gate, where
-// their own schemas can be preserved. A text-only request can declare the CLI
-// tools and reject unexpected tool calls without changing its configured lane.
-// Only change a known official origin and path;
-// custom gateways and Go credentials must never be redirected to another tier.
-func (u *Upstream) openCodeFreeRoute(body []byte, format clientFormat, model string) (*Upstream, error) {
-	if !u.isOpenCode() || (!u.openCodePublic() && !u.openCodeFreeModel(model)) || u.openCodeLegacy() {
-		return u, nil
-	}
-	if format != FormatOpenAIChat && format != FormatOpenAIResponse && format != FormatAnthropic {
-		return u, nil
-	}
-	var payload map[string]json.RawMessage
-	if json.Unmarshal(body, &payload) != nil || payload == nil {
-		return nil, fmt.Errorf("OpenCode 免费模型请求必须是 JSON 对象")
-	}
-	var tools []json.RawMessage
-	if raw := payload["tools"]; len(raw) > 0 && json.Unmarshal(raw, &tools) != nil {
-		return nil, fmt.Errorf("OpenCode tools 必须是数组")
-	}
-	if len(tools) == 0 {
-		return u, nil
-	}
-	compatible, err := openCodeNativeToolContracts(tools, format)
-	if err != nil {
-		return nil, err
-	}
-	if compatible {
-		return u, nil
-	}
-	parsed, err := url.Parse(strings.TrimSpace(u.BaseURL))
-	if err == nil && parsed.Scheme == "https" && strings.EqualFold(parsed.Host, "opencode.ai") && u.openCodeTier() == "zen" {
-		switch strings.TrimRight(parsed.Path, "/") {
-		case "/inference", "/inference/v1", "/inference/openai", "/inference/openai/v1", "/inference/anthropic", "/inference/anthropic/v1":
-			parsed.Path, parsed.RawPath = "/zen", ""
-			route := *u
-			route.BaseURL = parsed.String()
-			return &route, nil
-		}
-	}
-	return nil, fmt.Errorf("OpenCode inference 免费模型要求完整的原生工具及参数；当前客户端工具不兼容。Zen 渠道请将上游地址改为 https://opencode.ai/zen；自定义网关请配置对应的 /zen 入口")
 }
 
 // OpenCode 2.1 groups inference model routes by provider family, as the
@@ -160,33 +115,6 @@ func openCodeToolContract(raw json.RawMessage, format clientFormat) (string, jso
 	return name, tool["parameters"]
 }
 
-// Names alone are insufficient: read.path and Read.file_path, for example,
-// are different contracts. Never replace a caller's schema or add capabilities
-// that its tool executor did not offer.
-func openCodeNativeToolContracts(tools []json.RawMessage, format clientFormat) (bool, error) {
-	definitions, err := openCodeToolDefinitions()
-	if err != nil {
-		return false, err
-	}
-	present := make(map[string]bool, len(tools))
-	for _, raw := range tools {
-		name, schema := openCodeToolContract(raw, format)
-		if definition, known := definitions[name]; known {
-			var actual, expected any
-			if json.Unmarshal(schema, &actual) != nil || json.Unmarshal(definition.Parameters, &expected) != nil || !reflect.DeepEqual(actual, expected) {
-				return false, nil
-			}
-			present[name] = true
-		}
-	}
-	for _, name := range []string{"shell", "edit", "glob", "grep", "read"} {
-		if !present[name] {
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
 func (u *Upstream) shapeOpenCodeFreeRequest(body []byte, format clientFormat, model string, compatibility ...*openCodeToolCompatibility) ([]byte, bool, error) {
 	if !u.isOpenCode() || (!u.openCodePublic() && !u.openCodeFreeModel(model)) {
 		return body, false, nil
@@ -194,97 +122,17 @@ func (u *Upstream) shapeOpenCodeFreeRequest(body []byte, format clientFormat, mo
 	if format != FormatOpenAIChat && format != FormatOpenAIResponse && format != FormatAnthropic {
 		return body, false, nil
 	}
-	var payload map[string]json.RawMessage
-	if json.Unmarshal(body, &payload) != nil || payload == nil {
-		return nil, false, fmt.Errorf("OpenCode 免费模型请求必须是 JSON 对象")
-	}
-	// Retain raw JSON for every unrelated field, including large numbers and
-	// opaque native-protocol options. The original relay task remains unchanged.
-	payload["stream"] = json.RawMessage("true")
-	if format == FormatOpenAIChat {
-		options := make(map[string]json.RawMessage)
-		if raw := payload["stream_options"]; len(raw) > 0 && !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			if json.Unmarshal(raw, &options) != nil || options == nil {
-				return nil, false, fmt.Errorf("OpenCode stream_options 必须是 JSON 对象")
-			}
-		}
-		options["include_usage"] = json.RawMessage("true")
-		payload["stream_options"], _ = json.Marshal(options)
-	}
-	var tools []json.RawMessage
-	if raw := payload["tools"]; len(raw) > 0 && json.Unmarshal(raw, &tools) != nil {
-		return nil, false, fmt.Errorf("OpenCode tools 必须是数组")
-	}
-	if u.openCodeLegacy() {
-		adaptation, err := shapeLegacyOpenCodeTools(payload, tools, format)
-		if err != nil {
-			return nil, false, err
-		}
-		if len(compatibility) > 0 && compatibility[0] != nil {
-			*compatibility[0] = adaptation
-		}
-		encoded, err := encodeOpenCodeFreeBody(payload, format, true)
-		return encoded, true, err
-	}
-	if format == FormatOpenAIChat && payload["max_tokens"] == nil && payload["max_completion_tokens"] == nil {
-		payload["max_completion_tokens"] = json.RawMessage("32000")
-	}
-	definitions, err := openCodeToolDefinitions()
+	legacy := u.openCodeLegacy()
+	payload, renames, err := opencodecompat.Prepare(body, opencodecompat.Protocol(format), legacy)
 	if err != nil {
 		return nil, false, err
 	}
-	compatible, err := openCodeNativeToolContracts(tools, format)
-	if err != nil {
-		return nil, false, err
+	if len(compatibility) > 0 && compatibility[0] != nil {
+		*compatibility[0] = openCodeToolCompatibility{Renames: renames}
 	}
-	if !compatible && len(tools) != 0 {
-		return nil, false, fmt.Errorf("OpenCode inference 免费模型工具与客户端不兼容，请使用 Zen 兼容入口")
-	}
-	if len(tools) == 0 {
-		for _, name := range []string{"shell", "edit", "glob", "grep", "read"} {
-			tools = append(tools, renderOpenCodeTool(name, definitions[name], format))
-		}
-		if len(compatibility) > 0 && compatibility[0] != nil {
-			*compatibility[0] = openCodeToolCompatibility{NoClientTools: true}
-		}
-	}
-	for index, tool := range tools {
-		name, _ := openCodeToolContract(tool, format)
-		definition, known := definitions[name]
-		description := definition.Description
-		if name == "shell" && runtime.GOOS == "windows" {
-			description = strings.Replace(description, "on Linux using bash", "on Windows using powershell", 1)
-		}
-		// Preserve explicit strict/cache flags and the caller's schemas. Every
-		// v2 Chat function defaults to strict:false, including extra tools.
-		var entry map[string]json.RawMessage
-		if json.Unmarshal(tool, &entry) != nil || entry == nil {
-			continue
-		}
-		if format == FormatOpenAIChat {
-			var function map[string]json.RawMessage
-			if json.Unmarshal(entry["function"], &function) == nil && function != nil {
-				if known {
-					function["description"], _ = json.Marshal(description)
-				}
-				if function["strict"] == nil {
-					function["strict"] = json.RawMessage("false")
-				}
-				entry["function"], _ = json.Marshal(function)
-			}
-		} else if known {
-			entry["description"], _ = json.Marshal(description)
-		}
-		tools[index], _ = json.Marshal(entry)
-	}
-	payload["tools"], _ = json.Marshal(tools)
-	encoded, err := encodeOpenCodeFreeBody(payload, format, false)
-	if err != nil {
-		return nil, false, fmt.Errorf("无法构造 OpenCode 免费模型请求")
-	}
-	return encoded, true, nil
+	encoded, err := encodeOpenCodeFreeValues(payload, format, legacy)
+	return encoded, true, err
 }
-
 func renderOpenCodeTool(name string, definition openCodeToolDefinition, format clientFormat) json.RawMessage {
 	tool := map[string]any{"name": name, "description": definition.Description}
 	if format == FormatAnthropic {

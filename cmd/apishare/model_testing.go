@@ -102,13 +102,9 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 	if err != nil {
 		return nil, 0, err
 	}
-	freeRoute, err := up.openCodeFreeRoute(body, format, model)
-	if err != nil {
-		return nil, 0, err
-	}
 	freeOriginalBody := body
 	var freeTools openCodeToolCompatibility
-	body, freeShaped, err := freeRoute.shapeOpenCodeFreeRequest(body, format, model, &freeTools)
+	body, freeShaped, err := up.shapeOpenCodeFreeRequest(body, format, model, &freeTools)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -120,9 +116,9 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 		}
 	}
 	endpoint := nativeEndpoint(format, cr)
-	requestURL := freeRoute.endpointURL(format, endpoint)
+	requestURL := up.endpointURL(format, endpoint)
 	if freeShaped {
-		requestURL = freeRoute.openCodeFreeEndpointURL(format, endpoint)
+		requestURL = up.openCodeFreeEndpointURL(format, endpoint)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(body))
 	if err != nil {
@@ -201,7 +197,7 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 	if up.Type == "cline" {
 		normalizeClineResponse(resp, 4<<20)
 	}
-	if freeTools.ReadAlias != "" || freeTools.NoClientTools {
+	if !freeTools.Renames.Empty() {
 		resp.Body = newOpenCodeAliasBody(resp.Body, format, freeTools, strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream"))
 	}
 	result, err := readModelTestResponse(resp.Body, resp.Header.Get("Content-Type"), format)

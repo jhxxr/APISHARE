@@ -18,7 +18,7 @@ type openCodeFreeAttempt struct {
 
 // Try the other official Zen entry once, only after a structured FreeTierError
 // and before forwarding model output. Rebuild from the original client body:
-// a legacy read stub/alias must never become an inference CLI declaration.
+// a shaped lane's injected tools must never become renamed client tools.
 // Keep the same credential, proxy, session and context on both attempts.
 func retryOpenCodeFreeTier(up *Upstream, req *http.Request, resp *http.Response, originalBody []byte, format clientFormat, model string, incoming http.Header, do func(*http.Request) (*http.Response, error)) (*openCodeFreeAttempt, error) {
 	if resp.StatusCode != http.StatusForbidden || !up.isOpenCode() || up.openCodeTier() != "zen" || (!up.openCodePublic() && !up.openCodeFreeModel(model)) {
@@ -34,20 +34,6 @@ func retryOpenCodeFreeTier(up *Upstream, req *http.Request, resp *http.Response,
 	var alternativeBase string
 	switch req.URL.Path {
 	case "/zen" + endpoint:
-		// Foreign tool schemas cannot safely be replaced by CLI schemas. Keep
-		// their legacy alias path until an actual argument bridge is available.
-		var payload struct {
-			Tools []json.RawMessage `json:"tools"`
-		}
-		if json.Unmarshal(originalBody, &payload) != nil {
-			return nil, nil
-		}
-		if len(payload.Tools) > 0 {
-			compatible, err := openCodeNativeToolContracts(payload.Tools, format)
-			if err != nil || !compatible {
-				return nil, nil
-			}
-		}
 		alternativeBase = "https://opencode.ai/inference"
 	case "/inference" + endpoint, "/inference/openai" + endpoint, "/inference/anthropic" + endpoint:
 		alternativeBase = "https://opencode.ai/zen"

@@ -14,6 +14,20 @@ var openCodeV2ChatKeyOrder = []string{"model", "messages", "tools", "stream", "s
 // client fields. UseNumber retains opaque integer values beyond float64's
 // precision. Used for shaped OpenCode free requests and stale-reference repair.
 func encodeOpenCodeFreeBody(payload map[string]json.RawMessage, format clientFormat, legacy bool) ([]byte, error) {
+	values := make(map[string]any, len(payload))
+	for key, raw := range payload {
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		var value any
+		if err := decoder.Decode(&value); err != nil {
+			return nil, err
+		}
+		values[key] = value
+	}
+	return encodeOpenCodeFreeValues(values, format, legacy)
+}
+
+func encodeOpenCodeFreeValues(payload map[string]any, format clientFormat, legacy bool) ([]byte, error) {
 	var buffer bytes.Buffer
 	buffer.WriteByte('{')
 	order := slices.Sorted(maps.Keys(payload))
@@ -24,15 +38,9 @@ func encodeOpenCodeFreeBody(payload map[string]json.RawMessage, format clientFor
 	encoder := json.NewEncoder(&buffer)
 	encoder.SetEscapeHTML(false)
 	for _, key := range order {
-		raw, exists := payload[key]
+		value, exists := payload[key]
 		if !exists || written[key] {
 			continue
-		}
-		var value any
-		decoder := json.NewDecoder(bytes.NewReader(raw))
-		decoder.UseNumber()
-		if err := decoder.Decode(&value); err != nil {
-			return nil, err
 		}
 		if len(written) > 0 {
 			buffer.WriteByte(',')

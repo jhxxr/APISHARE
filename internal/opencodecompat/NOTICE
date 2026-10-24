@@ -1,0 +1,16 @@
+OpenCode free-request compatibility
+
+Adapted from github.com/jasonxu114514/opencode2api, revision
+b8b1454a0ef505d023f2e53e5193671ee7f30c13 (2026-10-25):
+internal/gateway/opencode_prompt.go, toolshape.go, captured prompt/tool assets,
+and internal/protocol/tools.go.
+
+Copyright (C) 2026 Jason Xu and opencode2api contributors.
+Copyright (C) 2026 API Share contributors (modifications).
+Gateway code: GPL-3.0-or-later, see the repository LICENSE.
+Captured OpenCode wording and schemas: MIT, see
+../../cmd/apishare/third_party/opencode/LICENSE and NOTICE.
+
+API Share changes preserve JSON number precision, convert legacy functions
+without double-prefixing, keep unknown response names unchanged, and integrate
+with the gateway's native and converted JSON/SSE response paths.

@@ -18,6 +18,11 @@ official client byte-for-byte, so incomplete or reworded definitions are
 rejected.
 
 The embedded JSON remains MIT-licensed and is independent of the transport.
+The captured v1/v2 prompts and complete tool sets in internal/opencodecompat
+were obtained from opencode2api revision
+b8b1454a0ef505d023f2e53e5193671ee7f30c13 (2026-10-25). Those assets contain
+OpenCode model-facing text and schemas only; the adaptation code is covered by
+internal/opencodecompat/NOTICE.
 The Bun-compatible TLS/HTTP transport lives in internal/bunhttp and is ported
 from opencode2api under GPL-3.0-or-later; see its NOTICE. Runtime dependencies
 added for that transport are permissively licensed:
