@@ -293,8 +293,8 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 		if errors.As(lastErr, &rateLimit) {
 			c.Header("Retry-After", rateLimit.retryAfter())
 			c.Header("X-APISHARE-RateLimit-Source", "upstream")
-			writeRelayError(c, task.format, http.StatusTooManyRequests, rateLimit.Error())
-			insertFailureLog(ak, info, task, http.StatusTooManyRequests, rateLimit.Error())
+			writeRelayError(c, task.format, rateLimit.statusCode(), rateLimit.Error())
+			insertFailureLog(ak, info, task, rateLimit.statusCode(), rateLimit.Error())
 			return
 		}
 		// 所有上游都失败且未给客户端写出任何内容
@@ -384,8 +384,8 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	info = relayInfo{UpstreamID: up.ID, UpstreamName: up.Name}
 	upModel := up.mapModel(task.model)
 	info.UpstreamModel = upModel
-	if limit := up.openCodeRateLimit(); limit != nil {
-		info.Status = http.StatusTooManyRequests
+	if limit := up.openCodeRateLimit(upModel); limit != nil {
+		info.Status = limit.statusCode()
 		return info, false, limit
 	}
 	replayScope := responseReplayScope{task.apiKeyID, up.ID, task.model, upModel}
@@ -538,13 +538,14 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		return info, false, err
 	}
 	var retryAfter time.Time
+	var rateLimit *openCodeRateLimitError
 	// Count actual attempts, including interrupted streams, but never penalize
 	// an upstream for client cancellation or request/configuration validation.
 	defer func() {
 		if c.Request.Context().Err() != nil || errors.Is(err, errDownstreamWrite) {
 			return
 		}
-		if up.isOpenCode() && info.Status == http.StatusTooManyRequests {
+		if up.isOpenCode() && rateLimit != nil {
 			return
 		}
 		if err != nil || isRetryableStatus(info.Status) {
@@ -602,7 +603,6 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	if up.Type == "cline" && isRetryableStatus(info.Status) {
 		retryAfter = openCodeRetryAfter(resp.Header.Get("Retry-After"), time.Now())
 	}
-	var rateLimit *openCodeRateLimitError
 	if up.isOpenCode() && isRetryableStatus(info.Status) {
 		retryAfter = openCodeRetryAfter(resp.Header.Get("Retry-After"), time.Now())
 		if info.Status == http.StatusTooManyRequests {
@@ -619,6 +619,9 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 
 	if info.Status < 200 || info.Status > 299 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
+		if fingerprint && freeShaped && openCodeFreeIPBlocked(info.Status, b) {
+			rateLimit = recordOpenCodeFreeExitBlock(up, openCodeRetryAfter(resp.Header.Get("Retry-After"), time.Now()))
+		}
 		if rateLimit != nil {
 			rememberOpenCodeRateDetail(up, rateLimit, b, req.Header)
 			info.OutputText.WriteString(rateLimit.detail)

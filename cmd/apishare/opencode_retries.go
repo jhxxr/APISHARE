@@ -81,7 +81,7 @@ func repairOpenCodeReasoning(body, errorBody []byte) ([]byte, bool) {
 	if !changed {
 		return body, false
 	}
-	encoded, err := json.Marshal(payload)
+	encoded, err := encodeOpenCodeFreeBody(payload, FormatOpenAIResponse, false)
 	return encoded, err == nil
 }
 

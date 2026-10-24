@@ -533,7 +533,7 @@ var bunCommonHeaders = []string{
 //     fetch, and sorted as the 1.x AI SDK passes them;
 //  3. the headers fetch adds itself: Connection, then User-Agent and Accept
 //     unless the caller set them, Host, Accept-Encoding unless the caller set
-//     it, and Content-Length when there is a body.
+//     it. Content-Length is computed in the common-header block for a body.
 //
 // An Accept of "*/*" is written where fetch adds its default, since that is
 // where the official clients' Accept appears. Host, Connection,
@@ -572,6 +572,10 @@ func bunRequestHead(req *http.Request, body []byte) ([]byte, bool, error) {
 	head.WriteString(method + " " + req.URL.RequestURI() + " HTTP/1.1\r\n")
 	for _, name := range bunCommonHeaders {
 		lower := strings.ToLower(name)
+		if lower == "content-length" && body != nil {
+			head.WriteString(name + ": " + strconv.Itoa(len(body)) + "\r\n")
+			continue
+		}
 		if value, ok := values[lower]; ok {
 			head.WriteString(name + ": " + value + "\r\n")
 			delete(values, lower)
@@ -600,9 +604,6 @@ func bunRequestHead(req *http.Request, body []byte) ([]byte, bool, error) {
 	head.WriteString("Host: " + host + "\r\n")
 	if !hasEncoding {
 		head.WriteString("Accept-Encoding: gzip, deflate, br, zstd\r\n")
-	}
-	if body != nil {
-		head.WriteString("Content-Length: " + strconv.Itoa(len(body)) + "\r\n")
 	}
 	head.WriteString("\r\n")
 	return []byte(head.String()), !hasEncoding, nil

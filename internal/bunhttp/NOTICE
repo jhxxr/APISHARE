@@ -4,7 +4,7 @@ Copyright (C) 2026 Jason Xu <jasonxu114514@163.com>
 Copyright (C) 2026 API Share contributors (modifications)
 
 This package is ported from opencode2api, commit
-d04ff337d73403f446b39289a93343ac6d512260 (v1.4.2), files
+4e2edbf1e678ab6e770c056a9bf5c4b028fac5d3 (2026-10-23), files
 internal/httpx/bun.go, internal/httpx/bun_dial.go and
 internal/httpx/client.go.
 
@@ -20,8 +20,20 @@ Modifications for API Share:
   The idle pool key includes the selected proxy.
 - OpenCode version constants are exported for the gateway's header shaping.
 - bunRequestHead is exposed as RequestHead for tests and diagnostics.
+- Content-Length is computed once in Bun's common-header block, including
+  for empty bodies. The v2 client version follows OpenCode 2.1.1.
 - Proxy/TLS policy wiring, request headers and response decompression remain
   unchanged from upstream.
+
+The free-request shaping in cmd/apishare/opencode_free.go and
+opencode_encoding.go also adapts the v2 Chat body ordering, completion limit,
+tool strict defaults and platform descriptions from upstream commits
+f9ef5693ab58d4c2c03f63329399732f8b0e9007 and
+5c5100c47076f675712b50d36fd5aa27833d3216 (2026-10-23).
+The free-exit abuse classification and cooldown in opencode_free_retry.go
+and opencode_limits.go adapt upstream internal/gateway/abuse.go and the
+exit handling in commit 0bb23c7a7f0b7cbe08c475e7148c56bc477abcf9
+(2026-10-21), scoped to API Share's per-channel proxy selection.
 
 This package is distinct from cmd/apishare/third_party/opencode, which
 contains MIT-licensed OpenCode tool definitions.

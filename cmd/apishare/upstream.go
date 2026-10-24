@@ -163,7 +163,7 @@ func pickUpstream(format clientFormat, model string, exclude map[int64]bool, nat
 		if nativeOnly && !supportsNativeEndpoint(u, format) {
 			continue
 		}
-		if limit := u.openCodeRateLimit(); limit != nil {
+		if limit := u.openCodeRateLimit(u.mapModel(model)); limit != nil {
 			if limited == nil || limit.until.Before(limited.until) {
 				limited = limit
 			}

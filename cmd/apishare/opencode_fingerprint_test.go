@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"apishare/internal/bunhttp"
+
 	utls "github.com/refraction-networking/utls"
 )
 
@@ -20,6 +22,7 @@ func TestOpenCodeLaneHeaderShapes(t *testing.T) {
 	incoming.Set("x-opencode-request", "incoming-legacy")
 	incoming.Set("x-opencode-project", "prj_foreign")
 	incoming.Set("User-Agent", "foreign-sdk")
+	incoming.Set("Accept", "text/event-stream")
 	task := &relayTask{canon: &canonReq{Model: "free", Messages: []canonMsg{{Role: "user", Text: "hello"}}}}
 	body := []byte(`{"model":"free","stream":true,"messages":[{"role":"user","content":"hello"}]}`)
 
@@ -46,7 +49,19 @@ func TestOpenCodeLaneHeaderShapes(t *testing.T) {
 
 	for _, target := range []string{"https://opencode.ai/zen/go/v1/chat/completions", "https://opencode.ai/inference/v1/chat/completions"} {
 		v2 := httptest.NewRequest(http.MethodPost, target, nil)
+		v2.Header.Set("Accept", "text/event-stream")
 		setOpenCodeHeaders(v2, "public", FormatOpenAIChat, session, incoming, task, body)
+		if v2.Header.Get("Accept") != "" {
+			t.Errorf("%s did not leave Accept to the runtime: %v", target, v2.Header)
+		}
+		up := &Upstream{Type: openCodeFreeType, HeaderOverrides: `{"*":true}`}
+		if err := up.applyHeaders(v2, incoming); err != nil || v2.Header.Get("Accept") != "" {
+			t.Errorf("%s broad passthrough changed the runtime Accept: %v %v", target, v2.Header, err)
+		}
+		up.HeaderOverrides = `{"Accept":"text/event-stream"}`
+		if err := up.applyHeaders(v2, incoming); err != nil || v2.Header.Get("Accept") != "text/event-stream" {
+			t.Errorf("%s explicit Accept override was lost: %v %v", target, v2.Header, err)
+		}
 		if got := v2.Header.Get("User-Agent"); got != openCodeV2UserAgent() {
 			t.Errorf("%s User-Agent = %q, want %q", target, got, openCodeV2UserAgent())
 		}
@@ -60,6 +75,9 @@ func TestOpenCodeLaneHeaderShapes(t *testing.T) {
 			t.Errorf("%s project shape: %q", target, v2.Header.Get("x-opencode-project"))
 		}
 	}
+	if got := bunhttp.OpenCodeV2UserAgent(); got != "opencode/latest/2.1.1/cli" {
+		t.Errorf("fallback User-Agent = %q", got)
+	}
 
 	anthropicBody := []byte(`{"model":"free","max_tokens":8,"messages":[{"role":"user","content":"hi"}],"mcp_servers":[{"name":"x","url":"https://example.invalid"}]}`)
 	v1Anthropic := httptest.NewRequest(http.MethodPost, "https://opencode.ai/zen/v1/messages", nil)
@@ -72,6 +90,11 @@ func TestOpenCodeLaneHeaderShapes(t *testing.T) {
 	}
 	if betas := v1Anthropic.Header.Get("anthropic-beta"); !strings.Contains(betas, "mcp-client-2025-04-04") {
 		t.Errorf("v1 Messages beta flags = %q", betas)
+	}
+	v2Anthropic := httptest.NewRequest(http.MethodPost, "https://opencode.ai/inference/anthropic/v1/messages?beta=true", nil)
+	setOpenCodeHeaders(v2Anthropic, "public", FormatAnthropic, session, nil, nil, anthropicBody)
+	if got := v2Anthropic.Header.Get("anthropic-beta"); got != "interleaved-thinking-2025-05-14" {
+		t.Errorf("v2 Messages beta flags = %q", got)
 	}
 }
 
@@ -107,7 +130,7 @@ func TestBunHTTPHeadOrderAndDefaults(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "https://opencode.ai/zen/v1/messages?beta=1", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer public")
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "opencode/latest/2.0.32/cli")
+	req.Header.Set("User-Agent", "opencode/latest/2.1.1/cli")
 	req.Header.Set("Accept", "*/*")
 	req.Header.Set("x-api-key", "public")
 	req.Header.Set("anthropic-version", "2023-06-01")
@@ -118,8 +141,9 @@ func TestBunHTTPHeadOrderAndDefaults(t *testing.T) {
 	}
 	want := "POST /zen/v1/messages?beta=1 HTTP/1.1\r\n" +
 		"Authorization: Bearer public\r\n" +
+		"Content-Length: 16\r\n" +
 		"Content-Type: application/json\r\n" +
-		"User-Agent: opencode/latest/2.0.32/cli\r\n" +
+		"User-Agent: opencode/latest/2.1.1/cli\r\n" +
 		"anthropic-version: 2023-06-01\r\n" +
 		"x-api-key: public\r\n" +
 		"x-opencode-session: ses_abc\r\n" +
@@ -127,13 +151,43 @@ func TestBunHTTPHeadOrderAndDefaults(t *testing.T) {
 		"Accept: */*\r\n" +
 		"Host: opencode.ai\r\n" +
 		"Accept-Encoding: gzip, deflate, br, zstd\r\n" +
-		"Content-Length: 16\r\n" +
 		"\r\n"
 	if string(head) != want {
 		t.Fatalf("unexpected Bun head:\n%q\nwant:\n%q", head, want)
 	}
 	if !decompress {
 		t.Error("transport-added Accept-Encoding did not enable decompression")
+	}
+	// Caller-supplied lengths cannot add a duplicate or misplace the computed
+	// value; nil and empty bodies retain their distinct fetch layouts.
+	req.Header.Set("Content-Length", "999")
+	req.Header.Set("Transfer-Encoding", "chunked")
+	for _, tc := range []struct {
+		name string
+		body []byte
+		want string
+	}{
+		{"absent", nil, ""},
+		{"empty", []byte{}, "Content-Length: 0\r\n"},
+		{"nonempty", body, "Content-Length: 16\r\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			head, _, err := bunHTTPHead(req, tc.body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := string(head)
+			wantCount := 0
+			if tc.want != "" {
+				wantCount = 1
+				if !strings.Contains(got, tc.want+"Content-Type:") {
+					t.Errorf("computed length is outside common headers: %q", got)
+				}
+			}
+			if strings.Count(got, "Content-Length:") != wantCount || strings.Contains(got, "999") || strings.Contains(got, "Transfer-Encoding:") {
+				t.Errorf("incorrect transport-owned headers: %q", got)
+			}
+		})
 	}
 
 	identity := httptest.NewRequest(http.MethodPost, "https://opencode.ai/zen/v1/messages", nil)

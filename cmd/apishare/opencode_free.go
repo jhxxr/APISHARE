@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 )
@@ -108,19 +109,23 @@ func (u *Upstream) openCodeFreeRoute(body []byte, format clientFormat, model str
 	return nil, fmt.Errorf("OpenCode inference 免费模型要求完整的原生工具及参数；当前客户端工具不兼容。Zen 渠道请将上游地址改为 https://opencode.ai/zen；自定义网关请配置对应的 /zen 入口")
 }
 
-// opencode2api appends the protocol endpoint directly to /inference. The
-// family subpaths used by the general catalog adapter are a different route.
-// Apply this only to shaped free requests at the standard official base.
+// OpenCode 2.1 groups inference model routes by provider family, as the
+// catalog adapter does. Keep custom bases and the Zen/Go paths intact.
 func (u *Upstream) openCodeFreeEndpointURL(format clientFormat, endpoint string) string {
 	parsed, err := url.Parse(strings.TrimSpace(u.BaseURL))
-	if err == nil && parsed.Scheme == "https" && strings.EqualFold(parsed.Host, "opencode.ai") && u.openCodeTier() == "zen" {
-		switch strings.TrimRight(parsed.Path, "/") {
-		case "/inference", "/inference/v1":
-			parsed.Path, parsed.RawPath = "/inference", ""
-			return upstreamURL(parsed.String(), endpoint)
+	if err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Host, "opencode.ai") {
+		return upstreamURL(u.BaseURL, endpoint)
+	}
+	target := u.endpointURL(format, endpoint)
+	if format == FormatAnthropic && endpoint == "/v1/messages" && !u.openCodeLegacy() {
+		if parsed, err := url.Parse(target); err == nil {
+			query := parsed.Query()
+			query.Set("beta", "true")
+			parsed.RawQuery = query.Encode()
+			return parsed.String()
 		}
 	}
-	return u.endpointURL(format, endpoint)
+	return target
 }
 
 func openCodeToolContract(raw json.RawMessage, format clientFormat) (string, json.RawMessage) {
@@ -218,8 +223,11 @@ func (u *Upstream) shapeOpenCodeFreeRequest(body []byte, format clientFormat, mo
 		if len(compatibility) > 0 && compatibility[0] != nil {
 			*compatibility[0] = adaptation
 		}
-		encoded, err := json.Marshal(payload)
+		encoded, err := encodeOpenCodeFreeBody(payload, format, true)
 		return encoded, true, err
+	}
+	if format == FormatOpenAIChat && payload["max_tokens"] == nil && payload["max_completion_tokens"] == nil {
+		payload["max_completion_tokens"] = json.RawMessage("32000")
 	}
 	definitions, err := openCodeToolDefinitions()
 	if err != nil {
@@ -242,24 +250,35 @@ func (u *Upstream) shapeOpenCodeFreeRequest(body []byte, format clientFormat, mo
 	}
 	for index, tool := range tools {
 		name, _ := openCodeToolContract(tool, format)
-		if definition, known := definitions[name]; known {
-			// Keep strict/cache flags and other client fields while normalizing
-			// only the description required by the inference gate.
-			var entry map[string]json.RawMessage
-			_ = json.Unmarshal(tool, &entry)
-			if format == FormatOpenAIChat {
-				var function map[string]json.RawMessage
-				_ = json.Unmarshal(entry["function"], &function)
-				function["description"], _ = json.Marshal(definition.Description)
-				entry["function"], _ = json.Marshal(function)
-			} else {
-				entry["description"], _ = json.Marshal(definition.Description)
-			}
-			tools[index], _ = json.Marshal(entry)
+		definition, known := definitions[name]
+		description := definition.Description
+		if name == "shell" && runtime.GOOS == "windows" {
+			description = strings.Replace(description, "on Linux using bash", "on Windows using powershell", 1)
 		}
+		// Preserve explicit strict/cache flags and the caller's schemas. Every
+		// v2 Chat function defaults to strict:false, including extra tools.
+		var entry map[string]json.RawMessage
+		if json.Unmarshal(tool, &entry) != nil || entry == nil {
+			continue
+		}
+		if format == FormatOpenAIChat {
+			var function map[string]json.RawMessage
+			if json.Unmarshal(entry["function"], &function) == nil && function != nil {
+				if known {
+					function["description"], _ = json.Marshal(description)
+				}
+				if function["strict"] == nil {
+					function["strict"] = json.RawMessage("false")
+				}
+				entry["function"], _ = json.Marshal(function)
+			}
+		} else if known {
+			entry["description"], _ = json.Marshal(description)
+		}
+		tools[index], _ = json.Marshal(entry)
 	}
 	payload["tools"], _ = json.Marshal(tools)
-	encoded, err := json.Marshal(payload)
+	encoded, err := encodeOpenCodeFreeBody(payload, format, false)
 	if err != nil {
 		return nil, false, fmt.Errorf("无法构造 OpenCode 免费模型请求")
 	}

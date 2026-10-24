@@ -24,7 +24,10 @@ func retryOpenCodeFreeTier(up *Upstream, req *http.Request, resp *http.Response,
 	if resp.StatusCode != http.StatusForbidden || !up.isOpenCode() || up.openCodeTier() != "zen" || (!up.openCodePublic() && !up.openCodeFreeModel(model)) {
 		return nil, nil
 	}
-	if req.URL.Scheme != "https" || !strings.EqualFold(req.URL.Host, "opencode.ai") || req.URL.User != nil || req.URL.RawQuery != "" || req.URL.Fragment != "" {
+	if req.URL.Scheme != "https" || !strings.EqualFold(req.URL.Host, "opencode.ai") || req.URL.User != nil || req.URL.Fragment != "" {
+		return nil, nil
+	}
+	if req.URL.RawQuery != "" && !(format == FormatAnthropic && req.URL.RawQuery == "beta=true") {
 		return nil, nil
 	}
 	endpoint := nativeEndpoint(format, &canonReq{Model: model, Stream: true})
@@ -89,10 +92,23 @@ func retryOpenCodeFreeTier(up *Upstream, req *http.Request, resp *http.Response,
 			Type string `json:"type"`
 		} `json:"error"`
 	}
-	if json.Unmarshal(errorBody, &failure) != nil || failure.Error.Type != "FreeTierError" {
+	if json.Unmarshal(errorBody, &failure) != nil || failure.Error.Type != "FreeTierError" || openCodeFreeIPBlocked(resp.StatusCode, errorBody) {
 		return nil, nil
 	}
 	resp.Body.Close()
 	attempt.response, err = do(attempt.request)
 	return attempt, err
+}
+
+// An exit-level abuse rejection cannot be fixed by changing the client shape,
+// lane or credential. Keep the original response for relay error handling.
+func openCodeFreeIPBlocked(status int, body []byte) bool {
+	if status != http.StatusForbidden {
+		return false
+	}
+	text := strings.ToLower(string(body))
+	return strings.Contains(text, "abusive traffic") ||
+		strings.Contains(text, "abuse traffic") ||
+		strings.Contains(text, "abuse of traffic") ||
+		(strings.Contains(text, "free models aren't available") && strings.Contains(text, "from your current network"))
 }

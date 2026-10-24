@@ -85,11 +85,16 @@ func TestOpenCodeStaleResponsesRepair(t *testing.T) {
 				if !strings.Contains(string(payload["input"]), "function_call_output") || payload["tools"] == nil || payload["metadata"] == nil {
 					t.Errorf("repair removed client data or tools: %s", body)
 				}
+				if !strings.Contains(string(payload["metadata"]), `"large":9007199254740993`) ||
+					!strings.Contains(string(payload["metadata"]), `"text":"<code>&"`) ||
+					!strings.Contains(string(payload["reasoning"]), `"effort":"none"`) {
+					t.Errorf("repair changed number precision, JSON escaping or reasoning disable: %s", body)
+				}
 				w.Header().Set("Content-Type", "application/json")
 				fmt.Fprint(w, protocolResponses[FormatOpenAIResponse])
 			}))
 			defer server.Close()
-			body := []byte(`{"model":"alias","previous_response_id":"resp_old","input":[{"type":"reasoning","id":"rs_old","summary":[]},{"role":"user","content":"hi"},{"type":"function_call_output","call_id":"call1","output":"ok"}],"tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}],"metadata":{"session_id":"original-session"}}`)
+			body := []byte(`{"model":"alias","previous_response_id":"resp_old","input":[{"type":"reasoning","id":"rs_old","summary":[]},{"role":"user","content":"hi"},{"type":"function_call_output","call_id":"call1","output":"ok"}],"tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}],"reasoning":{"effort":"none"},"metadata":{"session_id":"original-session","large":9007199254740993,"text":"\u003ccode\u003e\u0026"}}`)
 			cr, err := parseClientRequest(FormatOpenAIResponse, body, "alias")
 			if err != nil {
 				t.Fatal(err)

@@ -302,7 +302,9 @@ func setOpenCodeV1Headers(req *http.Request, format clientFormat, session string
 // a bare 40-character hex project, and no x-opencode-request. Anthropic
 // requests carry the fixed beta set.
 func setOpenCodeV2Headers(req *http.Request, format clientFormat, session string, incoming http.Header) {
-	req.Header.Set("Accept", "application/json, text/event-stream")
+	// Bun fetch supplies */* itself. Clear the relay's SSE default before
+	// explicit administrator overrides are applied.
+	req.Header.Del("Accept")
 	req.Header.Set("User-Agent", openCodeV2UserAgent())
 	req.Header.Set("x-opencode-client", "cli")
 	req.Header.Del("x-opencode-request")
@@ -325,7 +327,7 @@ func setOpenCodeV2Headers(req *http.Request, format clientFormat, session string
 		}
 	}
 	if format == FormatAnthropic {
-		req.Header.Set("anthropic-beta", "interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14")
+		req.Header.Set("anthropic-beta", "interleaved-thinking-2025-05-14")
 	}
 }
 
@@ -479,6 +481,7 @@ func setOpenCodeSessionHeaders(req *http.Request, session string) {
 
 func applyOpenCodeHeaderRules(req *http.Request, rules []headerRule, apiKey string, incoming http.Header) error {
 	session, userAgent := req.Header.Get("x-opencode-session"), req.Header.Get("User-Agent")
+	accept := req.Header.Get("Accept")
 	actualSession := req.Header.Get("x-opencode-session-id")
 	requestID := req.Header.Get("x-opencode-request")
 	client, project := req.Header.Get("x-opencode-client"), req.Header.Get("x-opencode-project")
@@ -519,7 +522,7 @@ func applyOpenCodeHeaderRules(req *http.Request, rules []headerRule, apiKey stri
 	}
 	// A deliberate exact UA override remains supported. Broad passthrough must
 	// not accidentally replace the adapter's UA with another SDK's User-Agent.
-	explicitUA, explicitClient, explicitProject := false, false, false
+	explicitUA, explicitClient, explicitProject, explicitAccept := false, false, false, false
 	for _, rule := range rules {
 		if strings.EqualFold(rule.name, "User-Agent") {
 			explicitUA = true
@@ -530,6 +533,9 @@ func applyOpenCodeHeaderRules(req *http.Request, rules []headerRule, apiKey stri
 		if strings.EqualFold(rule.name, "x-opencode-project") {
 			explicitProject = true
 		}
+		if strings.EqualFold(rule.name, "Accept") {
+			explicitAccept = true
+		}
 	}
 	if !explicitUA && userAgent != "" {
 		req.Header.Set("User-Agent", userAgent)
@@ -539,6 +545,13 @@ func applyOpenCodeHeaderRules(req *http.Request, rules []headerRule, apiKey stri
 	}
 	if !explicitProject && project != "" {
 		req.Header.Set("x-opencode-project", project)
+	}
+	if !explicitAccept {
+		if accept == "" {
+			req.Header.Del("Accept")
+		} else {
+			req.Header.Set("Accept", accept)
+		}
 	}
 	req.Header.Set("x-opencode-project", openCodeProjectID(req.Header.Get("x-opencode-project"), legacy))
 	if legacy {

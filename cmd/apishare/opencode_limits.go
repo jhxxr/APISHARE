@@ -15,13 +15,28 @@ import (
 type openCodeRateLimitError struct {
 	until  time.Time
 	detail string
+	status int
 }
 
 func (e *openCodeRateLimitError) Error() string {
+	if e.status == http.StatusServiceUnavailable {
+		message := "OpenCode 免费模型当前出口被上游封禁，请切换出口或等待冷却结束"
+		if e.detail != "" {
+			message += ": " + e.detail
+		}
+		return message
+	}
 	if e.detail != "" {
 		return "OpenCode upstream rate limit: " + e.detail
 	}
 	return "OpenCode upstream rate limit; this credential is cooling down"
+}
+
+func (e *openCodeRateLimitError) statusCode() int {
+	if e.status != 0 {
+		return e.status
+	}
+	return http.StatusTooManyRequests
 }
 
 func (e *openCodeRateLimitError) retryAfter() string {
@@ -62,28 +77,83 @@ func (up *Upstream) openCodeRateKey() openCodeRateKey {
 	}
 	var egress any
 	if up.openCodePublic() {
-		egress = up.ProxyID
-		if up.ProxyID != 0 && db != nil {
-			if proxy, err := dbGetOutboundProxy(up.ProxyID); err == nil {
-				egress = []any{proxy.URL, proxy.Username, proxy.Password}
-			}
-		}
+		egress = up.openCodeEgress()
 	}
 	raw, _ := json.Marshal([]any{origin, up.openCodeTier(), up.openCodeAPIKey(), egress})
 	return openCodeRateKey{db, sha256.Sum256(raw)}
 }
 
-func (up *Upstream) openCodeRateLimit() *openCodeRateLimitError {
+func (up *Upstream) openCodeEgress() any {
+	if up.ProxyID != 0 && db != nil {
+		if proxy, err := dbGetOutboundProxy(up.ProxyID); err == nil {
+			return []any{proxy.URL, proxy.Username, proxy.Password}
+		}
+	}
+	return up.ProxyID
+}
+
+// The official free gateway blocks the exit IP across both Zen entry points
+// and credentials. Keep paid/Go/custom traffic outside this cooldown.
+func (up *Upstream) openCodeFreeExitKey() (openCodeRateKey, bool) {
+	parsed, err := url.Parse(up.BaseURL)
+	if !up.isOpenCode() || err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Host, "opencode.ai") || up.openCodeTier() != "zen" {
+		return openCodeRateKey{}, false
+	}
+	path := strings.TrimRight(parsed.Path, "/")
+	if path == "/zen/go" || strings.HasPrefix(path, "/zen/go/") || path == "/inference/go" || strings.HasPrefix(path, "/inference/go/") {
+		return openCodeRateKey{}, false
+	}
+	if path != "/zen" && !strings.HasPrefix(path, "/zen/") && path != "/inference" && !strings.HasPrefix(path, "/inference/") {
+		return openCodeRateKey{}, false
+	}
+	raw, _ := json.Marshal([]any{"opencode-free-egress", up.openCodeEgress()})
+	return openCodeRateKey{db, sha256.Sum256(raw)}, true
+}
+
+func (up *Upstream) openCodeRateLimit(models ...string) *openCodeRateLimitError {
 	if !up.isOpenCode() {
 		return nil
 	}
-	key := up.openCodeRateKey()
+	keys := []openCodeRateKey{up.openCodeRateKey()}
+	if up.openCodeFreeOnly() || up.openCodePublic() || len(models) > 0 && up.openCodeFreeModel(models[0]) {
+		if key, ok := up.openCodeFreeExitKey(); ok {
+			keys = append(keys, key)
+		}
+	}
 	openCodeRates.Lock()
 	defer openCodeRates.Unlock()
-	state, exists := openCodeRates.entries[key]
-	if !exists || !time.Now().Before(state.limit.until) {
+	var limit *openCodeRateLimitError
+	now := time.Now()
+	for _, key := range keys {
+		state, exists := openCodeRates.entries[key]
+		if exists && now.Before(state.limit.until) && (limit == nil || state.limit.until.After(limit.until)) {
+			copy := state.limit
+			limit = &copy
+		}
+	}
+	return limit
+}
+
+func recordOpenCodeFreeExitBlock(up *Upstream, retryAt time.Time) *openCodeRateLimitError {
+	key, ok := up.openCodeFreeExitKey()
+	if !ok {
 		return nil
 	}
+	now := time.Now()
+	until := now.Add(15 * time.Minute)
+	if retryAt.After(until) {
+		until = retryAt
+	}
+	openCodeRates.Lock()
+	defer openCodeRates.Unlock()
+	state := openCodeRates.entries[key]
+	if state.limit.until.After(until) {
+		until = state.limit.until
+	}
+	state.failures++
+	state.failedAt = now
+	state.limit = openCodeRateLimitError{until: until, status: http.StatusServiceUnavailable}
+	openCodeRates.entries[key] = state
 	limit := state.limit
 	return &limit
 }
@@ -128,6 +198,9 @@ func rememberOpenCodeRateDetail(up *Upstream, limit *openCodeRateLimitError, bod
 	}
 	limit.detail = truncate(strings.TrimSpace(message), 2000)
 	key := up.openCodeRateKey()
+	if limit.status == http.StatusServiceUnavailable {
+		key, _ = up.openCodeFreeExitKey()
+	}
 	openCodeRates.Lock()
 	defer openCodeRates.Unlock()
 	state := openCodeRates.entries[key]
@@ -151,7 +224,11 @@ func markOpenCodeRateSuccess(up *Upstream, started time.Time) {
 }
 
 func (up *Upstream) availableForRelay(models ...string) bool {
-	if !healthAvailable(up.ID) || up.openCodeRateLimit() != nil {
+	var mapped []string
+	if len(models) > 0 {
+		mapped = []string{up.mapModel(models[0])}
+	}
+	if !healthAvailable(up.ID) || up.openCodeRateLimit(mapped...) != nil {
 		return false
 	}
 	if up.Type != "cliproxy" {

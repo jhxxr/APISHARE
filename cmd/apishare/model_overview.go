@@ -261,9 +261,9 @@ func buildModelOverview() (*modelOverviewResponse, error) {
 				source.UpstreamModel = u.mapModel(model)
 				_, source.Explicit = u.servesModelExplicit(model)
 			}
-			source.Healthy = u.availableForRelay()
+			source.Healthy = u.availableForRelay(model)
 			source.Cooldown = !healthAvailable(upstreamID)
-			source.RateLimited = u.openCodeRateLimit() != nil
+			source.RateLimited = u.openCodeRateLimit(u.mapModel(model)) != nil
 			source.Fails = u.relayFailures()
 			source.Uptime = requestUptime(source.Successes, source.Calls)
 			item.Calls += source.Calls
