@@ -13,4 +13,7 @@ Captured OpenCode wording and schemas: MIT, see
 
 API Share changes preserve JSON number precision, convert legacy functions
 without double-prefixing, keep unknown response names unchanged, and integrate
-with the gateway's native and converted JSON/SSE response paths.
+with the gateway's native and converted JSON/SSE response paths. Local streaming
+modifications assemble exact tool-name fragments through argument or terminal
+boundaries with bounded state, without fuzzy matching or rewriting tool inputs.
+The captured prompt/tool assets retain the source revision listed above.

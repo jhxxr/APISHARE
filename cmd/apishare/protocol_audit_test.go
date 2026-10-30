@@ -37,6 +37,51 @@ func TestAuditChatReasoningAliasesDoNotDuplicateOrReadCiphertext(t *testing.T) {
 	}
 }
 
+func TestAuditChatReasoningWhitespaceSurvivesProtocolConversion(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		message map[string]any
+		want    string
+	}{
+		{"space", map[string]any{"reasoning_content": " "}, " "},
+		{"newlines", map[string]any{"reasoning_content": "\n\n"}, "\n\n"},
+		{"tab", map[string]any{"reasoning_content": "\t"}, "\t"},
+		{"nbsp", map[string]any{"reasoning_content": " "}, " "},
+		{"edges", map[string]any{"reasoning_content": " \tplan\n "}, " \tplan\n "},
+		{"empty fallback", map[string]any{"reasoning_content": "", "reasoning": "\n plan\t"}, "\n plan\t"},
+		{"whitespace primary", map[string]any{"reasoning_content": " ", "reasoning": "duplicate", "reasoning_details": []any{map[string]any{"type": "reasoning.text", "text": "duplicate"}}}, " "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := chatReasoningText(tc.message); got != tc.want {
+				t.Fatalf("reasoning field changed: %q, want %q", got, tc.want)
+			}
+			body := jsonText(map[string]any{"choices": []any{map[string]any{"message": tc.message}}})
+			response, err := parseProtocolResponse(FormatOpenAIChat, []byte(body))
+			if err != nil || len(response.Blocks) != 1 || response.Blocks[0].Kind != "thinking" || response.Blocks[0].Text != tc.want {
+				t.Fatalf("JSON reasoning changed: %+v / %v", response, err)
+			}
+			frame := jsonText(map[string]any{"choices": []any{map[string]any{"index": 0, "delta": tc.message}}})
+			stream := "data: " + frame + "\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+			for _, format := range []clientFormat{FormatAnthropic, FormatOpenAIResponse} {
+				converted, err := parseProtocolResponse(format, []byte(jsonText(renderProtocolResponse(format, "alias", "id", response))))
+				if err != nil || len(converted.Blocks) != 1 || converted.Blocks[0].Text != tc.want {
+					t.Fatalf("%s JSON conversion changed reasoning: %+v / %v", format, converted, err)
+				}
+				rec := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(rec)
+				err = relayProtocolSSE(c, &http.Response{Body: io.NopCloser(strings.NewReader(stream))}, FormatOpenAIChat, fixtureTask(t, format, true), &relayInfo{})
+				if err != nil {
+					t.Fatalf("%s stream relay: %v", format, err)
+				}
+				converted, err = collectProtocolSSE(strings.NewReader(rec.Body.String()), format)
+				if err != nil || len(converted.Blocks) != 1 || converted.Blocks[0].Kind != "thinking" || converted.Blocks[0].Text != tc.want {
+					t.Fatalf("%s SSE conversion changed reasoning: %+v / %v\n%s", format, converted, err, rec.Body.String())
+				}
+			}
+		})
+	}
+}
+
 func TestAuditAnthropicInitialOutputUsageIsCumulative(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)

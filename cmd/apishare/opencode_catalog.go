@@ -330,11 +330,11 @@ func latestOpenCodeCatalogLocked() openCodeCatalog {
 	return latest
 }
 
-// The official inference API separates families in the path. Preserve custom
-// gateway paths and legacy /zen endpoints, and never take credential-bearing
+// The inference API separates families in the path. Preserve custom gateway
+// paths and paid legacy /zen endpoints, and never take credential-bearing
 // request origins from remote metadata.
 func (u *Upstream) endpointURL(format clientFormat, endpoint string) string {
-	base := u.BaseURL
+	base := u.openCodeEffectiveBaseURL()
 	if u.isOpenCode() {
 		parsed, err := url.Parse(base)
 		if err == nil {

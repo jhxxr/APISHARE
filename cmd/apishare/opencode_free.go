@@ -65,11 +65,12 @@ func (u *Upstream) openCodeFreeModel(model string) bool {
 }
 
 // OpenCode 2.1 groups inference model routes by provider family, as the
-// catalog adapter does. Keep custom bases and the Zen/Go paths intact.
+// catalog adapter does. Keep custom bases and paid legacy Zen/Go paths intact.
 func (u *Upstream) openCodeFreeEndpointURL(format clientFormat, endpoint string) string {
-	parsed, err := url.Parse(strings.TrimSpace(u.BaseURL))
+	base := u.openCodeEffectiveBaseURL()
+	parsed, err := url.Parse(strings.TrimSpace(base))
 	if err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Host, "opencode.ai") {
-		return upstreamURL(u.BaseURL, endpoint)
+		return upstreamURL(base, endpoint)
 	}
 	target := u.endpointURL(format, endpoint)
 	if format == FormatAnthropic && endpoint == "/v1/messages" && !u.openCodeLegacy() {

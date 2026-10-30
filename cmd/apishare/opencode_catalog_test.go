@@ -204,6 +204,127 @@ func TestOpenCodeCatalogCacheAndFallback(t *testing.T) {
 	}
 }
 
+func TestOpenCodeEffectiveBaseURL(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind, base, key, tier, want string
+	}{
+		{"free default", openCodeFreeType, "", "", "", openCodeFreeBase},
+		{"free whitespace default", openCodeFreeType, "  ", "", "", openCodeFreeBase},
+		{"free zen", openCodeFreeType, "https://opencode.ai/zen", "public", "", openCodeFreeBase},
+		{"free zen v1", openCodeFreeType, "https://opencode.ai/zen/v1/", "custom-key", "zen", openCodeFreeBase},
+		{"legacy public", "opencode", "https://opencode.ai/zen/", " public ", "", openCodeFreeBase},
+		{"legacy public v1", "opencode", "https://opencode.ai/zen/v1", "public", "zen", openCodeFreeBase},
+		{"case insensitive host", openCodeFreeType, "https://OPENCODE.AI/zen", "", "", "https://OPENCODE.AI/inference"},
+		{"paid", "opencode", "https://opencode.ai/zen", "paid-key", "", "https://opencode.ai/zen"},
+		{"missing legacy key", "opencode", "https://opencode.ai/zen", "", "", "https://opencode.ai/zen"},
+		{"go tier", "opencode", "https://opencode.ai/zen", "public", "go", "https://opencode.ai/zen"},
+		{"free invalid go tier", openCodeFreeType, "https://opencode.ai/zen", "public", "go", "https://opencode.ai/zen"},
+		{"go path", "opencode", "https://opencode.ai/zen/go/v1", "public", "", "https://opencode.ai/zen/go/v1"},
+		{"custom origin", openCodeFreeType, "https://custom.invalid/zen/v1", "", "", "https://custom.invalid/zen/v1"},
+		{"custom official path", openCodeFreeType, "https://opencode.ai/gateway/zen", "", "", "https://opencode.ai/gateway/zen"},
+		{"zen child path", openCodeFreeType, "https://opencode.ai/zen/anthropic", "", "", "https://opencode.ai/zen/anthropic"},
+		{"http", openCodeFreeType, "http://opencode.ai/zen", "", "", "http://opencode.ai/zen"},
+		{"explicit port", openCodeFreeType, "https://opencode.ai:443/zen", "", "", "https://opencode.ai:443/zen"},
+		{"credentials", openCodeFreeType, "https://user@opencode.ai/zen", "", "", "https://user@opencode.ai/zen"},
+		{"query", openCodeFreeType, "https://opencode.ai/zen?beta=true", "", "", "https://opencode.ai/zen?beta=true"},
+		{"empty query", openCodeFreeType, "https://opencode.ai/zen?", "", "", "https://opencode.ai/zen?"},
+		{"fragment", openCodeFreeType, "https://opencode.ai/zen#fragment", "", "", "https://opencode.ai/zen#fragment"},
+		{"empty fragment", openCodeFreeType, "https://opencode.ai/zen#", "", "", "https://opencode.ai/zen#"},
+		{"encoded path", openCodeFreeType, "https://opencode.ai/%7Aen", "", "", "https://opencode.ai/%7Aen"},
+		{"invalid URL", openCodeFreeType, "https://opencode.ai/%zz", "", "", "https://opencode.ai/%zz"},
+		{"other provider", "openai", "https://opencode.ai/zen", "public", "", "https://opencode.ai/zen"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			up := &Upstream{Type: tc.kind, BaseURL: tc.base, APIKey: tc.key, OpenCodeTier: tc.tier}
+			before := *up
+			if got := up.openCodeEffectiveBaseURL(); got != tc.want {
+				t.Fatalf("effective base = %q, want %q", got, tc.want)
+			}
+			if !reflect.DeepEqual(*up, before) {
+				t.Fatal("effective routing changed saved configuration")
+			}
+		})
+	}
+	up := &Upstream{Type: openCodeFreeType}
+	if err := up.normalizeOpenCodeFree(); err != nil || up.BaseURL != openCodeFreeBase || up.APIKey != "public" || up.OpenCodeTier != "zen" {
+		t.Fatalf("free-only default normalization: %+v %v", up, err)
+	}
+}
+
+type openCodeRoutingTransport func(*http.Request) (*http.Response, error)
+
+func (f openCodeRoutingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestOpenCodeDiscoveryEffectiveRoutes(t *testing.T) {
+	modelsTestDB(t)
+	metadata := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/catalog" {
+			fmt.Fprint(w, `{"opencode":{"npm":"@ai-sdk/openai-compatible","models":{"model-free":{"cost":{"input":0,"output":0}}}},"opencode-go":{"npm":"@ai-sdk/openai-compatible","models":{"model-free":{}}}}`)
+		}
+	}))
+	t.Cleanup(metadata.Close)
+	useOpenCodeCatalogSources(t, metadata.URL)
+	if _, err := getOpenCodeCatalog(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	for index, tc := range []struct {
+		name, kind, base, key, want string
+	}{
+		{"free default", openCodeFreeType, "", "", "https://opencode.ai/inference/v1/models"},
+		{"free zen", openCodeFreeType, "https://opencode.ai/zen/v1", "", "https://opencode.ai/inference/v1/models"},
+		{"free inference", openCodeFreeType, "https://opencode.ai/inference/anthropic/v1", "public", "https://opencode.ai/inference/v1/models"},
+		{"legacy public zen", "opencode", "https://opencode.ai/zen", "public", "https://opencode.ai/inference/v1/models"},
+		{"legacy paid zen", "opencode", "https://opencode.ai/zen/v1", "paid-key", "https://opencode.ai/zen/v1/models"},
+		{"go inference", "opencode", "https://opencode.ai/inference/go/openai/v1", "go-key", "https://opencode.ai/inference/go/v1/models"},
+		{"go zen", "opencode", "https://opencode.ai/zen/go/v1", "go-key", "https://opencode.ai/zen/go/v1/models"},
+		{"custom free zen", openCodeFreeType, "https://custom.invalid/zen/v1", "public", "https://custom.invalid/zen/v1/models"},
+		{"custom gateway", "opencode", "https://custom.invalid/gateway/v1", "paid-key", "https://custom.invalid/gateway/v1/models"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			client := &http.Client{Transport: openCodeRoutingTransport(func(req *http.Request) (*http.Response, error) {
+				calls++
+				key := tc.key
+				if key == "" {
+					key = "public"
+				}
+				if req.URL.String() != tc.want || req.Header.Get("Authorization") != "Bearer "+key || req.Header.Get("x-api-key") != "" {
+					t.Errorf("discovery route/credential = %s %v, want %s", req.URL, req.Header, tc.want)
+				}
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"data":[{"id":"model-free"}]}`)), Header: http.Header{}}, nil
+			})}
+			up := &Upstream{ID: int64(8000 + index), Type: tc.kind, BaseURL: tc.base, APIKey: tc.key}
+			for _, mode := range []string{"saved", "unsaved", "cached"} {
+				before := *up
+				var ids []string
+				var err error
+				switch mode {
+				case "saved":
+					ids, err = probeConfiguredModelList(context.Background(), up, client, nil)
+				case "unsaved":
+					ids, err = probeUpstreamModelsWithClient(context.Background(), up.Type, up.BaseURL, up.APIKey, client)
+				case "cached":
+					previous := modelsFetchClient
+					modelsFetchClient = client
+					ids, err = cachedUpstreamModels(context.Background(), up)
+					modelsFetchClient = previous
+				}
+				if err != nil || !reflect.DeepEqual(ids, []string{"model-free"}) {
+					t.Fatalf("%s discovery = %v %v", mode, ids, err)
+				}
+				if !reflect.DeepEqual(*up, before) {
+					t.Fatalf("%s discovery mutated configuration", mode)
+				}
+			}
+			if calls != 3 {
+				t.Fatalf("discovery calls = %d, want 3", calls)
+			}
+		})
+	}
+}
+
 func TestOpenCodeEndpointCompatibility(t *testing.T) {
 	for _, tc := range []struct{ base, tier, want, models string }{
 		{"https://opencode.ai/inference", "go", "https://opencode.ai/inference/go/anthropic/v1/messages", "https://opencode.ai/inference/go/v1/models"},

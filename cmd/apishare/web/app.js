@@ -23,7 +23,7 @@ const fmtTime = (value) => {
 };
 const number = (value) => Number(value || 0).toLocaleString("zh-CN");
 const upstreamFormatNames = { cliproxy: "CLIProxyAPI · 原生协议", "openai-chat": "OpenAI Chat Completions", "openai-responses": "OpenAI Responses", "openai-auto": "OpenAI · 旧配置（跟随客户端）", "opencode-free": "OpenCode 免费模型", opencode: "OpenCode · 旧配置（Zen / Go）", cline: "Cline 免费模型", anthropic: "Anthropic Messages", gemini: "Gemini generateContent" };
-const providerURLs = { cliproxy: "http://127.0.0.1:18317", openai: "https://api.openai.com", "opencode-free": "https://opencode.ai/zen", opencode: "https://opencode.ai/zen", cline: "https://api.cline.bot/api/v1", anthropic: "https://api.anthropic.com", gemini: "https://generativelanguage.googleapis.com" };
+const providerURLs = { cliproxy: "http://127.0.0.1:18317", openai: "https://api.openai.com", "opencode-free": "https://opencode.ai/inference", opencode: "https://opencode.ai/zen", cline: "https://api.cline.bot/api/v1", anthropic: "https://api.anthropic.com", gemini: "https://generativelanguage.googleapis.com" };
 const openCodeURLs = { zen: providerURLs.opencode, go: "https://opencode.ai/zen/go" };
 const isOpenCodeType = (type) => type === "opencode" || type === "opencode-free";
 function upstreamFormat(upstream) {

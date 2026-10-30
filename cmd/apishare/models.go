@@ -209,7 +209,8 @@ func probeUpstreamModelListWithClient(ctx context.Context, upType, baseURL, apiK
 	if upType == "gemini" {
 		path = "/v1beta/models"
 	}
-	endpoint, _ := url.Parse(upstreamURL(baseURL, path))
+	route := &Upstream{Type: upType, BaseURL: baseURL, APIKey: apiKey}
+	endpoint, _ := url.Parse(route.endpointURL(FormatOpenAIChat, path))
 	ids := make([]string, 0)
 	seenIDs, seenCursors := map[string]bool{}, map[string]bool{}
 	cursor := ""

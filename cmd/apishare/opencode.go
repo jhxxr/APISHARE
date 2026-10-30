@@ -610,6 +610,6 @@ func (u *Upstream) openCodeLegacy() bool {
 	if !u.isOpenCode() {
 		return false
 	}
-	probe, err := http.NewRequest(http.MethodPost, upstreamURL(u.BaseURL, "/v1/messages"), nil)
+	probe, err := http.NewRequest(http.MethodPost, upstreamURL(u.openCodeEffectiveBaseURL(), "/v1/messages"), nil)
 	return err == nil && openCodeLegacyRequest(probe)
 }

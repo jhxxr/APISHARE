@@ -417,7 +417,6 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		}
 		url = up.endpointURL(wireFormat, nativeEndpoint(wireFormat, &canonReq{Model: upModel, Stream: task.stream}))
 	}
-	freeOriginalBody := reqBody
 	var freeShaped bool
 	var freeTools openCodeToolCompatibility
 	reqBody, freeShaped, err = up.shapeOpenCodeFreeRequest(reqBody, wireFormat, upModel, &freeTools)
@@ -540,17 +539,6 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	}()
 	keepalive := beginMessagesKeepalive(c, task)
 	resp, err := messagesHTTPDo(client, req, keepalive, cancel)
-	var freePreviousPath string
-	if err == nil && freeShaped {
-		var attempt *openCodeFreeAttempt
-		attempt, err = retryOpenCodeFreeTier(up, req, resp, freeOriginalBody, wireFormat, upModel, c.Request.Header, func(retry *http.Request) (*http.Response, error) {
-			return messagesHTTPDo(client, retry, keepalive, cancel)
-		})
-		if attempt != nil {
-			req, resp, reqBody, freeTools = attempt.request, attempt.response, attempt.body, attempt.tools
-			freePreviousPath = attempt.previousPath
-		}
-	}
 	if err == nil && up.Type == "cline" {
 		resp, err = retryClineUnauthorized(client, req, resp, up, func(retry *http.Request) (*http.Response, error) {
 			return messagesHTTPDo(client, retry, keepalive, cancel)
@@ -618,9 +606,6 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		detail := up.redactAPIKeys(string(b))
 		if up.isOpenCode() {
 			detail = redactModelTestError(detail, up.openCodeAPIKey())
-			if freePreviousPath != "" {
-				detail += "; 首次入口 " + freePreviousPath + " 返回 FreeTierError，已尝试另一入口"
-			}
 		}
 		info.OutputText.WriteString(detail)
 		if isRetryableStatus(info.Status) {

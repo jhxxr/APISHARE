@@ -10,7 +10,7 @@ import (
 )
 
 const openCodeFreeType = "opencode-free"
-const openCodeFreeBase = "https://opencode.ai/zen"
+const openCodeFreeBase = "https://opencode.ai/inference"
 
 // Keep the original paid/subscription channel readable without changing its
 // credential or tier. New channels expose the separate, free-only contract.
@@ -19,6 +19,29 @@ func (u *Upstream) isOpenCode() bool {
 }
 
 func (u *Upstream) openCodeFreeOnly() bool { return u.Type == openCodeFreeType }
+
+// Resolve legacy public/free-only Zen configurations without rewriting saved
+// settings. Only the exact official HTTPS origin and base paths are migrated;
+// paid credentials, Go routes, custom gateways and invalid origins stay intact.
+func (u *Upstream) openCodeEffectiveBaseURL() string {
+	base := u.BaseURL
+	if u.openCodeFreeOnly() && strings.TrimSpace(base) == "" {
+		base = openCodeFreeBase
+	}
+	if !u.isOpenCode() || u.OpenCodeTier == "go" || u.openCodeTier() != "zen" || (!u.openCodeFreeOnly() && !u.openCodePublic()) {
+		return base
+	}
+	parsed, err := url.Parse(base)
+	if err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Host, "opencode.ai") || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || strings.Contains(base, "#") {
+		return base
+	}
+	path := strings.TrimRight(parsed.EscapedPath(), "/")
+	if path != "/zen" && path != "/zen/v1" {
+		return base
+	}
+	parsed.Path, parsed.RawPath = "/inference", ""
+	return parsed.String()
+}
 
 func (u *Upstream) openCodeAPIKey() string {
 	if u.openCodeFreeOnly() && strings.TrimSpace(u.APIKey) == "" {
@@ -46,7 +69,7 @@ func (u *Upstream) normalizeOpenCodeFree() error {
 		return fmt.Errorf("OpenCode 免费模型地址须为不含认证、查询参数或片段的 HTTP(S) 地址")
 	}
 	if u.OpenCodeTier == "go" || (strings.EqualFold(parsed.Hostname(), "opencode.ai") && strings.Contains("/"+strings.Trim(parsed.Path, "/")+"/", "/go/")) {
-		return fmt.Errorf("OpenCode 免费模型使用 Zen 免费目录，请使用 https://opencode.ai/zen")
+		return fmt.Errorf("OpenCode 免费模型使用 Zen 免费目录，请使用 https://opencode.ai/inference")
 	}
 	u.OpenCodeTier = "zen"
 	u.APIKey = u.openCodeAPIKey()

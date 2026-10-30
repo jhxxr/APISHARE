@@ -2,32 +2,40 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestOpenCodeFreeEndpointRoutes(t *testing.T) {
 	for _, tc := range []struct {
-		base, tier string
-		format     clientFormat
-		want       string
+		name, base, tier, key string
+		format                clientFormat
+		want                  string
 	}{
-		{"https://opencode.ai/inference", "", FormatOpenAIChat, "https://opencode.ai/inference/openai/v1/chat/completions"},
-		{"https://opencode.ai/inference/v1/", "", FormatOpenAIResponse, "https://opencode.ai/inference/openai/v1/responses"},
-		{"https://opencode.ai/inference/openai/v1", "", FormatAnthropic, "https://opencode.ai/inference/anthropic/v1/messages?beta=true"},
-		{"https://opencode.ai/inference/anthropic", "", FormatOpenAIChat, "https://opencode.ai/inference/openai/v1/chat/completions"},
-		{"https://opencode.ai/zen", "", FormatAnthropic, "https://opencode.ai/zen/v1/messages"},
-		{"https://opencode.ai/zen/go", "go", FormatOpenAIChat, "https://opencode.ai/zen/go/v1/chat/completions"},
-		{"https://custom.invalid/inference", "", FormatOpenAIChat, "https://custom.invalid/inference/v1/chat/completions"},
-		{"https://custom.invalid/gateway/v1", "", FormatAnthropic, "https://custom.invalid/gateway/v1/messages"},
+		{"inference-chat", "https://opencode.ai/inference", "", "public", FormatOpenAIChat, "https://opencode.ai/inference/openai/v1/chat/completions"},
+		{"inference-responses", "https://opencode.ai/inference/v1/", "", "public", FormatOpenAIResponse, "https://opencode.ai/inference/openai/v1/responses"},
+		{"inference-messages", "https://opencode.ai/inference/openai/v1", "", "public", FormatAnthropic, "https://opencode.ai/inference/anthropic/v1/messages?beta=true"},
+		{"inference-other-family", "https://opencode.ai/inference/anthropic", "", "public", FormatOpenAIChat, "https://opencode.ai/inference/openai/v1/chat/completions"},
+		{"public-zen-migrates", "https://opencode.ai/zen", "", "public", FormatAnthropic, "https://opencode.ai/inference/anthropic/v1/messages?beta=true"},
+		{"keyed-zen-stays", "https://opencode.ai/zen", "", "paid-key", FormatAnthropic, "https://opencode.ai/zen/v1/messages"},
+		{"go-stays", "https://opencode.ai/zen/go", "go", "public", FormatOpenAIChat, "https://opencode.ai/zen/go/v1/chat/completions"},
+		{"custom-inference-stays", "https://custom.invalid/inference", "", "public", FormatOpenAIChat, "https://custom.invalid/inference/v1/chat/completions"},
+		{"custom-gateway-stays", "https://custom.invalid/gateway/v1", "", "public", FormatAnthropic, "https://custom.invalid/gateway/v1/messages"},
 	} {
-		t.Run(tc.want, func(t *testing.T) {
-			up := &Upstream{Type: "opencode", BaseURL: tc.base, OpenCodeTier: tc.tier}
+		t.Run(tc.name, func(t *testing.T) {
+			up := &Upstream{Type: "opencode", BaseURL: tc.base, OpenCodeTier: tc.tier, APIKey: tc.key}
 			endpoint := nativeEndpoint(tc.format, &canonReq{})
 			if got := up.openCodeFreeEndpointURL(tc.format, endpoint); got != tc.want {
 				t.Fatalf("endpoint = %s, want %s", got, tc.want)
@@ -139,16 +147,16 @@ func TestOpenCodeV2FreeBodyPreservesNativeTools(t *testing.T) {
 
 func TestOpenCodeFreeBodyLaneIsolation(t *testing.T) {
 	for _, tc := range []struct {
-		name, base string
-		format     clientFormat
-		body       string
+		name, kind, base, key string
+		format                clientFormat
+		body                  string
 	}{
-		{"legacy", "https://opencode.ai/zen", FormatOpenAIChat, `{"model":"free","messages":[{"role":"user","content":"<x>&"}]}`},
-		{"responses", "https://opencode.ai/inference", FormatOpenAIResponse, `{"model":"free","input":"<x>&"}`},
-		{"messages", "https://opencode.ai/inference", FormatAnthropic, `{"model":"free","max_tokens":64,"messages":[{"role":"user","content":"<x>&"}]}`},
+		{"legacy", "opencode", "https://opencode.ai/zen", "paid-key", FormatOpenAIChat, `{"model":"free","messages":[{"role":"user","content":"<x>&"}]}`},
+		{"responses", openCodeFreeType, "https://opencode.ai/inference", "public", FormatOpenAIResponse, `{"model":"free","input":"<x>&"}`},
+		{"messages", openCodeFreeType, "https://opencode.ai/inference", "public", FormatAnthropic, `{"model":"free","max_tokens":64,"messages":[{"role":"user","content":"<x>&"}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			up := &Upstream{Type: openCodeFreeType, BaseURL: tc.base, APIKey: "public"}
+			up := &Upstream{Type: tc.kind, BaseURL: tc.base, APIKey: tc.key}
 			got, shaped, err := up.shapeOpenCodeFreeRequest([]byte(tc.body), tc.format, "free")
 			if err != nil || !shaped || bytes.Contains(got, []byte("max_completion_tokens")) || bytes.Contains(got, []byte(`\u003c`)) {
 				t.Fatalf("incorrect lane body: %s %v", got, err)
@@ -165,65 +173,126 @@ func TestOpenCodeFreeBodyLaneIsolation(t *testing.T) {
 	}
 }
 
-func TestOpenCodeFreeTierRetryUsesLatestShape(t *testing.T) {
+func TestOpenCodeFreeTierErrorsDoNotReplay(t *testing.T) {
+	modelsTestDB(t)
+	var calls atomic.Int32
+	type observedRequest struct {
+		path, query string
+		header      http.Header
+		body        []byte
+	}
+	requests := make(chan observedRequest, 32)
+	failure := `{"error":{"type":"FreeTierError","message":"free tier can only be used from within OpenCode"}}`
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		body, _ := io.ReadAll(r.Body)
+		requests <- observedRequest{r.URL.Path, r.URL.RawQuery, r.Header.Clone(), body}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, failure)
+	}))
+	t.Cleanup(server.Close)
+	originalRelay, originalDiagnostic := upstreamHTTPClient, modelTestClient
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	upstreamHTTPClient = &http.Client{Transport: transport, Timeout: 5 * time.Second}
+	modelTestClient = upstreamHTTPClient
+	t.Cleanup(func() {
+		upstreamHTTPClient, modelTestClient = originalRelay, originalDiagnostic
+		transport.CloseIdleConnections()
+	})
+	proxy := testSavedProxy(t, "socks5h://"+testSOCKSProxy(t, server.Listener.Addr().String(), make(chan string, 32)), "alice", "secret")
+	openCodeCatalogs.Lock()
+	openCodeCatalogs.entries[openCodeCatalogCacheKey(proxy)] = &openCodeCatalogEntry{catalog: openCodeCatalog{
+		At: time.Now(), Tiers: map[string]map[string]clientFormat{"zen": {"model-free": FormatOpenAIChat}},
+		FreeModels: map[string]map[string]bool{"zen": {"model-free": true}},
+	}}
+	openCodeCatalogs.Unlock()
+
 	for _, format := range []clientFormat{FormatOpenAIChat, FormatOpenAIResponse, FormatAnthropic} {
-		for _, fromZen := range []bool{true, false} {
-			direction := "inference-to-zen"
-			if fromZen {
-				direction = "zen-to-inference"
-			}
-			t.Run(string(format)+"/"+direction, func(t *testing.T) {
-				up := &Upstream{Type: openCodeFreeType, BaseURL: "https://opencode.ai/inference", APIKey: "public"}
-				if fromZen {
-					up.BaseURL = "https://opencode.ai/zen"
+		for _, route := range []struct {
+			name, kind, base, key string
+			legacy                bool
+		}{
+			{"free-only-zen", openCodeFreeType, "https://opencode.ai/zen/v1", "", false},
+			{"public-zen", "opencode", "https://opencode.ai/zen", "public", false},
+			{"public-inference", "opencode", "https://opencode.ai/inference", "public", false},
+			{"keyed-zen", "opencode", "https://opencode.ai/zen", "paid-key", true},
+		} {
+			t.Run(string(format)+"/"+route.name, func(t *testing.T) {
+				protocol := map[clientFormat]string{FormatOpenAIChat: "chat", FormatOpenAIResponse: "responses", FormatAnthropic: "anthropic"}[format]
+				up := &Upstream{Type: route.kind, BaseURL: route.base, APIKey: route.key, OpenAIProtocol: protocol, ProxyID: proxy.ID}
+				before := calls.Load()
+				if _, status, err := testUpstreamModel(context.Background(), up, "model-free", "<hello>&", 64, false); status != 403 || err == nil || !strings.Contains(err.Error(), failure) || strings.Contains(err.Error(), "已尝试另一入口") {
+					t.Fatalf("diagnostic did not preserve eligibility error: status=%d err=%v", status, err)
 				}
-				original := []byte(`{"model":"free","messages":[{"role":"user","content":"<hello>&"}]}`)
-				if format == FormatOpenAIResponse {
-					original = []byte(`{"model":"free","input":"<hello>&"}`)
+				if calls.Load() != before+1 {
+					t.Fatalf("diagnostic replayed request: %d attempts", calls.Load()-before)
 				}
-				session, _ := newOpenCodeSessionID()
-				endpoint := nativeEndpoint(format, &canonReq{})
-				req := httptest.NewRequest(http.MethodPost, up.openCodeFreeEndpointURL(format, endpoint), nil)
-				setOpenCodeHeaders(req, "public", format, session, nil, nil, original)
-				resp := &http.Response{StatusCode: 403, Body: io.NopCloser(strings.NewReader(`{"error":{"type":"FreeTierError","message":"free tier can only be used from within OpenCode"}}`))}
-				attempt, err := retryOpenCodeFreeTier(up, req, resp, original, format, "free", nil, func(retry *http.Request) (*http.Response, error) {
-					want := "https://opencode.ai/zen" + endpoint
-					if fromZen {
+				check := func(request observedRequest) {
+					t.Helper()
+					endpoint := nativeEndpoint(format, &canonReq{})
+					path, query := "/zen"+endpoint, ""
+					if !route.legacy {
 						family := "openai"
 						if format == FormatAnthropic {
-							family = "anthropic"
+							family, query = "anthropic", "beta=true"
 						}
-						want = "https://opencode.ai/inference/" + family + endpoint
-						if format == FormatAnthropic {
-							want += "?beta=true"
+						path = "/inference/" + family + endpoint
+					}
+					if request.path != path || request.query != query {
+						t.Errorf("initial route = %s?%s, want %s?%s", request.path, request.query, path, query)
+					}
+					if !json.Valid(request.body) || bytes.Contains(request.body, []byte(`\u003c`)) || !openCodeSessionUsable(request.header.Get("x-opencode-session"), time.Now()) {
+						t.Errorf("initial request lost shaping or session: %s %v", request.body, request.header)
+					}
+					key := route.key
+					if key == "" {
+						key = "public"
+					}
+					if format == FormatAnthropic {
+						if request.header.Get("x-api-key") != key || request.header.Get("Authorization") != "" {
+							t.Errorf("Messages authentication changed: %v", request.header)
 						}
+					} else if request.header.Get("Authorization") != "Bearer "+key {
+						t.Errorf("bearer credential changed: %v", request.header)
 					}
-					if retry.URL.String() != want || retry.Header.Get("x-opencode-session") != session {
-						t.Errorf("retry route or session changed: %s %v", retry.URL, retry.Header)
+					if route.legacy != (request.header.Get("x-opencode-request") != "") {
+						t.Errorf("headers disagree with effective lane: %v", request.header)
 					}
-					body, _ := io.ReadAll(retry.Body)
-					if bytes.Contains(body, []byte(`\u003c`)) {
-						t.Errorf("retry restored HTML escapes: %s", body)
+					if format == FormatOpenAIChat && !route.legacy && !bytes.HasPrefix(request.body, []byte(`{"model":`)) {
+						t.Errorf("initial inference request omitted v2 body shape: %s", request.body)
 					}
-					if fromZen && format == FormatOpenAIChat && (!bytes.HasPrefix(body, []byte(`{"model":`)) || !bytes.Contains(body, []byte(`"max_completion_tokens":32000`))) {
-						t.Errorf("retry omitted v2 body shape: %s", body)
-					}
-					if fromZen && retry.Header.Get("Accept") != "" || !fromZen && retry.Header.Get("Accept") != "*/*" {
-						t.Errorf("retry used incorrect Accept: %v", retry.Header)
-					}
-					return &http.Response{StatusCode: 200, Body: http.NoBody}, nil
-				})
-				if err != nil || attempt == nil || attempt.response.StatusCode != 200 {
-					t.Fatalf("eligibility retry failed: %+v %v", attempt, err)
+				}
+				check(<-requests)
+				body, err := renderProtocolRequest(format, &canonReq{Model: "model-free", Messages: []canonMsg{{Role: "user", Text: "<hello>&"}}}, "model-free")
+				if err != nil {
+					t.Fatal(err)
+				}
+				cr, err := parseClientRequest(format, body, "model-free")
+				if err != nil {
+					t.Fatal(err)
+				}
+				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				c.Request = httptest.NewRequest(http.MethodPost, nativeEndpoint(format, cr), nil)
+				task := &relayTask{format: format, endpoint: nativeEndpoint(format, cr), model: "model-free", body: body, canon: cr}
+				info, wrote, err := doRelay(c, up, task)
+				if info.Status != 403 || wrote || err == nil || info.OutputText.String() != failure || strings.Contains(err.Error(), "已尝试另一入口") {
+					t.Fatalf("relay did not preserve eligibility failure: %+v wrote=%v err=%v", info, wrote, err)
+				}
+				if calls.Load() != before+2 {
+					t.Fatalf("relay replayed request: %d attempts", calls.Load()-before-1)
+				}
+				check(<-requests)
+				if up.BaseURL != route.base || up.APIKey != route.key {
+					t.Fatal("routing mutated configured URL or credential")
 				}
 			})
 		}
 	}
 }
 
-func TestOpenCodeFreeTierRejectsAbuseReplay(t *testing.T) {
-	up := &Upstream{Type: openCodeFreeType, BaseURL: "https://opencode.ai/zen", APIKey: "public"}
-	req := httptest.NewRequest(http.MethodPost, "https://opencode.ai/zen/v1/chat/completions", nil)
+func TestOpenCodeFreeIPBlockedClassification(t *testing.T) {
 	for _, message := range []string{
 		"free models aren't available from your current network",
 		"Forbidden, OpenCode Free Model Gateway Detect Abuse Traffic",
@@ -231,18 +300,20 @@ func TestOpenCodeFreeTierRejectsAbuseReplay(t *testing.T) {
 		"detected abusive traffic from this IP address",
 	} {
 		body, _ := json.Marshal(map[string]any{"error": map[string]string{"type": "FreeTierError", "message": message}})
-		resp := &http.Response{StatusCode: 403, Body: io.NopCloser(bytes.NewReader(body))}
-		attempt, err := retryOpenCodeFreeTier(up, req, resp, []byte(`{"model":"free","messages":[]}`), FormatOpenAIChat, "free", nil, func(*http.Request) (*http.Response, error) {
-			t.Error("IP abuse block was replayed through another entry")
-			return nil, nil
-		})
-		if err != nil || attempt != nil {
-			t.Fatalf("unexpected abuse retry: %+v %v", attempt, err)
+		original := bytes.Clone(body)
+		if !openCodeFreeIPBlocked(403, body) || openCodeFreeIPBlocked(400, body) {
+			t.Errorf("incorrect IP abuse classification: %s", body)
 		}
-		restored, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if !bytes.Equal(restored, body) {
-			t.Errorf("classification consumed the original response: %s", restored)
+		if !bytes.Equal(body, original) {
+			t.Errorf("classification mutated the original response: %s", body)
+		}
+	}
+	for _, body := range []string{
+		`{"error":{"type":"FreeTierError","message":"free tier can only be used from within OpenCode"}}`,
+		`{"error":{"type":"permission_error","message":"ordinary forbidden"}}`,
+	} {
+		if openCodeFreeIPBlocked(403, []byte(body)) {
+			t.Errorf("ordinary eligibility error misclassified as an IP block: %s", body)
 		}
 	}
 }
