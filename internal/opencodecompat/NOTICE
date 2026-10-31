@@ -17,3 +17,10 @@ with the gateway's native and converted JSON/SSE response paths. Local streaming
 modifications assemble exact tool-name fragments through argument or terminal
 boundaries with bounded state, without fuzzy matching or rewriting tool inputs.
 The captured prompt/tool assets retain the source revision listed above.
+
+Client tool names additionally follow upstream commit
+4a4db10387ac6272c1e1ce754400870eed9c29f8 (2026-10-29, PR #161):
+clint_ plus the first twelve hex characters of the name's SHA-256.
+The request-local reverse map, schemas, descriptions and exact streaming
+restoration remain intact; original tool names do not survive in tool-name
+fields sent to the upstream.

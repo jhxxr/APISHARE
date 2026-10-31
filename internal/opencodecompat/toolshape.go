@@ -171,7 +171,7 @@ func v1BashDescription(base string) string {
 }
 
 // renameAndCompleteTools makes the tool list read as an official CLI session:
-// every named client tool is renamed with the clint_ prefix, legacy functions
+// every named client tool is renamed to an opaque clint_ digest, legacy functions
 // arrays are converted, and the full official set for the lane is appended.
 // The returned map restores the client names in the upstream response.
 func renameAndCompleteTools(payload map[string]any, protocol Protocol, v1 bool) (*ToolRenames, bool) {

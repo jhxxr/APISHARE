@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"apishare/internal/opencodecompat"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -133,14 +135,15 @@ func TestOpenCodeV2FreeBodyPreservesNativeTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"strict":true`, `"const":9007199254740993`, `"cache_control":{"type":"ephemeral"}`, `"name":"clint_extra","parameters":{"type":"object"}`} {
+	extra := opencodecompat.ClientToolWireName("extra", nil)
+	for _, want := range []string{`"strict":true`, `"const":9007199254740993`, `"cache_control":{"type":"ephemeral"}`, fmt.Sprintf(`"name":%q,"parameters":{"type":"object"}`, extra)} {
 		if !bytes.Contains(body, []byte(want)) {
 			t.Errorf("native tool option lost: %s in %s", want, body)
 		}
 	}
 	foreign := []byte(`{"model":"free","messages":[],"tools":[{"type":"function","function":{"name":"Read","parameters":{"type":"object","properties":{"file_path":{"type":"string"}}}}}]}`)
 	body, _, err = up.shapeOpenCodeFreeRequest(foreign, FormatOpenAIChat, "free")
-	if err != nil || !bytes.Contains(body, []byte(`"name":"clint_Read"`)) || !bytes.Contains(body, []byte(`"file_path":{"type":"string"}`)) {
+	if err != nil || !bytes.Contains(body, []byte(fmt.Sprintf(`"name":%q`, opencodecompat.ClientToolWireName("Read", nil)))) || !bytes.Contains(body, []byte(`"file_path":{"type":"string"}`)) {
 		t.Fatalf("foreign tool contract did not survive inference shaping: %s %v", body, err)
 	}
 }

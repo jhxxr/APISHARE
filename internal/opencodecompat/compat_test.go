@@ -60,17 +60,17 @@ func TestClientToolsCollisionsLegacyAndReferences(t *testing.T) {
 	a, _ := renames.Wire("read.file")
 	b, _ := renames.Wire("read/file")
 	legacy, _ := renames.Wire("legacy")
-	if a == b || a != "clint_read_file" || legacy != "clint_legacy" || len(a) > 64 {
+	if a == b || !opaqueClientToolPattern.MatchString(a) || !opaqueClientToolPattern.MatchString(b) || !opaqueClientToolPattern.MatchString(legacy) {
 		t.Fatalf("non-invertible aliases: %q %q %q", a, b, legacy)
 	}
-	for _, tool := range SliceAt(payload, "tools")[:3] {
+	for index, tool := range SliceAt(payload, "tools")[:3] {
 		entry := tool.(map[string]any)
-		if name := StringAt(entry, "function", "name"); strings.Contains(name, "clint_clint_") {
-			t.Fatalf("legacy function was double-prefixed: %s", name)
+		if name := StringAt(entry, "function", "name"); name != []string{a, b, legacy}[index] {
+			t.Fatalf("tool was renamed more than once: %s", name)
 		}
 	}
 	encoded, _ := Marshal(payload)
-	for _, text := range []string{`"function":{"name":"clint_read_file"}`, `"function_call":{"name":"clint_legacy"}`, `"const":9007199254740993`, `"strict":true`, `\"name\":\"read.file\"`} {
+	for _, text := range []string{fmt.Sprintf(`"function":{"name":%q}`, a), fmt.Sprintf(`"function_call":{"name":%q}`, legacy), `"const":9007199254740993`, `"strict":true`, `\"name\":\"read.file\"`} {
 		if !bytes.Contains(encoded, []byte(text)) {
 			t.Errorf("lost reference, schema or argument: %s", text)
 		}

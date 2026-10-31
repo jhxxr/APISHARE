@@ -9,11 +9,14 @@ import (
 	"testing"
 	"time"
 
+	"apishare/internal/opencodecompat"
+
 	"github.com/gin-gonic/gin"
 )
 
 func TestOpenCodeFreeRelayRestoresToolsAcrossProtocols(t *testing.T) {
 	modelsTestDB(t)
+	wireWeather := opencodecompat.ClientToolWireName("weather", nil)
 	openCodeCatalogs.Lock()
 	openCodeCatalogs.entries[openCodeCatalogCacheKey(nil)] = &openCodeCatalogEntry{catalog: openCodeCatalog{
 		At: time.Now(), Tiers: map[string]map[string]clientFormat{"zen": {"mapped-free": FormatOpenAIChat}},
@@ -29,7 +32,7 @@ func TestOpenCodeFreeRelayRestoresToolsAcrossProtocols(t *testing.T) {
 							t.Errorf("custom gateway path changed: %s", r.URL.Path)
 						}
 						body, _ := io.ReadAll(r.Body)
-						if !strings.Contains(string(body), `"stream":true`) || !strings.Contains(string(body), `"name":"clint_weather"`) {
+						if !strings.Contains(string(body), `"stream":true`) || !strings.Contains(string(body), fmt.Sprintf(`"name":%q`, wireWeather)) {
 							t.Errorf("free request lost streaming/tool shaping: %s", body)
 						}
 						w.Header().Set("Content-Type", "text/event-stream")
@@ -45,7 +48,7 @@ func TestOpenCodeFreeRelayRestoresToolsAcrossProtocols(t *testing.T) {
 								upstream = strings.Replace(upstream, boundary, stop+boundary, 1)
 							}
 						}
-						fmt.Fprint(w, strings.ReplaceAll(upstream, `"name":"weather"`, `"name":"clint_weather"`))
+						fmt.Fprint(w, strings.ReplaceAll(upstream, `"name":"weather"`, fmt.Sprintf(`"name":%q`, wireWeather)))
 					}))
 					defer server.Close()
 					up := &Upstream{Type: openCodeFreeType, BaseURL: server.URL, APIKey: "public", ModelMap: `{"alias":"mapped-free"}`,
