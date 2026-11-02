@@ -119,6 +119,10 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 	if freeShaped {
 		requestURL = up.openCodeFreeEndpointURL(format, endpoint)
 	}
+	body, err = normalizeInternAIAnthropicRequest(body, format, requestURL)
+	if err != nil {
+		return nil, 0, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, 0, fmt.Errorf("无法创建模型测试请求")
@@ -153,6 +157,7 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 	if err := up.applyHeaders(req, nil); err != nil {
 		return nil, 0, err
 	}
+	normalizeInternAIAnthropicHeaders(req.Header, format, requestURL)
 	var client *http.Client
 	if fingerprint {
 		client, err = clientForOpenCodeFree(modelTestClient, up.ProxyID)

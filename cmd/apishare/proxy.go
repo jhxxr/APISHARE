@@ -446,6 +446,10 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 			return info, false, &protocolConversionError{err}
 		}
 	}
+	reqBody, err = normalizeInternAIAnthropicRequest(reqBody, wireFormat, url)
+	if err != nil {
+		return info, false, &protocolConversionError{err}
+	}
 	requestCtx, cancel := context.WithCancel(c.Request.Context())
 	defer cancel()
 	req, err := http.NewRequestWithContext(requestCtx, c.Request.Method, url, bytes.NewReader(reqBody))
@@ -509,6 +513,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		// Overrides can replace the beta list, but the final body still needs
 		// the feature gate for thinking.display=updates.
 		ensureAnthropicThinkingDisplayBeta(req.Header, reqBody)
+		normalizeInternAIAnthropicHeaders(req.Header, wireFormat, url)
 	}
 
 	start := time.Now()

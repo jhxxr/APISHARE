@@ -48,6 +48,8 @@
 
 转发 Anthropic Messages 请求时，网关默认合并客户端和渠道生成的 `anthropic-beta`，支持逗号分隔及多行请求头，并自动去重。当最终请求体使用 `thinking.display: "updates"` 时，还会在请求头覆盖规则执行后补齐必需的 `thinking-display-updates-2026-08-18`，适用于 Anthropic、OpenCode 和 CLIProxy 账号池渠道。
 
+书生 TokenPlan（`discovery-api.intern-ai.org.cn`）的 Anthropic 兼容接口即使带上 beta 也会拒绝 `thinking.display: "updates"`。网关仅对该域名的 Messages 请求移除这个可选字段及对应的 beta 标记，清理 system、消息及工具结果中的空文本块和空历史消息，保留思考模式、预算、有效文本、图片、工具调用与签名。空的最后一条用户消息仍由上游校验，不会自动重放较早的用户消息；其他域名和协议保持原样。
+
 ## 模型白名单与模型映射
 
 在上游编辑器的「模型访问」中输入模型名，按回车、逗号或粘贴多行即可生成可移除的标签，重复名称自动去重；也可以获取当前 Key 的模型后勾选。白名单留空允许全部模型。
