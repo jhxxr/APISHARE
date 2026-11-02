@@ -492,6 +492,9 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	default:
 		req.Header.Set("Authorization", "Bearer "+up.APIKey)
 	}
+	if wireFormat == FormatAnthropic {
+		mergeAnthropicBetaHeaders(req.Header, c.Request.Header.Values("anthropic-beta")...)
+	}
 	if err := up.applyHeaders(req, c.Request.Header); err != nil {
 		return info, false, err
 	}
@@ -501,6 +504,11 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		}
 		req.Header.Set(cliproxy.TraceHeader, task.traceID)
 		setCLIProxyHeaders(req, c.Request.Header, task)
+	}
+	if wireFormat == FormatAnthropic {
+		// Overrides can replace the beta list, but the final body still needs
+		// the feature gate for thinking.display=updates.
+		ensureAnthropicThinkingDisplayBeta(req.Header, reqBody)
 	}
 
 	start := time.Now()

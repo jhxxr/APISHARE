@@ -46,6 +46,8 @@
 
 网关后台内置自动化守护器，定期从 npm 官方仓库同步获取 `@openai/codex`、`@anthropic-ai/claude-code` 和 `@opencode/cli` 的最新稳定版本，通过 `{codex_user_agent}`、`{claude_code_user_agent}` 与 `{opencode_user_agent}` 占位符自动注入对应格式的 User-Agent。OpenCode 专用渠道默认自动使用其版本，无需额外配置模板。
 
+转发 Anthropic Messages 请求时，网关默认合并客户端和渠道生成的 `anthropic-beta`，支持逗号分隔及多行请求头，并自动去重。当最终请求体使用 `thinking.display: "updates"` 时，还会在请求头覆盖规则执行后补齐必需的 `thinking-display-updates-2026-08-18`，适用于 Anthropic、OpenCode 和 CLIProxy 账号池渠道。
+
 ## 模型白名单与模型映射
 
 在上游编辑器的「模型访问」中输入模型名，按回车、逗号或粘贴多行即可生成可移除的标签，重复名称自动去重；也可以获取当前 Key 的模型后勾选。白名单留空允许全部模型。

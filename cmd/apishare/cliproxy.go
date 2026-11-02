@@ -649,11 +649,12 @@ func validCoreProvider(provider string) bool {
 // Normalize the pool's affinity to the authenticated gateway key. Provider-specific
 // client session headers must not cause unrelated gateway users to share a binding.
 func setCLIProxyHeaders(req *http.Request, incoming http.Header, task *relayTask) {
-	for _, name := range []string{"OpenAI-Beta", "anthropic-beta", "anthropic-version"} {
+	for _, name := range []string{"OpenAI-Beta", "anthropic-version"} {
 		if value := incoming.Get(name); value != "" {
 			req.Header.Set(name, value)
 		}
 	}
+	mergeAnthropicBetaHeaders(req.Header, incoming.Values("anthropic-beta")...)
 	if task.format == FormatAnthropic && req.Header.Get("anthropic-version") == "" {
 		req.Header.Set("anthropic-version", "2023-06-01")
 	}
