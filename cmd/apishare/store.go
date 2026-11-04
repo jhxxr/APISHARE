@@ -209,6 +209,37 @@ CREATE TABLE IF NOT EXISTS call_log_daily (
   PRIMARY KEY(day, model)
 );
 CREATE INDEX IF NOT EXISTS idx_log_daily_day ON call_log_daily(day);
+CREATE TABLE IF NOT EXISTS xauth_users (
+  sub TEXT PRIMARY KEY,
+  email TEXT NOT NULL DEFAULT '',
+  name TEXT NOT NULL DEFAULT '',
+  key_id INTEGER NOT NULL DEFAULT 0,
+  gift_claimed INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT '',
+  last_login_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_xauth_users_key ON xauth_users(key_id);
+CREATE TABLE IF NOT EXISTS xauth_user_sessions (
+  token_hash TEXT PRIMARY KEY,
+  sub TEXT NOT NULL,
+  key_id INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_xauth_sessions_expiry ON xauth_user_sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_xauth_sessions_key ON xauth_user_sessions(key_id);
+CREATE TABLE IF NOT EXISTS call_log_key_daily (
+  day TEXT NOT NULL,
+  key_id INTEGER NOT NULL,
+  model TEXT NOT NULL,
+  calls INTEGER NOT NULL DEFAULT 0,
+  successes INTEGER NOT NULL DEFAULT 0,
+  prompt_tokens INTEGER NOT NULL DEFAULT 0,
+  completion_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL NOT NULL DEFAULT 0,
+  last_at TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY(day, key_id, model)
+);
+CREATE INDEX IF NOT EXISTS idx_log_key_daily ON call_log_key_daily(key_id, day);
 `)
 	if err != nil {
 		return err
@@ -391,6 +422,13 @@ CREATE INDEX IF NOT EXISTS idx_log_daily_day ON call_log_daily(day);
 
 // ---------- models ----------
 
+type XAuthKeyUser struct {
+	Sub         string `json:"sub"`
+	Email       string `json:"email"`
+	Name        string `json:"name"`
+	LastLoginAt string `json:"last_login_at"`
+}
+
 type ApiKey struct {
 	ID            int64                 `json:"id"`
 	Name          string                `json:"name"`
@@ -406,6 +444,7 @@ type ApiKey struct {
 	ModelQuotas   map[string]ModelQuota `json:"model_quotas"`
 	Note          string                `json:"note"`
 	CreatedAt     string                `json:"created_at"`
+	XAuthUser     *XAuthKeyUser         `json:"xauth_user,omitempty"`
 }
 
 type Upstream struct {
@@ -556,6 +595,23 @@ func boolToInt(b bool) int {
 
 // ---------- api_keys ----------
 
+func dbLoadXAuthUser(tx *sql.Tx, ak *ApiKey) error {
+	if ak == nil || ak.ID <= 0 {
+		return nil
+	}
+	var u XAuthKeyUser
+	err := tx.QueryRow(`SELECT sub,email,name,last_login_at FROM xauth_users WHERE key_id=? LIMIT 1`, ak.ID).Scan(&u.Sub, &u.Email, &u.Name, &u.LastLoginAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		ak.XAuthUser = nil
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	ak.XAuthUser = &u
+	return nil
+}
+
 func dbGetKeyByKey(key string) (*ApiKey, error) {
 	tx, err := db.Begin()
 	if err != nil {
@@ -573,6 +629,9 @@ func dbGetKeyByKey(key string) (*ApiKey, error) {
 	ak.Enabled = enabled == 1
 	ak.ShowOnHome = home == 1
 	if err := dbLoadModelQuotas(tx, ak); err != nil {
+		return nil, err
+	}
+	if err := dbLoadXAuthUser(tx, ak); err != nil {
 		return nil, err
 	}
 	return ak, tx.Commit()
@@ -595,6 +654,9 @@ func dbGetKeyByID(id int64) (*ApiKey, error) {
 	ak.Enabled = enabled == 1
 	ak.ShowOnHome = home == 1
 	if err := dbLoadModelQuotas(tx, ak); err != nil {
+		return nil, err
+	}
+	if err := dbLoadXAuthUser(tx, ak); err != nil {
 		return nil, err
 	}
 	return ak, tx.Commit()
@@ -631,6 +693,9 @@ func dbListKeys() ([]ApiKey, error) {
 	}
 	for i := range out {
 		if err := dbLoadModelQuotas(tx, &out[i]); err != nil {
+			return nil, err
+		}
+		if err := dbLoadXAuthUser(tx, &out[i]); err != nil {
 			return nil, err
 		}
 	}
@@ -681,6 +746,9 @@ func dbUpdateKey(ak *ApiKey) error {
 		if _, err := tx.Exec(`DELETE FROM key_view_sessions WHERE key_id=?`, ak.ID); err != nil {
 			return err
 		}
+		if _, err := tx.Exec(`DELETE FROM xauth_user_sessions WHERE key_id=?`, ak.ID); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -692,6 +760,9 @@ func dbDeleteKey(id int64) error {
 	}
 	defer tx.Rollback()
 	if _, err := tx.Exec(`DELETE FROM key_view_sessions WHERE key_id=?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM xauth_user_sessions WHERE key_id=?`, id); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM api_key_model_quotas WHERE key_id=?`, id); err != nil {
@@ -939,6 +1010,17 @@ type AppSettings struct {
 	Pricing            map[string]Price `json:"pricing"` // 手动覆盖 + default；其余模型走官方定价
 	AutoPricingEnabled bool             `json:"auto_pricing_enabled"`
 	AutoPricingURL     string           `json:"auto_pricing_url"`
+
+	// XAuth OIDC 登录与新用户默认配额
+	XAuthEnabled            bool                  `json:"xauth_enabled"`
+	XAuthIssuer             string                `json:"xauth_issuer"`
+	XAuthClientID           string                `json:"xauth_client_id"`
+	XAuthClientSecret       string                `json:"-"`
+	XAuthDefaultQuotaUSD    float64               `json:"xauth_default_quota_usd"`
+	XAuthDefaultQPS         float64               `json:"xauth_default_qps"`
+	XAuthDefaultConcurrency int                   `json:"xauth_default_concurrency"`
+	XAuthDefaultModels      string                `json:"xauth_default_models"`
+	XAuthDefaultModelQuotas map[string]ModelQuota `json:"xauth_default_model_quotas"`
 }
 
 var defaultManualPricing = map[string]Price{
@@ -949,9 +1031,14 @@ var (
 	settingsMu    sync.RWMutex
 	settingsCache = AppSettings{
 		AffinityTTLMin: 30, Retry: 2, InjectStreamUsage: true,
-		LogRetentionDays:   defaultLogRetentionDays,
-		Pricing:            defaultManualPricing,
-		AutoPricingEnabled: true, AutoPricingURL: defaultAutoPricingURL,
+		LogRetentionDays:        defaultLogRetentionDays,
+		Pricing:                 defaultManualPricing,
+		AutoPricingEnabled:      true,
+		AutoPricingURL:          defaultAutoPricingURL,
+		XAuthDefaultQuotaUSD:    5,
+		XAuthDefaultQPS:         3,
+		XAuthDefaultConcurrency: 5,
+		XAuthDefaultModelQuotas: map[string]ModelQuota{},
 	}
 )
 
@@ -994,10 +1081,52 @@ func loadSettingsCache() error {
 			settingsCache.SiteTitle = title
 		}
 	}
+	if v, err := settingsGet("xauth_enabled"); err == nil && v != "" {
+		settingsCache.XAuthEnabled = v == "1"
+	}
+	if v, err := settingsGet("xauth_issuer"); err == nil {
+		settingsCache.XAuthIssuer = strings.TrimSpace(v)
+	}
+	if v, err := settingsGet("xauth_client_id"); err == nil {
+		settingsCache.XAuthClientID = strings.TrimSpace(v)
+	}
+	if v, err := settingsGet("xauth_client_secret"); err == nil {
+		settingsCache.XAuthClientSecret = v
+	}
+	if v, err := settingsGet("xauth_default_quota_usd"); err == nil && v != "" {
+		var q float64
+		if _, err := fmt.Sscanf(v, "%f", &q); err == nil && validQuota(q) {
+			settingsCache.XAuthDefaultQuotaUSD = q
+		}
+	}
+	if v, err := settingsGet("xauth_default_qps"); err == nil && v != "" {
+		var q float64
+		if _, err := fmt.Sscanf(v, "%f", &q); err == nil && q > 0 {
+			settingsCache.XAuthDefaultQPS = q
+		}
+	}
+	if v, err := settingsGet("xauth_default_concurrency"); err == nil && v != "" {
+		var n int
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n > 0 {
+			settingsCache.XAuthDefaultConcurrency = n
+		}
+	}
+	if v, err := settingsGet("xauth_default_models"); err == nil {
+		settingsCache.XAuthDefaultModels = normalizeKeyModels(v)
+	}
+	if v, err := settingsGet("xauth_default_model_quotas"); err == nil && v != "" {
+		var mq map[string]ModelQuota
+		if json.Unmarshal([]byte(v), &mq) == nil && mq != nil {
+			settingsCache.XAuthDefaultModelQuotas = mq
+		}
+	}
 	return nil
 }
 
 func persistSettings(s AppSettings) error {
+	if s.XAuthDefaultModelQuotas == nil {
+		s.XAuthDefaultModelQuotas = map[string]ModelQuota{}
+	}
 	settingsMu.Lock()
 	settingsCache = s
 	settingsMu.Unlock()
@@ -1028,6 +1157,38 @@ func persistSettings(s AppSettings) error {
 		return err
 	}
 	if err := settingsSet("site_title", s.SiteTitle); err != nil {
+		return err
+	}
+	xv := "0"
+	if s.XAuthEnabled {
+		xv = "1"
+	}
+	if err := settingsSet("xauth_enabled", xv); err != nil {
+		return err
+	}
+	if err := settingsSet("xauth_issuer", s.XAuthIssuer); err != nil {
+		return err
+	}
+	if err := settingsSet("xauth_client_id", s.XAuthClientID); err != nil {
+		return err
+	}
+	if err := settingsSet("xauth_client_secret", s.XAuthClientSecret); err != nil {
+		return err
+	}
+	if err := settingsSet("xauth_default_quota_usd", fmt.Sprintf("%v", s.XAuthDefaultQuotaUSD)); err != nil {
+		return err
+	}
+	if err := settingsSet("xauth_default_qps", fmt.Sprintf("%v", s.XAuthDefaultQPS)); err != nil {
+		return err
+	}
+	if err := settingsSet("xauth_default_concurrency", fmt.Sprintf("%d", s.XAuthDefaultConcurrency)); err != nil {
+		return err
+	}
+	if err := settingsSet("xauth_default_models", normalizeKeyModels(s.XAuthDefaultModels)); err != nil {
+		return err
+	}
+	mqb, _ := json.Marshal(s.XAuthDefaultModelQuotas)
+	if err := settingsSet("xauth_default_model_quotas", string(mqb)); err != nil {
 		return err
 	}
 	b, _ := json.Marshal(s.Pricing)

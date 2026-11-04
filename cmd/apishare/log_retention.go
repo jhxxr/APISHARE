@@ -124,6 +124,22 @@ func rollupExpiredLogs(cutoff int64) (deleted int64, err error) {
 		cutoff, cutoff); err != nil {
 		return 0, err
 	}
+	if _, err := tx.Exec(`INSERT INTO call_log_key_daily(day,key_id,model,calls,successes,prompt_tokens,completion_tokens,cost_usd,last_at)
+		SELECT date(created_at,'+8 hours'),key_id,model,COUNT(*),
+		 SUM(CASE WHEN status BETWEEN 200 AND 299 THEN 1 ELSE 0 END),
+		 COALESCE(SUM(prompt_tokens),0),COALESCE(SUM(completion_tokens),0),
+		 COALESCE(SUM(CASE WHEN status BETWEEN 200 AND 299 THEN cost_usd ELSE 0 END),0),
+		 COALESCE(MAX(created_at),'')
+		FROM call_logs aged WHERE unixepoch(created_at)<?
+		GROUP BY date(created_at,'+8 hours'),key_id,model
+		ON CONFLICT(day,key_id,model) DO UPDATE SET
+		 calls=calls+excluded.calls,successes=successes+excluded.successes,
+		 prompt_tokens=prompt_tokens+excluded.prompt_tokens,completion_tokens=completion_tokens+excluded.completion_tokens,
+		 cost_usd=cost_usd+excluded.cost_usd,
+		 last_at=CASE WHEN unixepoch(excluded.last_at)>unixepoch(last_at) THEN excluded.last_at ELSE last_at END`,
+		cutoff); err != nil {
+		return 0, err
+	}
 	res, err := tx.Exec(`DELETE FROM call_logs WHERE unixepoch(created_at)<?`, cutoff)
 	if err != nil {
 		return 0, err

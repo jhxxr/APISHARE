@@ -160,6 +160,7 @@ function showLogin() {
   $("logColumnsMenu").hidePopover();
   resetAnnouncementComposer();
   if ($("keyModelsDialog").open) { savingKeyModels = false; closeKeyModels(); }
+  if ($("keyBatchModelsDialog")?.open) { savingBatchKeyModels = false; closeBatchAddKeyModels(); }
   if ($("actionDialog").open) resolveAction(false);
   if (editorIsOpen()) finishCloseEditor();
   $("loginView").classList.remove("hidden");
@@ -603,19 +604,23 @@ async function loadKeys(quiet = false) {
     $("navKeyCount").setAttribute("aria-label", keysCache.length + " 个密钥");
     renderKeys();
     stampRefresh();
-  } catch (error) { errorRow("keysTable", 7, error); if (!quiet) reportError(error, "密钥加载失败"); }
+  } catch (error) { errorRow("keysTable", 8, error); if (!quiet) reportError(error, "密钥加载失败"); }
 }
 function renderKeys() {
   const query = $("keySearch").value.trim().toLowerCase();
-  const keys = keysCache.filter((key) => key.name.toLowerCase().includes(query));
+  const keys = typeof filteredKeys === "function" ? filteredKeys() : keysCache.filter((key) => key.name.toLowerCase().includes(query));
   $("keyTotal").textContent = keysCache.length;
   $("keysTable").querySelector("tbody").innerHTML = keys.map((key) => {
     const masked = key.key.length > 16 ? key.key.slice(0, 8) + "••••" + key.key.slice(-4) : "••••••••";
     const modelIDs = parseAllowlist(key.models);
     const modelSummary = '<small class="key-model-summary" title="' + esc(modelIDs.join(", ")) + '">可用模型：' + (modelIDs.length ? modelIDs.length + " 个" : "未绑定，无法调用") + '</small>';
     const keyCell = '<div class="key-value"><code>' + esc(masked) + '</code><button type="button" class="text-btn key-copy" onclick="copyKey(' + key.id + ')" aria-label="复制 ' + esc(key.name) + ' 的完整密钥" title="复制完整密钥">' + icon("copy") + '<span>复制</span></button></div>';
-    return '<tr><td class="cell-stack"><strong>' + esc(key.name) + '</strong><small>#' + key.id + ' · ' + esc((key.created_at || "").slice(0, 10)) + '</small>' + modelSummary + '</td><td>' + keyCell + '</td><td class="quota-cell">' + renderKeyQuotaSummary(key) + '</td><td><code>' + key.qps + " / " + key.concurrency + '</code></td><td><span class="badge ' + (key.enabled ? "on" : "off") + '">' + (key.enabled ? "启用" : "停用") + '</span></td><td><div class="row-actions"><button class="text-btn" onclick="openKeyModels(' + key.id + ')" aria-label="设置 ' + esc(key.name) + ' 的模型与额度">模型与额度</button><button class="text-btn" onclick="toggleKey(' + key.id + ", " + !key.enabled + ', this)" aria-label="' + (key.enabled ? "停用 " : "启用 ") + esc(key.name) + '">' + (key.enabled ? "停用" : "启用") + '</button><button class="icon-btn danger" onclick="deleteKey(' + key.id + ')" aria-label="删除 ' + esc(key.name) + '" title="删除密钥">' + icon("trash") + '</button></div></td></tr>';
-  }).join("") || emptyRow(7, query ? "没有匹配的密钥" : "创建你的第一个 API 密钥", query ? "试试其他名称。" : "为成员分配独立的访问权限和调用额度。", query ? "" : "toggleKeyComposer(true)", "创建密钥", "key");
+    const selectCell = '<td class="upstream-select-cell"><input type="checkbox" data-key-select="' + key.id + '" ' + (selectedKeyIDs.has(key.id) ? "checked" : "") + ' aria-label="选择密钥 ' + esc(key.name) + '" onchange="toggleKeySelection(' + key.id + ', this.checked)"></td>';
+    const xauthBadge = key.xauth_user ? '<span class="key-xauth-badge" title="XAuth 用户 · Sub: ' + esc(key.xauth_user.sub) + (key.xauth_user.last_login_at ? " · 最近登录: " + esc(fmtTime(key.xauth_user.last_login_at)) : "") + '">XAuth · ' + esc(key.xauth_user.email || key.xauth_user.name || key.xauth_user.sub) + '</span>' : "";
+    const noteLine = key.note ? '<small class="key-note-line">' + esc(key.note) + '</small>' : "";
+    return '<tr>' + selectCell + '<td class="cell-stack"><div class="key-name-row"><strong>' + esc(key.name) + '</strong>' + xauthBadge + '</div>' + noteLine + '<small>#' + key.id + ' · ' + esc((key.created_at || "").slice(0, 10)) + '</small></td><td>' + keyCell + '</td><td class="key-models-col">' + renderKeyModelsCell(key) + '</td><td class="quota-cell">' + renderKeyQuotaSummary(key) + '</td><td><code>' + key.qps + " / " + key.concurrency + '</code></td><td><span class="badge ' + (key.enabled ? "on" : "off") + '">' + (key.enabled ? "启用" : "停用") + '</span></td><td><div class="row-actions"><button class="text-btn" onclick="openKeyModels(' + key.id + ')" aria-label="设置 ' + esc(key.name) + ' 的模型与限制">限制与模型</button><button class="text-btn" onclick="toggleKey(' + key.id + ", " + !key.enabled + ', this)" aria-label="' + (key.enabled ? "停用 " : "启用 ") + esc(key.name) + '">' + (key.enabled ? "停用" : "启用") + '</button><button class="icon-btn danger" onclick="deleteKey(' + key.id + ')" aria-label="删除 ' + esc(key.name) + '" title="删除密钥">' + icon("trash") + '</button></div></td></tr>';
+  }).join("") || emptyRow(8, query ? "没有匹配的密钥" : "创建你的第一个 API 密钥", query ? "试试其他名称或筛选条件。" : "为成员分配独立的访问权限和调用额度。", query ? "" : "toggleKeyComposer(true)", "创建密钥", "key");
+  if (typeof syncKeySelectionUI === "function") syncKeySelectionUI();
   labelTableCells("keysTable");
 }
 async function createKey(event) {
@@ -1234,6 +1239,25 @@ async function loadSettings() {
     $("setPricingURL").value = settings.auto_pricing_url || "";
     $("setPricing").value = JSON.stringify(settings.pricing, null, 2);
     $("setSiteTitle").value = settings.site_title || "";
+    if ($("setXAuthEnabled")) {
+      $("setXAuthEnabled").checked = !!settings.xauth_enabled;
+      $("setXAuthIssuer").value = settings.xauth_issuer || "";
+      $("setXAuthClientID").value = settings.xauth_client_id || "";
+      $("setXAuthClientSecret").value = "";
+      $("setXAuthClientSecret").placeholder = settings.xauth_secret_saved ? "已保存 Secret · 留空保持不变" : "Web 机密客户端请填写 Secret；公开客户端可留空";
+      $("xauthSecretHint").textContent = settings.xauth_secret_saved ? "当前已保存 Client Secret；留空保持不变，填写新值将替换。" : "留空则按公开客户端 PKCE 模式连接。";
+      $("xauthClearSecretRow").classList.toggle("hidden", !settings.xauth_secret_saved);
+      $("setXAuthClearSecret").checked = false;
+      $("xauthRedirectURI").value = settings.xauth_redirect_uri || (location.origin + "/api/auth/callback");
+      $("setXAuthQps").value = settings.xauth_default_qps ?? 3;
+      $("setXAuthConc").value = settings.xauth_default_concurrency ?? 5;
+      $("xauthDefaultModels").value = settings.xauth_default_models || "";
+      resetKeyModelPicker("xauthDefault", {
+        quota_usd: settings.xauth_default_quota_usd ?? 5,
+        model_quotas: settings.xauth_default_model_quotas || {},
+      });
+      $("xauthTestStatus")?.classList.add("hidden");
+    }
     applySiteBranding(settings);
     setPricingError("");
     renderPricingStatus(settings.auto_pricing);
@@ -1286,17 +1310,43 @@ async function saveSettings(event) {
     }
   } catch (error) { setPricingError(error.message || "价格 JSON 无效。"); $("setPricing").focus(); return false; }
   setPricingError("");
+  if ($("xauthDefaultModels") && !validateKeyModels("xauthDefault")) return false;
+  const xauthQuota = $("xauthDefaultModels") ? keyQuotaPayload("xauthDefault") : { quota_usd: 5, model_quotas: {} };
   const button = event.currentTarget.querySelector('[type="submit"]');
   setBusy(button, true, "正在保存…");
   try {
-    await api("api/settings", { method: "PUT", body: JSON.stringify({ affinity_ttl_min: Number($("setTtl").value), retry: Number($("setRetry").value), inject_stream_usage: $("setInject").checked, log_retention_days: Number($("setLogRetention").value), auto_pricing_enabled: $("setAutoPricing").checked, auto_pricing_url: $("setPricingURL").value.trim(), site_title: siteTitleValue, pricing }) });
+    await api("api/settings", { method: "PUT", body: JSON.stringify({ affinity_ttl_min: Number($("setTtl").value), retry: Number($("setRetry").value), inject_stream_usage: $("setInject").checked, log_retention_days: Number($("setLogRetention").value), auto_pricing_enabled: $("setAutoPricing").checked, auto_pricing_url: $("setPricingURL").value.trim(), site_title: siteTitleValue, pricing, xauth_enabled: $("setXAuthEnabled")?.checked ?? false, xauth_issuer: ($("setXAuthIssuer")?.value || "").trim(), xauth_client_id: ($("setXAuthClientID")?.value || "").trim(), xauth_client_secret: ($("setXAuthClientSecret")?.value || "").trim(), xauth_clear_secret: $("setXAuthClearSecret")?.checked ?? false, xauth_default_qps: Number($("setXAuthQps")?.value) || 3, xauth_default_concurrency: Number($("setXAuthConc")?.value) || 5, xauth_default_models: parseAllowlist($("xauthDefaultModels")?.value || "").join(","), ...Object.fromEntries(Object.entries({ xauth_default_quota_usd: xauthQuota.quota_usd, xauth_default_model_quotas: xauthQuota.model_quotas })) }) });
     await loadSettings(); toast("工作空间设置已保存");
   } catch (error) { reportError(error, "保存失败"); } finally { setBusy(button, false); }
   return false;
 }
 
 /* Reusable accessible confirmation and quota dialogs. */
-function syncModalLock() { document.body.classList.toggle("modal-open", $("editModal").open || $("actionDialog").open || $("keyModelsDialog").open || $("modelTestDialog").open || $("logDetailDialog").open || $("poolInspectorDialog").open); }
+function syncModalLock() { document.body.classList.toggle("modal-open", $("editModal").open || $("actionDialog").open || $("keyModelsDialog").open || !!$("keyBatchModelsDialog")?.open || $("modelTestDialog").open || $("logDetailDialog").open || $("poolInspectorDialog").open); }
+async function testXAuthConnection(button) {
+  const status = $("xauthTestStatus");
+  status.className = "probe-info";
+  status.textContent = "正在连接 XAuth 发现端点…";
+  status.classList.remove("hidden");
+  setBusy(button, true, "测试中…");
+  try {
+    const result = await api("api/settings/xauth/test", {
+      method: "POST",
+      body: JSON.stringify({
+        xauth_issuer: $("setXAuthIssuer").value.trim(),
+        xauth_client_id: $("setXAuthClientID").value.trim(),
+      }),
+    });
+    if (!result.ok) throw new Error(result.error || "连接失败");
+    status.textContent = "连接正常 · " + result.latency_ms + " ms · 授权端点：" + result.authorization_endpoint;
+    toast("XAuth 连接正常 (" + result.latency_ms + " ms)");
+  } catch (error) {
+    status.className = "probe-info error";
+    status.textContent = error.message || "XAuth 连接测试失败";
+  } finally {
+    setBusy(button, false);
+  }
+}
 function setPricingError(message) {
   $("pricingError").textContent = message;
   $("pricingError").classList.toggle("hidden", !message);

@@ -406,4 +406,16 @@ select { min-height: 44px; max-width: 150px; padding: 9px 11px; border: 1px soli
  .metrics .key-account-bar { top: 12px; right: 12px; gap: 4px; font-size: 11px; }
  .metrics .key-account-bar > div { gap: 0; }
  .metrics .key-account-bar button { padding: 4px; }
+ .xauth-hero-entry { top: auto; bottom: 86px; right: 16px; }
+}
+.xauth-hero-entry { position: absolute; z-index: 3; top: max(24px,env(safe-area-inset-top)); right: 32px; display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 8px 15px; border: 1px solid var(--control-border); border-radius: 999px; background: #faf9f5d9; backdrop-filter: blur(8px); color: var(--ink); font-size: 12px; font-weight: 500; text-decoration: none; box-shadow: 0 6px 20px #51402012; transition: transform 180ms var(--ease), background 180ms, border-color 180ms; }
+.xauth-hero-entry:hover { transform: translateY(-1px); background: var(--surface); border-color: var(--accent); color: var(--accent); }
+.xauth-hero-entry .icon { width: 15px; height: 15px; }
+.xauth-key-login { margin-top: 10px; }
+.xauth-login-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; width: 100%; min-height: 38px; padding: 7px 12px; border: 1px solid #8a694059; border-radius: 7px; background: #fffaf2; color: #49381e; font-size: 12px; font-weight: 500; text-decoration: none; transition: background 150ms, border-color 150ms; }
+.xauth-login-btn:hover { background: #fff; border-color: #6a4d22; color: var(--accent); }
+.xauth-login-btn .icon { width: 15px; height: 15px; color: var(--accent); }
+.xauth-console-link { display: inline-flex; align-items: center; padding: 4px 8px; border-radius: 6px; background: #ffffffb3; color: var(--accent); font-size: 12px; font-weight: 500; text-decoration: none; }
+.xauth-console-link:hover { background: #fff; }
+@media (max-width: 900px) { .xauth-hero-entry { top: auto; bottom: 86px; right: 22px; }
 }

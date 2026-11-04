@@ -25,7 +25,7 @@ func normalizeAdminPath(value string) (string, error) {
 		return "", fmt.Errorf("后台路径需为 3–64 位字母、数字、短横线或下划线，并以字母或数字开头")
 	}
 	switch strings.ToLower(value) {
-	case "v1", "v1beta", "api", "public", "healthz", "static", "setup":
+	case "v1", "v1beta", "api", "public", "healthz", "static", "setup", "user":
 		return "", fmt.Errorf("此路径由系统使用，请选择其他后台路径")
 	}
 	return "/" + value, nil

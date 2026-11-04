@@ -379,6 +379,7 @@ async function refresh() {
  if(overview&&overview.history_interval!==historyInterval)$("uptimeWindowLabel").textContent="正在读取"+(historyInterval==="auto"?"自动缩放":historyInterval==="minute"?"分钟":"小时")+"记录…";
  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),10000);
  const announcementTask=refreshAnnouncements(controller.signal);
+ const authTask=refreshXAuthStatus(controller.signal);
  const keyTask=refreshKeyOverview(controller.signal);
  try {
   const response=await fetch("/api/public/overview?interval="+historyInterval,{credentials:"omit",cache:"no-store",signal:controller.signal});
@@ -398,7 +399,7 @@ async function refresh() {
   $("errorBanner").classList.remove("hidden");
   $("overallStatus").className="status-badge idle";$("overallStatus").innerHTML='<span class="dot"></span>数据更新异常';
   $("refreshNote").textContent="更新失败";
- } finally { await Promise.allSettled([announcementTask,keyTask]);clearTimeout(timeout);refreshing=false;$("refreshNow").disabled=false;$("refreshNow").setAttribute("aria-busy","false");document.querySelectorAll("[data-history-interval]").forEach(button=>button.disabled=false);$("modelsGrid").setAttribute("aria-busy","false"); }
+ } finally { await Promise.allSettled([announcementTask,authTask,keyTask]);clearTimeout(timeout);refreshing=false;$("refreshNow").disabled=false;$("refreshNow").setAttribute("aria-busy","false");document.querySelectorAll("[data-history-interval]").forEach(button=>button.disabled=false);$("modelsGrid").setAttribute("aria-busy","false"); }
 }
 $("keyForm").addEventListener("submit",verifyKey);
 $("switchKey").addEventListener("click",()=>clearKey(true));
@@ -425,4 +426,35 @@ setInterval(()=>{if(autoUpdate&&!document.hidden&&!publicDialogOpen())refresh();
 window.addEventListener("resize",()=>{finishHeroRoll();measureHeroType();},{passive:true});
 document.fonts?.ready.then(measureHeroType);
 loadPublicBranding();
+async function refreshXAuthStatus(signal) {
+ try {
+  const response=await fetch("/api/auth/status",{credentials:"same-origin",cache:"no-store",signal});
+  if(!response.ok)return;
+  const state=await response.json();
+  const enabled=!!state.enabled, authed=!!state.authenticated;
+  $("xauthHeroEntry")?.classList.toggle("hidden",!enabled&&!authed);
+  $("xauthKeyLoginBox")?.classList.toggle("hidden",!enabled&&!authed);
+  $("xauthConsoleLink")?.classList.toggle("hidden",!authed);
+  if($("xauthHeroEntry")){
+   $("xauthHeroEntry").href=authed?"/user/":"/api/auth/login";
+   $("xauthHeroLabel").textContent=authed?((state.user?.name||state.user?.email||"我的账户")+" · 专属控制台"):"Auth 登录";
+  }
+  if($("xauthKeyLoginBtn")){
+   $("xauthKeyLoginBtn").href=authed?"/user/":"/api/auth/login";
+   const span=$("xauthKeyLoginBtn").querySelector("span");
+   if(span)span.textContent=authed?"进入我的专属控制台 ("+(state.user?.email||state.user?.name||"已登录")+")":"使用 Auth 账号登录 · 获取专属密钥与控制台";
+  }
+ } catch {}
+}
+(() => {
+ const params=new URLSearchParams(location.search);
+ const authErr=params.get("auth_error");
+ if(authErr){
+  setKeyMessage(authErr,true);
+  notify(authErr);
+  params.delete("auth_error");
+  const clean=location.pathname+(params.toString()?"?"+params.toString():"")+location.hash;
+  history.replaceState(null,"",clean);
+ }
+})();
 refresh();

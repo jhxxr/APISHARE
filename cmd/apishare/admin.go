@@ -144,6 +144,7 @@ func registerAdminRoutes(r *gin.Engine) {
 	registerDashboardRoutes(auth)
 	registerClientStatsRoutes(auth)
 	registerSiteBrandingAdmin(auth)
+	registerXAuthAdminRoutes(auth)
 
 	// ---------- API Keys ----------
 	auth.GET("/keys/models", func(c *gin.Context) {
@@ -947,7 +948,17 @@ func registerAdminRoutes(r *gin.Engine) {
 			"site_title":           s.SiteTitle,
 			"site_icon_url":        siteIconURL,
 			"site_icon_type":       siteIconType,
-			"site_icon_custom":     siteIconURL != "",
+			"site_icon_custom":           siteIconURL != "",
+			"xauth_enabled":              s.XAuthEnabled,
+			"xauth_issuer":               s.XAuthIssuer,
+			"xauth_client_id":            s.XAuthClientID,
+			"xauth_secret_saved":         strings.TrimSpace(s.XAuthClientSecret) != "",
+			"xauth_redirect_uri":         xauthRedirectURI(c),
+			"xauth_default_quota_usd":    s.XAuthDefaultQuotaUSD,
+			"xauth_default_qps":          s.XAuthDefaultQPS,
+			"xauth_default_concurrency":  s.XAuthDefaultConcurrency,
+			"xauth_default_models":       s.XAuthDefaultModels,
+			"xauth_default_model_quotas": s.XAuthDefaultModelQuotas,
 		})
 	})
 
@@ -961,7 +972,17 @@ func registerAdminRoutes(r *gin.Engine) {
 			NewPassword        *string           `json:"new_password"`
 			AutoPricingEnabled *bool             `json:"auto_pricing_enabled"`
 			AutoPricingURL     *string           `json:"auto_pricing_url"`
-			SiteTitle          *string           `json:"site_title"`
+			SiteTitle               *string                `json:"site_title"`
+			XAuthEnabled            *bool                  `json:"xauth_enabled"`
+			XAuthIssuer             *string                `json:"xauth_issuer"`
+			XAuthClientID           *string                `json:"xauth_client_id"`
+			XAuthClientSecret       *string                `json:"xauth_client_secret"`
+			XAuthClearSecret        *bool                  `json:"xauth_clear_secret"`
+			XAuthDefaultQuotaUSD    *float64               `json:"xauth_default_quota_usd"`
+			XAuthDefaultQPS         *float64               `json:"xauth_default_qps"`
+			XAuthDefaultConcurrency *int                   `json:"xauth_default_concurrency"`
+			XAuthDefaultModels      *string                `json:"xauth_default_models"`
+			XAuthDefaultModelQuotas *map[string]ModelQuota `json:"xauth_default_model_quotas"`
 		}
 		if c.BindJSON(&req) != nil {
 			return
@@ -980,6 +1001,62 @@ func registerAdminRoutes(r *gin.Engine) {
 			s.SiteTitle = title
 		}
 		previousRetention := s.LogRetentionDays
+		if req.XAuthIssuer != nil {
+			issuer, err := normalizeXAuthIssuer(*req.XAuthIssuer)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			s.XAuthIssuer = issuer
+		}
+		if req.XAuthClientID != nil {
+			s.XAuthClientID = strings.TrimSpace(*req.XAuthClientID)
+		}
+		if req.XAuthClearSecret != nil && *req.XAuthClearSecret {
+			s.XAuthClientSecret = ""
+		} else if req.XAuthClientSecret != nil && strings.TrimSpace(*req.XAuthClientSecret) != "" {
+			s.XAuthClientSecret = strings.TrimSpace(*req.XAuthClientSecret)
+		}
+		if req.XAuthEnabled != nil {
+			s.XAuthEnabled = *req.XAuthEnabled
+		}
+		if s.XAuthEnabled && (s.XAuthIssuer == "" || s.XAuthClientID == "") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "启用 XAuth 登录前请先填写 Issuer 地址和 Client ID"})
+			return
+		}
+		if req.XAuthDefaultQuotaUSD != nil {
+			if !validQuota(*req.XAuthDefaultQuotaUSD) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "新用户默认赠送额度必须是大于或等于 0 的有效金额"})
+				return
+			}
+			s.XAuthDefaultQuotaUSD = *req.XAuthDefaultQuotaUSD
+		}
+		if req.XAuthDefaultQPS != nil {
+			if *req.XAuthDefaultQPS <= 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "新用户默认 QPS 必须大于 0"})
+				return
+			}
+			s.XAuthDefaultQPS = *req.XAuthDefaultQPS
+		}
+		if req.XAuthDefaultConcurrency != nil {
+			if *req.XAuthDefaultConcurrency <= 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "新用户默认并发数必须大于 0"})
+				return
+			}
+			s.XAuthDefaultConcurrency = *req.XAuthDefaultConcurrency
+		}
+		if req.XAuthDefaultModels != nil {
+			if strings.TrimSpace(*req.XAuthDefaultModels) != "" && normalizeKeyModels(*req.XAuthDefaultModels) == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "请填写有效的新用户默认模型 ID"})
+				return
+			}
+			s.XAuthDefaultModels = normalizeKeyModels(*req.XAuthDefaultModels)
+		}
+		if req.XAuthDefaultModelQuotas != nil {
+			s.XAuthDefaultModelQuotas = buildXAuthDefaultModelQuotas(s.XAuthDefaultModels, *req.XAuthDefaultModelQuotas)
+		} else if req.XAuthDefaultModels != nil {
+			s.XAuthDefaultModelQuotas = buildXAuthDefaultModelQuotas(s.XAuthDefaultModels, s.XAuthDefaultModelQuotas)
+		}
 		retentionChanged := false
 		if req.AffinityTTLMin != nil && *req.AffinityTTLMin > 0 {
 			s.AffinityTTLMin = *req.AffinityTTLMin

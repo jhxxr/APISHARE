@@ -72,6 +72,7 @@ func registerPublic(r *gin.Engine) {
 	registerKeyView(r)
 	registerSiteBrandingPublic(r)
 	sub, _ := fs.Sub(webFS, "web/public")
+	registerXAuthPublicRoutes(r, sub)
 	r.GET("/", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 		if adminSetupRequired() {

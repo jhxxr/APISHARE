@@ -50,6 +50,7 @@
         <div class="scene-grain"></div>
       </div>
       <a class="public-brand" href="/" aria-label="{{SITE_TITLE}} 首页" data-site-brand-home><img src="{{SITE_ICON_LOGO}}" width="44" height="44" alt="" data-site-brand-logo data-default-src="/public/static/brand/apishare-icon-v2.png"><span data-site-brand-name>{{SITE_TITLE}}</span></a>
+      <a id="xauthHeroEntry" class="xauth-hero-entry hidden" href="/api/auth/login"><svg class="icon" aria-hidden="true"><use href="#shield"/></svg><span id="xauthHeroLabel">Auth 登录</span><svg class="icon" aria-hidden="true"><use href="#arrow"/></svg></a>
       <a id="announcementEntry" class="announcement-entry hidden" href="#announcements"><svg class="icon" aria-hidden="true"><use href="#megaphone"/></svg><span id="announcementEntryLabel">最新公告</span><strong id="announcementEntryTitle"></strong><svg class="icon" aria-hidden="true"><use href="#arrow"/></svg></a>
       <div class="hero-readout">
         <h1 id="heroTitle" class="token-total"><span class="token-prefix">全站累计 Token 用量</span><strong id="heroTokens" aria-hidden="true">—</strong></h1>
@@ -82,9 +83,10 @@
           <form id="keyForm" class="key-form">
             <label for="keyInput">API 密钥</label>
             <div class="key-input-row"><input id="keyInput" name="api_key" type="password" placeholder="粘贴你的 sk-… 密钥" autocomplete="off" spellcheck="false" required maxlength="512" aria-describedby="keyMessage"><button id="verifyKey" type="submit">查看额度 <svg class="icon" aria-hidden="true"><use href="#arrow"/></svg></button></div>
+            <div id="xauthKeyLoginBox" class="xauth-key-login hidden"><a id="xauthKeyLoginBtn" class="xauth-login-btn" href="/api/auth/login"><svg class="icon" aria-hidden="true"><use href="#shield"/></svg><span>使用 Auth 账号登录 · 获取专属密钥与控制台</span></a></div>
           </form>
           <div id="keyAccount" class="hidden">
-            <div class="key-account-bar"><span id="keyIdentity"></span><div><button id="switchKey" type="button">切换</button><button id="logoutKey" type="button">退出</button></div></div>
+            <div class="key-account-bar"><span id="keyIdentity"></span><div><a id="xauthConsoleLink" class="xauth-console-link hidden" href="/user/">我的控制台 ↗</a><button id="switchKey" type="button">切换</button><button id="logoutKey" type="button">退出</button></div></div>
             <div id="remainingAmount" class="metric-value">—</div>
             <div class="balance-details"><span id="balanceHint"></span><span id="balancePercent"></span></div>
             <div id="balanceTrack" class="balance-track hidden" role="meter" aria-label="当前密钥限额部分剩余百分比" aria-valuemin="0" aria-valuemax="100"><span></span></div>

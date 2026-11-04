@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-site-title="{{SITE_TITLE}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f4f4">
+  <title>{{PUBLIC_TITLE}} · 个人控制台</title>
+  <link rel="icon" type="{{SITE_ICON_TYPE}}" sizes="32x32" href="{{SITE_ICON_FAVICON}}" data-site-brand-icon data-default-href="/public/static/brand/apishare-favicon-v2.png">
+  <link rel="icon" type="{{SITE_ICON_TYPE}}" sizes="192x192" href="{{SITE_ICON_LOGO}}" data-site-brand-icon data-default-href="/public/static/brand/apishare-icon-v2.png">
+  <link rel="apple-touch-icon" type="{{SITE_ICON_TYPE}}" sizes="180x180" href="{{SITE_ICON_TOUCH}}" data-site-brand-icon data-default-href="/public/static/brand/apishare-touch-icon-v2.png">
+  <link rel="stylesheet" href="/public/static/model-icons.css">
+  <link rel="stylesheet" href="/public/static/user.css">
+  <script src="/public/static/clipboard.js" defer></script>
+  <script src="/public/static/model-icons.js" defer></script>
+  <script src="/public/static/user.js" defer></script>
+</head>
+<body>
+  <svg class="symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="key" viewBox="0 0 24 24"><circle cx="8" cy="9" r="5"/><path d="m12 12 9 9m-3-3 3-3m-6 0 3-3"/></symbol>
+    <symbol id="wallet" viewBox="0 0 24 24"><path d="M20 7V4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h16V7H5a1 1 0 0 1 0-2"/><path d="M21 12h-6v5h6m-3-2.5h.01"/></symbol>
+    <symbol id="token" viewBox="0 0 24 24"><path d="m12 2 9 5v10l-9 5-9-5V7l9-5Z"/><path d="m3 7 9 5 9-5m-9 5v10"/></symbol>
+    <symbol id="activity" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></symbol>
+    <symbol id="shield" viewBox="0 0 24 24"><path d="m12 3 8 4v5c0 5-8 9-8 9s-8-4-8-9V7l8-4Z"/><path d="m8 12 3 3 5-6"/></symbol>
+    <symbol id="copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></symbol>
+    <symbol id="eye" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 6a8 8 0 0 1 14 6M4 12a8 8 0 0 0 14 6"/></symbol>
+    <symbol id="arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+    <symbol id="logout" viewBox="0 0 24 24"><path d="M9 4H4v16h5m5-13 5 5-5 5M8 12h13"/></symbol>
+    <symbol id="layers" viewBox="0 0 24 24"><path d="m12 3 10 5-10 5L2 8l10-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/></symbol>
+    <symbol id="search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+  </svg>
+
+  <header class="user-topbar">
+    <div class="user-topbar-inner">
+      <div class="user-brand-group">
+        <a class="user-brand" href="/" data-site-brand-home>
+          <img src="{{SITE_ICON_LOGO}}" width="32" height="32" alt="" data-site-brand-logo data-default-src="/public/static/brand/apishare-icon-v2.png">
+          <span data-site-brand-name>{{SITE_TITLE}}</span>
+        </a>
+        <span class="crumb-sep">/</span>
+        <span class="crumb-current">个人专属控制台</span>
+      </div>
+      <div class="user-topbar-actions">
+        <a class="btn ghost" href="/">全站服务大盘 ↗</a>
+        <div id="userProfileChip" class="user-profile-chip hidden">
+          <span id="userAvatar" class="user-avatar">U</span>
+          <div class="user-profile-meta">
+            <strong id="userName">加载中…</strong>
+            <small id="userEmail"></small>
+          </div>
+        </div>
+        <button id="refreshBtn" type="button" class="btn ghost" title="刷新控制台数据">
+          <svg class="icon"><use href="#refresh"/></svg><span>刷新</span>
+        </button>
+        <button id="logoutBtn" type="button" class="btn ghost hidden">
+          <svg class="icon"><use href="#logout"/></svg><span>退出</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="user-container">
+    <section id="unauthCard" class="user-card unauth-card hidden">
+      <span class="unauth-icon"><svg class="icon"><use href="#shield"/></svg></span>
+      <h1>登录个人专属控制台</h1>
+      <p id="unauthMessage">通过统一身份认证 (XAuth) 登录后，即可查看你的专属 API 密钥、赠送额度、可用模型与个人调用明细。</p>
+      <div class="unauth-actions">
+        <a class="btn primary" href="/api/auth/login"><svg class="icon"><use href="#shield"/></svg> 使用 Auth 账号登录</a>
+        <a class="btn ghost" href="/">返回公开首页</a>
+      </div>
+    </section>
+
+    <div id="dashboardContent" class="user-dashboard hidden">
+      <section class="user-hero-grid" aria-label="专属密钥与额度概览">
+        <article class="user-card key-panel">
+          <div class="card-head">
+            <div>
+              <span class="eyebrow">EXCLUSIVE API KEY</span>
+              <h2 id="keyTitle">我的专属密钥</h2>
+            </div>
+            <span id="keyStatusBadge" class="status-pill on">启用</span>
+          </div>
+
+          <div class="key-box">
+            <code id="keyDisplay" class="key-code">sk-••••••••••••••••••••••••</code>
+            <div class="key-actions">
+              <button id="toggleKeyBtn" type="button" class="btn ghost mini" aria-pressed="false">
+                <svg class="icon"><use href="#eye"/></svg><span id="toggleKeyLabel">显示</span>
+              </button>
+              <button id="copyKeyBtn" type="button" class="btn primary mini">
+                <svg class="icon"><use href="#copy"/></svg><span>复制密钥</span>
+              </button>
+              <button id="rotateKeyBtn" type="button" class="btn ghost mini danger-text" title="生成新的 sk- 密钥字符串，旧密钥立即失效，额度与模型保持不变">
+                <svg class="icon"><use href="#refresh"/></svg><span>轮换密钥</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="key-limits-bar">
+            <div><span>速率限制</span><strong id="keyQps">— QPS</strong></div>
+            <div><span>并发上限</span><strong id="keyConc">— 并发</strong></div>
+            <div><span>开通时间</span><strong id="keyCreatedAt">—</strong></div>
+          </div>
+
+          <div class="Quick-connect">
+            <div class="quick-connect-head">
+              <span>快速接入指南</span>
+              <div class="segmented" role="group" aria-label="客户端配置代码">
+                <button type="button" data-snippet="openai" aria-pressed="true">OpenAI / 通用</button>
+                <button type="button" data-snippet="claude" aria-pressed="false">Claude Code</button>
+                <button type="button" data-snippet="codex" aria-pressed="false">Codex CLI</button>
+              </div>
+            </div>
+            <div class="snippet-box">
+              <pre id="snippetCode"></pre>
+              <button id="copySnippetBtn" type="button" class="btn ghost mini"><svg class="icon"><use href="#copy"/></svg> 复制配置</button>
+            </div>
+          </div>
+        </article>
+
+        <div class="user-kpi-stack">
+          <article class="user-card quota-panel">
+            <div class="card-head">
+              <div>
+                <span class="eyebrow">QUOTA & BALANCE</span>
+                <h2>可用额度余量</h2>
+              </div>
+              <span class="card-icon"><svg class="icon"><use href="#wallet"/></svg></span>
+            </div>
+            <div id="quotaRemaining" class="kpi-big">—</div>
+            <p id="quotaSubtext" class="kpi-sub">正在读取额度…</p>
+            <div id="quotaProgressWrap" class="quota-bar-wrap hidden">
+              <div class="quota-bar"><span id="quotaProgressFill"></span></div>
+              <div class="quota-bar-labels">
+                <span id="quotaUsedLabel">已用 $0.00</span>
+                <span id="quotaTotalLabel">总额 $0.00</span>
+              </div>
+            </div>
+          </article>
+
+          <article class="user-card usage-kpi-panel">
+            <div class="card-head">
+              <div>
+                <span class="eyebrow">PERSONAL TELEMETRY</span>
+                <h2>我的调用统计</h2>
+              </div>
+              <span class="card-icon"><svg class="icon"><use href="#token"/></svg></span>
+            </div>
+            <div class="kpi-grid">
+              <div><span>累计调用</span><strong id="statTotalCalls">0</strong><small id="statSuccessRate">成功率 —</small></div>
+              <div><span>累计花费</span><strong id="statTotalCost">$0.00</strong><small id="statTodayCost">今日 $0.00</small></div>
+              <div><span>累计 Tokens</span><strong id="statTotalTokens">0</strong><small id="statTokenSplit">输入 0 / 输出 0</small></div>
+              <div><span>今日调用</span><strong id="statTodayCalls">0</strong><small id="statUpdatedAt">刚刚更新</small></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="user-mid-grid" aria-label="用量趋势与可用模型">
+        <article class="user-card trend-panel">
+          <div class="card-head">
+            <div>
+              <span class="eyebrow">DAILY FOOTPRINT</span>
+              <h2>个人每日用量趋势</h2>
+            </div>
+            <div class="trend-controls">
+              <div class="segmented" role="group" aria-label="趋势时间范围">
+                <button type="button" data-days="7" aria-pressed="true">7 天</button>
+                <button type="button" data-days="30" aria-pressed="false">30 天</button>
+              </div>
+              <div class="segmented" role="group" aria-label="趋势指标">
+                <button type="button" data-metric="cost" aria-pressed="true">费用</button>
+                <button type="button" data-metric="calls" aria-pressed="false">调用</button>
+                <button type="button" data-metric="tokens" aria-pressed="false">Tokens</button>
+              </div>
+            </div>
+          </div>
+          <div class="trend-summary-row">
+            <strong id="trendWindowSum">—</strong>
+            <span id="trendWindowLabel" class="muted">近 7 天累计</span>
+            <span id="trendHoverNote" class="trend-hover-note muted">悬浮柱条查看单日明细</span>
+          </div>
+          <div id="userTrendChart" class="user-trend-chart"></div>
+        </article>
+
+        <article class="user-card models-panel">
+          <div class="card-head">
+            <div>
+              <span class="eyebrow">BOUND MODELS & QUOTAS</span>
+              <h2>可用模型与额度明细 <span id="boundModelCount" class="count-badge">0</span></h2>
+            </div>
+          </div>
+          <div id="userModelsList" class="user-models-list"></div>
+        </article>
+      </section>
+
+      <section class="user-card logs-panel" aria-label="个人调用记录">
+        <div class="card-head logs-head">
+          <div>
+            <span class="eyebrow">CALL LOGS</span>
+            <h2>我的请求明细 <span id="userLogTotal" class="count-badge">0</span></h2>
+          </div>
+          <div class="logs-filters">
+            <label class="search-box">
+              <svg class="icon"><use href="#search"/></svg>
+              <input id="userLogSearch" type="search" placeholder="搜索模型、端点或错误信息…">
+            </label>
+            <select id="userLogStatus" aria-label="按状态筛选">
+              <option value="">全部状态</option>
+              <option value="success">成功 (2xx)</option>
+              <option value="failed">失败</option>
+            </select>
+            <button id="userLogRefresh" type="button" class="btn ghost mini">
+              <svg class="icon"><use href="#refresh"/></svg> 刷新记录
+            </button>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table class="user-table" id="userLogsTable">
+            <thead>
+              <tr>
+                <th scope="col">时间（北京）</th>
+                <th scope="col">模型</th>
+                <th scope="col">端点</th>
+                <th scope="col">输入 / 输出 Tokens</th>
+                <th scope="col">耗时 / 首字</th>
+                <th scope="col">费用</th>
+                <th scope="col">状态</th>
+              </tr>
+            </thead>
+            <tbody id="userLogsBody">
+              <tr><td colspan="7" class="empty-cell">正在加载调用记录…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="logs-pager">
+          <span id="userLogSummaryText" class="muted"></span>
+          <div class="pager-btns">
+            <button id="userLogPrev" type="button" class="btn ghost mini" disabled>上一页</button>
+            <span id="userLogPageInfo" class="page-info">1 / 1</span>
+            <button id="userLogNext" type="button" class="btn ghost mini" disabled>下一页</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <dialog id="rotateDialog" class="confirm-dialog" aria-labelledby="rotateDialogTitle">
+    <div class="dialog-head">
+      <h3 id="rotateDialogTitle">确认轮换专属 API 密钥？</h3>
+      <button id="closeRotateDialog" type="button" class="icon-btn" aria-label="关闭"><svg class="icon"><use href="#close"/></svg></button>
+    </div>
+    <p>轮换后将立即生成一个新的 <code>sk-…</code> 密钥字符串，<strong>当前旧密钥将立即失效</strong>。你的剩余额度、历史用量和已绑定的模型不会受影响。</p>
+    <div class="dialog-actions">
+      <button id="cancelRotateBtn" type="button" class="btn ghost">取消</button>
+      <button id="confirmRotateBtn" type="button" class="btn danger">确认轮换密钥</button>
+    </div>
+  </dialog>
+
+  <div id="userToast" class="user-toast hidden" role="status"></div>
+</body>
+</html>

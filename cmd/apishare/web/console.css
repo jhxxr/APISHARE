@@ -210,3 +210,23 @@
   .admin-console .guide-step:nth-of-type(1) { border-top: 0; }
   .admin-console .workspace-footer { flex-direction: row; flex-wrap: wrap; gap: 6px; font-size: 10px; }
 }
+
+/* Key table visual model chips, XAuth badge & settings layout */
+.settings-main-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.xauth-defaults-box { margin-top: 8px; padding-top: 16px; border-top: 1px dashed var(--border); display: flex; flex-direction: column; gap: 12px; }
+.xauth-defaults-box h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text); }
+.xauth-defaults-hint { margin: 0; font-size: 11px; line-height: 1.5; }
+.key-name-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.key-xauth-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 999px; background: var(--blue-soft); color: var(--blue); border: 1px solid rgb(8 127 140 / 22%); font-size: 11px; font-weight: 500; line-height: 1.3; }
+.key-note-line { color: var(--muted); font-size: 11px; }
+.key-models-col { min-width: 240px; max-width: 440px; }
+.key-models-cell { display: flex; flex-direction: column; gap: 6px; }
+.key-table-chips { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.key-table-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 6px; background: var(--bg); border: 1px solid var(--border); color: var(--text); font-size: 11px; line-height: 1.45; max-width: 100%; }
+.key-table-chip .model-brand-icon { width: 13px; height: 13px; flex-shrink: 0; }
+.key-table-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+.key-chip-quota { font-style: normal; padding: 0 5px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); font-size: 10px; font-weight: 600; white-space: nowrap; }
+.key-models-empty { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 6px; background: #f8ebe8; color: #a93f24; font-size: 11px; width: fit-content; }
+.key-models-more > summary { cursor: pointer; color: var(--accent); font-size: 11px; font-weight: 500; user-select: none; }
+.key-table-chips-more { margin-top: 6px; }
+.key-edit-meta-grid { margin-bottom: 12px; }
