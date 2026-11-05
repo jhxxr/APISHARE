@@ -61,7 +61,7 @@
   play(element,[{opacity:0,transform:"translate3d(0,32px,0) scale(.97)"},{opacity:1,transform:"translate3d(0,0,0) scale(1)"}],{duration:850,delay,easing:ease,fill:"backwards"});
   if(element.classList.contains("trend-card"))drawChart();if(element.classList.contains("usage-card"))drawUsage();
   if(element.classList.contains("balance-metric"))play(document.getElementById("balanceTrack").firstElementChild,[{transform:"scaleX(0)"},{transform:"scaleX(1)"}],{duration:1200,easing:ease});
-  if(element.classList.contains("model-card"))element.querySelectorAll(".interval-bar").forEach((bar,i)=>play(bar,[{opacity:0,transform:"scaleY(.3)"},{opacity:1,transform:"scaleY(1)"}],{duration:430,delay:delay+120+i*8,easing:ease,fill:"backwards"}));
+  if(element.classList.contains("model-card")){element.querySelectorAll(".interval-bar").forEach((bar,i)=>play(bar,[{opacity:0,transform:"scaleY(.3)"},{opacity:1,transform:"scaleY(1)"}],{duration:430,delay:delay+120+i*8,easing:ease,fill:"backwards"}));const arc=element.querySelector(".dial-arc");if(arc){const end=arc.getAttribute("stroke-dashoffset")||"0";play(arc,[{strokeDashoffset:"122.52"},{strokeDashoffset:end}],{duration:920,delay:delay+140,easing:ease,fill:"backwards"});}}
  }
  const observer="IntersectionObserver" in window?new IntersectionObserver(entries=>{
   entries.forEach(entry=>{if(entry.isIntersecting){observer.unobserve(entry.target);pending.delete(entry.target);reveal(entry.target);}});
