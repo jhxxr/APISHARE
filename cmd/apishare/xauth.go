@@ -1032,10 +1032,11 @@ func registerXAuthAdminRoutes(auth *gin.RouterGroup) {
 		})
 	})
 
-	// Batch add models to keys (existing models on a key are skipped, missing models are added).
+	// Batch add or remove models on keys (supports selected multi-keys, xauth, manual, or all keys).
 	auth.POST("/keys/batch-models", func(c *gin.Context) {
 		var req struct {
-			Scope       string                `json:"scope"` // "selected" | "xauth" | "all"
+			Action      string                `json:"action"` // "add" (default) | "remove"
+			Scope       string                `json:"scope"`  // "selected" | "xauth" | "manual" | "all"
 			KeyIDs      []int64               `json:"key_ids"`
 			Models      string                `json:"models"`
 			ModelQuotas map[string]ModelQuota `json:"model_quotas"`
@@ -1043,16 +1044,30 @@ func registerXAuthAdminRoutes(auth *gin.RouterGroup) {
 		if c.BindJSON(&req) != nil {
 			return
 		}
-		normalized := normalizeKeyModels(req.Models)
-		addList := keyModelIDs(normalized)
-		if len(addList) == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "请至少选择或输入一个要追加的模型"})
+		action := strings.ToLower(strings.TrimSpace(req.Action))
+		if action == "" {
+			action = "add"
+		}
+		if action != "add" && action != "remove" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "批量操作类型不正确，仅支持 add 或 remove"})
 			return
 		}
-		for m, q := range req.ModelQuotas {
-			if !validQuota(q.QuotaUSD) {
-				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("模型 %q 的独立额度必须是大于或等于 0 的有效金额", m)})
-				return
+		normalized := normalizeKeyModels(req.Models)
+		targetModels := keyModelIDs(normalized)
+		if len(targetModels) == 0 {
+			if action == "remove" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "请至少选择或输入一个要移除的模型"})
+			} else {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "请至少选择或输入一个要追加的模型"})
+			}
+			return
+		}
+		if action == "add" {
+			for m, q := range req.ModelQuotas {
+				if !validQuota(q.QuotaUSD) {
+					c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("模型 %q 的独立额度必须是大于或等于 0 的有效金额", m)})
+					return
+				}
 			}
 		}
 		allKeys, err := dbListKeys()
@@ -1083,6 +1098,10 @@ func registerXAuthAdminRoutes(auth *gin.RouterGroup) {
 				if k.XAuthUser != nil {
 					targets = append(targets, k)
 				}
+			case "manual":
+				if k.XAuthUser == nil {
+					targets = append(targets, k)
+				}
 			case "all":
 				targets = append(targets, k)
 			default:
@@ -1098,8 +1117,50 @@ func registerXAuthAdminRoutes(auth *gin.RouterGroup) {
 		updatedKeys := 0
 		skippedKeys := 0
 		addedModelsTotal := 0
+		removedModelsTotal := 0
+		removeSet := make(map[string]bool, len(targetModels))
+		for _, m := range targetModels {
+			removeSet[m] = true
+		}
+
 		for _, ak := range targets {
 			existing := keyModelIDs(ak.Models)
+			if action == "remove" {
+				kept := make([]string, 0, len(existing))
+				removedForThisKey := 0
+				for _, m := range existing {
+					if removeSet[m] {
+						removedForThisKey++
+						if ak.ModelQuotas != nil {
+							delete(ak.ModelQuotas, m)
+						}
+						continue
+					}
+					kept = append(kept, m)
+				}
+				if removedForThisKey == 0 {
+					skippedKeys++
+					continue
+				}
+				ak.Models = normalizeKeyModels(strings.Join(kept, ","))
+				for m := range ak.ModelQuotas {
+					if !ak.allowsModel(m) {
+						delete(ak.ModelQuotas, m)
+					}
+				}
+				if err := validateKeyQuotas(&ak); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+					return
+				}
+				if err := dbUpdateKey(&ak); err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+				updatedKeys++
+				removedModelsTotal += removedForThisKey
+				continue
+			}
+
 			has := make(map[string]bool, len(existing))
 			for _, m := range existing {
 				has[m] = true
@@ -1108,7 +1169,7 @@ func registerXAuthAdminRoutes(auth *gin.RouterGroup) {
 				ak.ModelQuotas = make(map[string]ModelQuota)
 			}
 			addedForThisKey := 0
-			for _, m := range addList {
+			for _, m := range targetModels {
 				if has[m] {
 					// Already present on this key -> skip and preserve existing quota mode/amount!
 					continue
@@ -1139,11 +1200,13 @@ func registerXAuthAdminRoutes(auth *gin.RouterGroup) {
 			addedModelsTotal += addedForThisKey
 		}
 		c.JSON(http.StatusOK, gin.H{
-			"ok":            true,
-			"matched_keys":  len(targets),
-			"updated_keys":  updatedKeys,
-			"skipped_keys":  skippedKeys,
-			"added_models":  addedModelsTotal,
+			"ok":             true,
+			"action":         action,
+			"matched_keys":   len(targets),
+			"updated_keys":   updatedKeys,
+			"skipped_keys":   skippedKeys,
+			"added_models":   addedModelsTotal,
+			"removed_models": removedModelsTotal,
 		})
 	})
 }

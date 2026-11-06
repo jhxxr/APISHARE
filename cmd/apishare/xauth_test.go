@@ -427,6 +427,61 @@ func TestBatchAddModelsSkipsExistingAndAddsMissing(t *testing.T) {
 	if got2.ModelQuotas["deepseek-r1"].QuotaUSD != 2 {
 		t.Fatalf("k2 deepseek-r1 independent quota = %+v, want 2", got2.ModelQuotas["deepseek-r1"])
 	}
+
+	// Key 3 has only claude-3-5-sonnet.
+	k3 := &ApiKey{
+		Name:        "Key Three",
+		Key:         "sk-batch-test-3",
+		QuotaUSD:    8,
+		QPS:         3,
+		Concurrency: 5,
+		Enabled:     true,
+		Models:      "claude-3-5-sonnet",
+	}
+	if err := dbInsertKey(k3); err != nil {
+		t.Fatalf("dbInsertKey k3: %v", err)
+	}
+
+	// Batch-remove gpt-4o across all selected keys (k1, k2, k3).
+	// k1 and k2 should lose gpt-4o (and k1's gpt-4o independent quota should be cleared while keeping deepseek-r1's $2 quota).
+	// k3 does not have gpt-4o and should be skipped without error.
+	removePayload := `{
+		"action": "remove",
+		"scope": "selected",
+		"key_ids": [` + strconv.FormatInt(k1.ID, 10) + `,` + strconv.FormatInt(k2.ID, 10) + `,` + strconv.FormatInt(k3.ID, 10) + `],
+		"models": "gpt-4o, nonexistent-model"
+	}`
+	remRes := deploymentJSON(t, deploymentRequest(r, "POST", "/admin/api/keys/batch-models", adminToken, removePayload), http.StatusOK)
+	if remRes["action"] != "remove" || remRes["matched_keys"] != float64(3) || remRes["updated_keys"] != float64(2) || remRes["skipped_keys"] != float64(1) || remRes["removed_models"] != float64(2) {
+		t.Fatalf("unexpected batch remove result: %+v", remRes)
+	}
+
+	got1After, err := dbGetKeyByID(k1.ID)
+	if err != nil {
+		t.Fatalf("dbGetKeyByID k1 after remove: %v", err)
+	}
+	if got1After.Models != "deepseek-r1" {
+		t.Fatalf("k1 models after remove = %q, want deepseek-r1", got1After.Models)
+	}
+	if _, stillHas := got1After.ModelQuotas["gpt-4o"]; stillHas {
+		t.Fatalf("k1 removed model gpt-4o independent quota should be cleared, got %+v", got1After.ModelQuotas)
+	}
+	if got1After.ModelQuotas["deepseek-r1"].QuotaUSD != 2 {
+		t.Fatalf("k1 remaining deepseek-r1 quota must stay 2, got %+v", got1After.ModelQuotas["deepseek-r1"])
+	}
+
+	got2After, err := dbGetKeyByID(k2.ID)
+	if err != nil {
+		t.Fatalf("dbGetKeyByID k2 after remove: %v", err)
+	}
+	if got2After.Models != "deepseek-r1" {
+		t.Fatalf("k2 models after remove = %q, want deepseek-r1", got2After.Models)
+	}
+
+	got3After, err := dbGetKeyByID(k3.ID)
+	if err != nil || got3After.Models != "claude-3-5-sonnet" {
+		t.Fatalf("k3 models should be untouched as claude-3-5-sonnet, got %+v err=%v", got3After, err)
+	}
 }
 
 func TestPerKeyDailyRollupPreservesUserDashboardTelemetry(t *testing.T) {

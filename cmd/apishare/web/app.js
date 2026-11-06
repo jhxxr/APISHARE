@@ -592,7 +592,11 @@ async function loadRecent() {
 /* API keys */
 function toggleKeyComposer(open) {
   $("keyComposer").classList.toggle("hidden", !open);
-  if (open) { $("keyComposer").scrollIntoView({ block: "nearest", behavior: motionBehavior() }); $("keyName").focus(); }
+  if (open) {
+    if (typeof ensureKeyModelOptionsLoaded === "function") ensureKeyModelOptionsLoaded("key");
+    $("keyComposer").scrollIntoView({ block: "nearest", behavior: motionBehavior() });
+    $("keyName").focus();
+  }
 }
 async function loadKeys(quiet = false) {
   const version = requestVersions.keys = (requestVersions.keys || 0) + 1;
@@ -1281,6 +1285,7 @@ async function loadSettings() {
         quota_usd: settings.xauth_default_quota_usd ?? 5,
         model_quotas: settings.xauth_default_model_quotas || {},
       });
+      if (typeof ensureKeyModelOptionsLoaded === "function") ensureKeyModelOptionsLoaded("xauthDefault");
       $("xauthTestStatus")?.classList.add("hidden");
     }
     applySiteBranding(settings);

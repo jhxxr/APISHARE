@@ -245,10 +245,10 @@
         </section>
 
         <section id="tab-keys" class="panel hidden">
-          <div class="page-heading"><div><span class="eyebrow">ACCESS & SHARING</span><h1>API 密钥</h1><p>为每位成员创建独立密钥，直观查看绑定模型，轻松管理额度与调用限制。</p></div><div class="heading-actions"><button type="button" class="btn ghost" onclick="openBatchAddKeyModels()"><svg class="icon"><use href="#i-layers"/></svg> 批量添加模型</button><button class="btn" onclick="toggleKeyComposer(true)"><svg class="icon"><use href="#i-plus"/></svg> 创建密钥</button></div></div>
+          <div class="page-heading"><div><span class="eyebrow">ACCESS & SHARING</span><h1>API 密钥</h1><p>为每位成员创建独立密钥，直观查看绑定模型，轻松管理额度与调用限制。</p></div><div class="heading-actions"><button type="button" class="btn ghost" onclick="openBatchAddKeyModels()"><svg class="icon"><use href="#i-plus"/></svg> 批量添加模型</button><button type="button" class="btn ghost" onclick="openBatchRemoveKeyModels()"><svg class="icon"><use href="#i-minus"/></svg> 批量减少模型</button><button class="btn" onclick="toggleKeyComposer(true)"><svg class="icon"><use href="#i-plus"/></svg> 创建密钥</button></div></div>
           <div id="keyComposer" class="card-block composer hidden"><div class="block-heading"><div><h2>创建 API 密钥</h2><p>给密钥一个易于辨识的名称。</p></div><button class="icon-btn" onclick="toggleKeyComposer(false)" aria-label="收起密钥表单"><svg class="icon"><use href="#i-close"/></svg></button></div><form id="keyForm" onsubmit="return createKey(event)"><div class="form-grid key-fields"><label class="field"><span>名称 <span class="required">*</span></span><input id="keyName" placeholder="例如：研究组 · 课题 A" required maxlength="120"></label><label class="field"><span>每秒请求数</span><input id="keyQps" type="number" step="0.1" min="0.1" placeholder="3"></label><label class="field"><span>并发请求数</span><input id="keyConc" type="number" min="1" step="1" placeholder="5"></label></div><div id="keyModelControl" class="key-model-control"></div><div class="form-actions"><button type="button" class="btn ghost" onclick="toggleKeyComposer(false)">取消</button><button type="submit" class="btn">生成密钥 <svg class="icon"><use href="#i-arrow"/></svg></button></div></form></div>
           <div id="newKeyShow" class="new-key hidden" role="status"><div><strong>新密钥已生成</strong><p>请立即复制并保存这份完整密钥。</p></div><code id="newKeyValue"></code><button class="btn ghost" onclick="copyNewKey()"><svg class="icon"><use href="#i-copy"/></svg> 复制密钥</button><button class="icon-btn" onclick="dismissNewKey()" aria-label="隐藏新密钥"><svg class="icon"><use href="#i-close"/></svg></button></div>
-          <div class="card-block list-card"><div class="list-toolbar"><div class="list-title"><h2>所有密钥</h2><span id="keyTotal" class="count-pill">—</span></div><div class="toolbar-filters"><select id="keySourceFilter" aria-label="按密钥来源筛选" onchange="renderKeys()"><option value="">全部密钥</option><option value="xauth">XAuth 用户</option><option value="manual">手动创建</option></select><label class="search-field"><svg class="icon"><use href="#i-search"/></svg><input id="keySearch" placeholder="搜索名称、用户或模型…" aria-label="搜索密钥名称" oninput="renderKeys()"></label></div></div><div id="keyBulkBar" class="upstream-bulk-bar hidden"><span id="keySelectedCount"></span><button type="button" class="text-btn" onclick="openBatchAddKeyModels('selected')">批量添加模型（已有跳过）</button><button type="button" class="text-btn" onclick="clearKeySelection()">取消选择</button></div><div class="table-wrap"><table class="tbl" id="keysTable"><thead><tr><th scope="col" class="upstream-select-cell"><input id="keySelectAll" type="checkbox" aria-label="选择当前筛选的全部密钥" onchange="selectAllKeys(this.checked)"></th><th scope="col">名称 / 归属</th><th scope="col">密钥</th><th scope="col">可用模型</th><th scope="col">额度使用</th><th scope="col">QPS / 并发</th><th scope="col">状态</th><th scope="col" class="actions-heading">操作</th></tr></thead><tbody></tbody></table></div></div>
+          <div class="card-block list-card"><div class="list-toolbar"><div class="list-title"><h2>所有密钥</h2><span id="keyTotal" class="count-pill">—</span></div><div class="toolbar-filters"><select id="keySourceFilter" aria-label="按密钥来源筛选" onchange="renderKeys()"><option value="">全部密钥</option><option value="xauth">XAuth 用户</option><option value="manual">手动创建</option></select><label class="search-field"><svg class="icon"><use href="#i-search"/></svg><input id="keySearch" placeholder="搜索名称、用户或模型…" aria-label="搜索密钥名称" oninput="renderKeys()"></label></div></div><div id="keyBulkBar" class="upstream-bulk-bar key-bulk-bar hidden"><span id="keySelectedCount"></span><div class="key-bulk-actions"><button type="button" class="btn mini" onclick="openBatchAddKeyModels('selected')"><svg class="icon"><use href="#i-plus"/></svg> 多选添加模型</button><button type="button" class="btn mini ghost" onclick="openBatchRemoveKeyModels('selected')"><svg class="icon"><use href="#i-minus"/></svg> 多选减少模型</button><button type="button" class="text-btn" onclick="selectAllKeys(true)">全选当前列表</button><button type="button" class="text-btn" onclick="invertKeySelection()">反选</button><button type="button" class="text-btn" onclick="clearKeySelection()">取消选择</button></div></div><div class="table-wrap"><table class="tbl" id="keysTable"><thead><tr><th scope="col" class="upstream-select-cell"><input id="keySelectAll" type="checkbox" aria-label="选择当前筛选的全部密钥" onchange="selectAllKeys(this.checked)"></th><th scope="col">名称 / 归属</th><th scope="col">密钥</th><th scope="col">可用模型</th><th scope="col">额度使用</th><th scope="col">QPS / 并发</th><th scope="col">状态</th><th scope="col" class="actions-heading">操作</th></tr></thead><tbody></tbody></table></div></div>
           <div class="inline-note"><svg class="icon"><use href="#i-info"/></svg> 主页公开全站 Token 用量、模型调用量与 Uptime。个人额度仅在持有人验证密钥后显示，无需单独勾选。</div>
         </section>
 
@@ -502,8 +502,47 @@
       <div class="form-actions"><button type="button" class="btn ghost" onclick="closeKeyModels()">取消</button><button id="keyModelsSave" type="submit" class="btn">保存设置</button></div>
     </fieldset></form>
   </dialog>
-  <dialog id="keyBatchModelsDialog" class="action-dialog key-model-dialog" aria-labelledby="keyBatchModelsHeading" aria-describedby="keyBatchModelsDescription"><form id="keyBatchModelsForm"><fieldset id="keyBatchModelsFields"><div class="action-dialog-header"><h2 id="keyBatchModelsHeading">批量添加模型（已有跳过）</h2><button type="button" class="icon-btn" onclick="closeBatchAddKeyModels()" aria-label="关闭批量添加模型"><svg class="icon"><use href="#i-close"/></svg></button></div><p id="keyBatchModelsDescription">为目标密钥批量追加可用模型：若某个密钥已包含该模型，将自动跳过并保留其原有额度设置；仅追加缺失的模型。</p><label class="field"><span>作用范围</span><select id="keyBatchScope"><option value="selected">当前勾选的密钥</option><option value="xauth">所有 XAuth 用户密钥</option><option value="all">全部 API 密钥</option></select></label><div id="keyBatchModelControl" class="key-model-control"></div><p id="keyBatchModelsError" class="form-error hidden" role="alert"></p><div class="form-actions"><button type="button" class="btn ghost" onclick="closeBatchAddKeyModels()">取消</button><button id="keyBatchModelsSave" type="submit" class="btn">批量追加模型</button></div></fieldset></form>
-  </dialog>
+  <dialog id="keyBatchModelsDialog" class="action-dialog key-model-dialog key-batch-dialog" aria-labelledby="keyBatchModelsHeading" aria-describedby="keyBatchModelsDescription"><form id="keyBatchModelsForm"><fieldset id="keyBatchModelsFields">
+    <div class="action-dialog-header"><h2 id="keyBatchModelsHeading">批量添加模型</h2><button type="button" class="icon-btn" onclick="closeBatchAddKeyModels()" aria-label="关闭批量模型管理"><svg class="icon"><use href="#i-close"/></svg></button></div>
+    <div id="keyBatchActionTabs" class="key-batch-mode-tabs" role="tablist" aria-label="批量操作模式">
+      <button type="button" id="keyBatchModeAdd" class="key-batch-mode-btn active" role="tab" aria-selected="true" data-batch-action="add" onclick="setBatchKeyModelAction('add')">
+        <svg class="icon"><use href="#i-plus"/></svg>
+        <span><strong>批量添加 · 多选追加</strong><small>为所选密钥追加模型，已有自动跳过并保留原额度</small></span>
+      </button>
+      <button type="button" id="keyBatchModeRemove" class="key-batch-mode-btn" role="tab" aria-selected="false" data-batch-action="remove" onclick="setBatchKeyModelAction('remove')">
+        <svg class="icon"><use href="#i-minus"/></svg>
+        <span><strong>批量减少 · 多选移除</strong><small>从所选密钥移除指定模型，未绑定自动跳过</small></span>
+      </button>
+    </div>
+    <p id="keyBatchModelsDescription">为目标密钥批量追加可用模型：若某个密钥已包含该模型，将自动跳过并保留其原有额度设置；仅追加缺失的模型。</p>
+    <div class="key-batch-step">
+      <div class="field-label-row"><label for="keyBatchScope">1. 选择目标密钥</label><small id="keyBatchTargetSummary" aria-live="polite"></small></div>
+      <select id="keyBatchScope" onchange="onBatchScopeChange()">
+        <option value="selected">指定多个密钥（多选）</option>
+        <option value="xauth">所有 XAuth 用户密钥</option>
+        <option value="manual">所有手动创建的密钥</option>
+        <option value="all">全部 API 密钥</option>
+      </select>
+      <div id="keyBatchKeyPicker" class="key-batch-key-picker">
+        <div class="model-picker-toolbar">
+          <label class="search-field"><svg class="icon"><use href="#i-search"/></svg><input id="keyBatchKeySearch" placeholder="搜索密钥名称、用户邮箱或已绑模型…" aria-label="搜索目标密钥" oninput="renderBatchKeyPicker()"></label>
+          <select id="keyBatchKeySource" aria-label="筛选目标密钥来源" onchange="renderBatchKeyPicker()"><option value="">全部来源</option><option value="xauth">XAuth 用户</option><option value="manual">手动创建</option></select>
+          <button type="button" class="text-btn" onclick="batchSelectFilteredKeys(true)">全选当前</button>
+          <button type="button" class="text-btn" onclick="batchInvertFilteredKeys()">反选</button>
+          <button type="button" class="text-btn" onclick="batchSelectFilteredKeys(false)">清空已选</button>
+        </div>
+        <div id="keyBatchKeyList" class="probe-box key-batch-key-list" role="group" aria-label="多选目标密钥列表"></div>
+      </div>
+      <div id="keyBatchScopeHintBar" class="key-batch-scope-bar hidden">
+        <span id="keyBatchScopeHintText"></span>
+        <button type="button" class="text-btn" onclick="convertScopeToSelectedKeys()">转为多选手动微调</button>
+      </div>
+    </div>
+    <div id="keyBatchModelControl" class="key-model-control"></div>
+    <div id="keyBatchImpactPreview" class="key-batch-impact" role="status" aria-live="polite"></div>
+    <p id="keyBatchModelsError" class="form-error hidden" role="alert"></p>
+    <div class="form-actions"><button type="button" class="btn ghost" onclick="closeBatchAddKeyModels()">取消</button><button id="keyBatchModelsSave" type="submit" class="btn">确认批量添加</button></div>
+  </fieldset></form></dialog>
 
   <dialog id="modelTestDialog" class="action-dialog model-test-dialog" aria-labelledby="modelTestHeading" aria-describedby="modelTestDescription">
     <form id="modelTestForm">
