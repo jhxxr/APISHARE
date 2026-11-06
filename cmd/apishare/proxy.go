@@ -591,7 +591,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	}
 	if up.isOpenCode() && isRetryableStatus(info.Status) {
 		retryAfter = openCodeRetryAfter(resp.Header.Get("Retry-After"), time.Now())
-		if info.Status == http.StatusTooManyRequests {
+		if info.Status == http.StatusTooManyRequests && !up.CooldownDisabled {
 			rateLimit = recordOpenCodeRateLimit(up, retryAfter)
 			current, currentErr := cachedRoutingUpstream(up.ID)
 			if up.selectedKeyID == "" && (currentErr != nil || (current.isOpenCode() && current.openCodeRateKey() == up.openCodeRateKey())) {
@@ -608,7 +608,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 
 	if info.Status < 200 || info.Status > 299 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
-		if fingerprint && freeShaped && openCodeFreeIPBlocked(info.Status, b) {
+		if fingerprint && freeShaped && openCodeFreeIPBlocked(info.Status, b) && !up.CooldownDisabled {
 			rateLimit = recordOpenCodeFreeExitBlock(up, openCodeRetryAfter(resp.Header.Get("Retry-After"), time.Now()))
 		}
 		if rateLimit != nil {

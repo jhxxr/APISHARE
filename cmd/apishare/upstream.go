@@ -13,6 +13,84 @@ import (
 // 连续失败达到阈值后进入冷却期，冷却时间指数退避，上限 10 分钟。
 // 冷却中的上游不参与调度，粘性会话也会转移并重新绑定。
 
+const (
+	defaultUpstreamCooldownThreshold = 3
+	defaultKeyCooldownThreshold      = 1
+	defaultCooldownSeconds           = 30
+	defaultCooldownMaxSeconds        = 600
+	maxConfigurableCooldownThreshold = 100
+	maxConfigurableCooldownSeconds   = 86400
+)
+
+func (u *Upstream) validateCooldownConfig() error {
+	if u.CooldownThreshold < 0 || u.CooldownThreshold > maxConfigurableCooldownThreshold {
+		return errors.New("连续失败阈值需在 0 到 100 之间")
+	}
+	if u.CooldownSeconds < 0 || u.CooldownSeconds > maxConfigurableCooldownSeconds {
+		return errors.New("初始冷却时间需在 0 到 86400 秒之间")
+	}
+	if u.CooldownMaxSeconds < 0 || u.CooldownMaxSeconds > maxConfigurableCooldownSeconds {
+		return errors.New("最大冷却时间需在 0 到 86400 秒之间")
+	}
+	if u.CooldownSeconds > 0 && u.CooldownMaxSeconds > 0 && u.CooldownMaxSeconds < u.CooldownSeconds {
+		return errors.New("最大冷却时间不能小于初始冷却时间")
+	}
+	return nil
+}
+
+func (u *Upstream) effectiveCooldownThreshold(forKey bool) int {
+	if u != nil && u.CooldownThreshold > 0 {
+		return u.CooldownThreshold
+	}
+	if forKey {
+		return defaultKeyCooldownThreshold
+	}
+	return defaultUpstreamCooldownThreshold
+}
+
+func (u *Upstream) effectiveCooldownBase() time.Duration {
+	if u != nil && u.CooldownSeconds > 0 {
+		return time.Duration(u.CooldownSeconds) * time.Second
+	}
+	return defaultCooldownSeconds * time.Second
+}
+
+func (u *Upstream) effectiveCooldownMax() time.Duration {
+	base := u.effectiveCooldownBase()
+	if u != nil && u.CooldownMaxSeconds > 0 {
+		maxDur := time.Duration(u.CooldownMaxSeconds) * time.Second
+		if maxDur < base {
+			return base
+		}
+		return maxDur
+	}
+	if base > defaultCooldownMaxSeconds*time.Second {
+		return base
+	}
+	return defaultCooldownMaxSeconds * time.Second
+}
+
+func (u *Upstream) cooldownBackoff(failures int, forKey bool) (time.Duration, bool) {
+	if u != nil && u.CooldownDisabled {
+		return 0, false
+	}
+	threshold := u.effectiveCooldownThreshold(forKey)
+	if failures < threshold {
+		return 0, false
+	}
+	base := u.effectiveCooldownBase()
+	maxDur := u.effectiveCooldownMax()
+	shift := failures - threshold
+	if shift > 10 {
+		shift = 10
+	}
+	backoff := base << uint(shift)
+	if backoff <= 0 || backoff > maxDur {
+		backoff = maxDur
+	}
+	return backoff, true
+}
+
 var upHealth = struct {
 	sync.Mutex
 	fails map[int64]int
@@ -20,17 +98,33 @@ var upHealth = struct {
 }{fails: map[int64]int{}, until: map[int64]time.Time{}}
 
 func healthMarkFailure(id int64) {
+	var up *Upstream
+	if db != nil {
+		if candidate, err := cachedRoutingUpstream(id); err == nil {
+			up = candidate
+		}
+	}
+	healthMarkFailureForUpstream(up, id, time.Time{})
+}
+
+func healthMarkFailureForUpstream(up *Upstream, id int64, retryAfter time.Time) {
+	if up != nil && up.CooldownDisabled {
+		return
+	}
 	upHealth.Lock()
 	defer upHealth.Unlock()
 	upHealth.fails[id]++
-	if n := upHealth.fails[id]; n >= 3 {
-		backoff := 10 * time.Minute
-		if n < 8 {
-			backoff = 30 * time.Second << uint(n-3)
+	n := upHealth.fails[id]
+	if backoff, cool := up.cooldownBackoff(n, false); cool {
+		until := time.Now().Add(backoff)
+		if retryAfter.After(until) {
+			until = retryAfter
 		}
-		if until := time.Now().Add(backoff); until.After(upHealth.until[id]) {
+		if until.After(upHealth.until[id]) {
 			upHealth.until[id] = until
 		}
+	} else if !retryAfter.IsZero() && retryAfter.After(upHealth.until[id]) {
+		upHealth.until[id] = retryAfter
 	}
 }
 
@@ -163,11 +257,13 @@ func pickUpstream(format clientFormat, model string, exclude map[int64]bool, nat
 		if nativeOnly && !supportsNativeEndpoint(u, format) {
 			continue
 		}
-		if limit := u.openCodeRateLimit(u.mapModel(model)); limit != nil {
-			if limited == nil || limit.until.Before(limited.until) {
-				limited = limit
+		if !u.CooldownDisabled {
+			if limit := u.openCodeRateLimit(u.mapModel(model)); limit != nil {
+				if limited == nil || limit.until.Before(limited.until) {
+					limited = limit
+				}
+				continue
 			}
-			continue
 		}
 		if !u.availableForRelay(model) {
 			continue

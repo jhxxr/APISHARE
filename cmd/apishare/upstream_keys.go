@@ -47,7 +47,7 @@ func (up *Upstream) credentialViews() []upstreamCredentialView {
 		}
 		view := upstreamCredentialView{ID: key.ID, Name: key.Name, KeyMasked: maskKey(key.APIKey), ProxyID: key.ProxyID,
 			Disabled: key.Disabled, Healthy: !key.Disabled && selected.credentialAvailable(""), Fails: selected.relayFailures()}
-		if time.Now().Before(until) {
+		if !up.CooldownDisabled && time.Now().Before(until) {
 			view.CooldownUntil = until.UTC().Format(time.RFC3339)
 		}
 		out = append(out, view)
@@ -176,9 +176,11 @@ func (up *Upstream) keyHealth() credentialHealth {
 }
 
 func (up *Upstream) markRelayFailure(status int, retryAfter time.Time) {
+	if up == nil || up.CooldownDisabled {
+		return
+	}
 	if up.selectedKeyID == "" {
-		healthMarkFailure(up.ID)
-		healthMarkRetryAfter(up.ID, retryAfter)
+		healthMarkFailureForUpstream(up, up.ID, retryAfter)
 		return
 	}
 	now := time.Now()
@@ -187,15 +189,18 @@ func (up *Upstream) markRelayFailure(status int, retryAfter time.Time) {
 	key := up.credentialHealthKey()
 	state := upstreamKeyHealth.entries[key]
 	state.failures++
-	// A failed pooled credential cools immediately so other sessions do not
-	// keep hitting the same rejected key while failover is in progress.
-	delay := min(10*time.Minute, 30*time.Second<<min(state.failures-1, 5))
-	until := now.Add(delay)
-	if retryAfter.After(until) {
-		until = retryAfter
-	}
-	if until.After(state.until) {
-		state.until = until
+	// A failed pooled credential cools immediately by default so other sessions
+	// do not keep hitting the same rejected key while failover is in progress.
+	if delay, cool := up.cooldownBackoff(state.failures, true); cool {
+		until := now.Add(delay)
+		if retryAfter.After(until) {
+			until = retryAfter
+		}
+		if until.After(state.until) {
+			state.until = until
+		}
+	} else if !retryAfter.IsZero() && retryAfter.After(state.until) {
+		state.until = retryAfter
 	}
 	state.failedAt = now
 	upstreamKeyHealth.entries[key] = state
@@ -221,7 +226,7 @@ func (up *Upstream) markRelaySuccess(startedAt ...time.Time) {
 }
 
 func (up *Upstream) credentialAvailable(model string) bool {
-	if time.Now().Before(up.keyHealth().until) || up.openCodeRateLimit(model) != nil {
+	if !up.CooldownDisabled && (time.Now().Before(up.keyHealth().until) || up.openCodeRateLimit(model) != nil) {
 		return false
 	}
 	if up.ProxyID != 0 {
@@ -361,6 +366,66 @@ func (up *Upstream) resetAPIKeyCooldowns() {
 			openCodeRates.Unlock()
 		}
 	}
+}
+
+func (up *Upstream) clearCooldowns() {
+	if up == nil {
+		return
+	}
+	healthMarkSuccess(up.ID)
+	up.resetAPIKeyCooldowns()
+	if up.isOpenCode() {
+		rateKey := up.openCodeRateKey()
+		exitKey, hasExit := up.openCodeFreeExitKey()
+		openCodeRates.Lock()
+		delete(openCodeRates.entries, rateKey)
+		if hasExit {
+			delete(openCodeRates.entries, exitKey)
+		}
+		openCodeRates.Unlock()
+	}
+}
+
+func (up *Upstream) cooldownUntil() time.Time {
+	if up == nil || up.CooldownDisabled {
+		return time.Time{}
+	}
+	now := time.Now()
+	if up.pooledKeys() {
+		var earliest time.Time
+		hasEnabled := false
+		for _, key := range up.APIKeys {
+			if key.Disabled {
+				continue
+			}
+			hasEnabled = true
+			selected := up.withAPIKey(key)
+			if selected.credentialAvailable("") {
+				return time.Time{}
+			}
+			until := selected.keyHealth().until
+			if limit := selected.openCodeRateLimit(); limit != nil && limit.until.After(until) {
+				until = limit.until
+			}
+			if until.After(now) && (earliest.IsZero() || until.Before(earliest)) {
+				earliest = until
+			}
+		}
+		if !hasEnabled {
+			return time.Time{}
+		}
+		return earliest
+	}
+	upHealth.Lock()
+	until := upHealth.until[up.ID]
+	upHealth.Unlock()
+	if limit := up.openCodeRateLimit(); limit != nil && limit.until.After(until) {
+		until = limit.until
+	}
+	if until.After(now) {
+		return until
+	}
+	return time.Time{}
 }
 
 func retryAfterHeader(header http.Header) time.Time {

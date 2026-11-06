@@ -36,7 +36,7 @@ func TestUpstreamDuplicateCopiesFullConfiguration(t *testing.T) {
 	}
 
 	var created struct{ ID int64 }
-	body := `{"name":"主账号","type":"openai","openai_protocol":"chat","base_url":"https://example.invalid/v1","api_key":"secret-key","weight":7,"models":"model-a,model-b","model_map":"{\"alias\":\"real\"}","header_overrides":"{\"X-Test\":\"1\"}","structured_output":"json_object"}`
+	body := `{"name":"主账号","type":"openai","openai_protocol":"chat","base_url":"https://example.invalid/v1","api_key":"secret-key","weight":7,"cooldown_disabled":true,"cooldown_threshold":5,"cooldown_seconds":45,"cooldown_max_seconds":300,"models":"model-a,model-b","model_map":"{\"alias\":\"real\"}","header_overrides":"{\"X-Test\":\"1\"}","structured_output":"json_object"}`
 	if err := json.Unmarshal(request("POST", "upstreams", body, 200).Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,9 @@ func TestUpstreamDuplicateCopiesFullConfiguration(t *testing.T) {
 	if copyUp.Type != src.Type || copyUp.BaseURL != src.BaseURL || copyUp.APIKey != src.APIKey ||
 		copyUp.Weight != src.Weight || copyUp.Models != src.Models || copyUp.ModelMap != src.ModelMap ||
 		copyUp.HeaderOverrides != src.HeaderOverrides || copyUp.OpenAIProtocol != src.OpenAIProtocol ||
-		copyUp.StructuredOutput != src.StructuredOutput || copyUp.ProxyID != src.ProxyID || copyUp.Enabled != src.Enabled {
+		copyUp.StructuredOutput != src.StructuredOutput || copyUp.ProxyID != src.ProxyID || copyUp.Enabled != src.Enabled ||
+		copyUp.CooldownDisabled != src.CooldownDisabled || copyUp.CooldownThreshold != src.CooldownThreshold ||
+		copyUp.CooldownSeconds != src.CooldownSeconds || copyUp.CooldownMaxSeconds != src.CooldownMaxSeconds {
 		t.Fatalf("copy lost configuration: %+v vs %+v", copyUp, src)
 	}
 	if copyUp.APIKey != "secret-key" || !copyUp.Enabled {

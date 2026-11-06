@@ -750,7 +750,7 @@ async function testUpstream(id, button) {
 
 /* One editor for both creation and updates. */
 function editorValue() {
-  return JSON.stringify(["editName", "editType", "editOpenCodeTier", "editOpenCodeProtocol", "editBase", "editKey", "editProxy", "editHeaderOverrides", "editStructuredOutput", "editPriority", "editWeight", "editModels", "editKeyMode", "editKeyProxyMode"].map((id) => $(id).value).concat($("editEnabled").checked, $("editModelInput").value, $("modelMapBatch").value, [modelMappingDirtyValue(), editorAPIKeysPayload(), $("editKeyBatch").value], editorUpstreamType() === "cliproxy" ? coreUI.pending.map(item => [item.name, item.proxy_id]) : [], editorUpstreamType() === "cliproxy" && !coreUI.poolID ? coreUI.defaultProxy : 0));
+  return JSON.stringify(["editName", "editType", "editOpenCodeTier", "editOpenCodeProtocol", "editBase", "editKey", "editProxy", "editHeaderOverrides", "editStructuredOutput", "editPriority", "editWeight", "editCooldownThreshold", "editCooldownSeconds", "editCooldownMaxSeconds", "editModels", "editKeyMode", "editKeyProxyMode"].map((id) => $(id).value).concat($("editEnabled").checked, $("editCooldownDisabled").checked, $("editModelInput").value, $("modelMapBatch").value, [modelMappingDirtyValue(), editorAPIKeysPayload(), $("editKeyBatch").value], editorUpstreamType() === "cliproxy" ? coreUI.pending.map(item => [item.name, item.proxy_id]) : [], editorUpstreamType() === "cliproxy" && !coreUI.poolID ? coreUI.defaultProxy : 0));
 }
 function editorIsOpen() { return $("editModal").open || !$("upstreamDetailPage").classList.contains("hidden"); }
 function editorDirty() { return editorIsOpen() && editorValue() !== editProbe.initial; }
@@ -784,8 +784,10 @@ async function openEditor(upstream) {
   $("legacyOpenAIFormatOption").disabled = format !== "openai-auto";
   $("legacyOpenCodeFormatOption").hidden = format !== "opencode";
   $("legacyOpenCodeFormatOption").disabled = format !== "opencode";
-  const values = { editName: upstream?.name || "", editType: format, editOpenCodeProtocol: isOpenCodeType(upstream?.type) ? upstream.openai_protocol || "auto" : "auto", editBase: upstream?.base_url || providerURLs.openai, editKey: "", editHeaderOverrides: upstream?.header_overrides || "", editStructuredOutput: upstream?.structured_output === "json_schema" ? "" : upstream?.structured_output || "", editPriority: upstream ? upstream.priority : 0, editWeight: upstream ? upstream.weight : 1, editModels: upstream?.models || "", editModelMap: upstream?.model_map || "" };
+  const values = { editName: upstream?.name || "", editType: format, editOpenCodeProtocol: isOpenCodeType(upstream?.type) ? upstream.openai_protocol || "auto" : "auto", editBase: upstream?.base_url || providerURLs.openai, editKey: "", editHeaderOverrides: upstream?.header_overrides || "", editStructuredOutput: upstream?.structured_output === "json_schema" ? "" : upstream?.structured_output || "", editPriority: upstream ? upstream.priority : 0, editWeight: upstream ? upstream.weight : 1, editCooldownThreshold: upstream ? (upstream.cooldown_threshold || 0) : 0, editCooldownSeconds: upstream ? (upstream.cooldown_seconds || 0) : 0, editCooldownMaxSeconds: upstream ? (upstream.cooldown_max_seconds || 0) : 0, editModels: upstream?.models || "", editModelMap: upstream?.model_map || "" };
   Object.entries(values).forEach(([id, value]) => { $(id).value = value; $(id).setCustomValidity(""); $(id).removeAttribute("aria-invalid"); });
+  $("editCooldownDisabled").checked = !!upstream?.cooldown_disabled;
+  updateCooldownControls();
   $("editOpenCodeTier").value = upstream?.opencode_tier || ((upstream?.base_url || "").match(/\/go(?:\/|$)/) ? "go" : "zen");
   renderProxyOptions(upstream?.proxy_id || 0);
   prepareAPIKeysEditor(upstream);
@@ -893,6 +895,19 @@ function updateOpenCodeTier() {
   const known = [...Object.values(openCodeURLs), "https://opencode.ai/inference", "https://opencode.ai/inference/go"];
   if (known.includes($("editBase").value.replace(/\/+$/, ""))) $("editBase").value = openCodeURLs[$("editOpenCodeTier").value];
   clearProbeResults(); updateEditorDirty();
+}
+function updateCooldownControls() {
+  const disabled = $("editCooldownDisabled").checked;
+  $("editCooldownFields").classList.toggle("hidden", disabled);
+  $("editCooldownDisabledNote").classList.toggle("hidden", !disabled);
+  ["editCooldownThreshold", "editCooldownSeconds", "editCooldownMaxSeconds"].forEach((id) => {
+    $(id).disabled = disabled;
+    if (disabled) {
+      $(id).setCustomValidity("");
+      $(id).removeAttribute("aria-invalid");
+      $(id + "Error")?.classList.add("hidden");
+    }
+  });
 }
 function clearProbeResults() {
   editProbe.generation++;
@@ -1072,8 +1087,18 @@ async function saveEditUpstream(event) {
       if (!["http:", "https:"].includes(new URL($("editBase").value).protocol)) throw new Error();
     } catch { $("editBase").setCustomValidity("请输入以 http:// 或 https:// 开头的服务地址"); jumpEditor("editorConnection"); $("editBase").reportValidity(); return false; }
   }
+  const cooldownDisabled = $("editCooldownDisabled").checked;
+  const cooldownThreshold = Number($("editCooldownThreshold").value) || 0;
+  const cooldownSeconds = Number($("editCooldownSeconds").value) || 0;
+  const cooldownMaxSeconds = Number($("editCooldownMaxSeconds").value) || 0;
+  if (!cooldownDisabled && cooldownSeconds > 0 && cooldownMaxSeconds > 0 && cooldownMaxSeconds < cooldownSeconds) {
+    $("editCooldownMaxSeconds").setCustomValidity("最大冷却时间不能小于初始冷却时间");
+    jumpEditor("editorRouting");
+    $("editCooldownMaxSeconds").reportValidity();
+    return false;
+  }
   if (!$("upstreamEditorForm").reportValidity()) return false;
-  const body = { name: $("editName").value.trim(), type: editorUpstreamType(), base_url: $("editBase").value.trim().replace(/\/+$/, ""), proxy_id: Number($("editProxy").value), priority: Number($("editPriority").value), weight: Number($("editWeight").value), models: parseAllowlist($("editModels").value).join(","), model_map: $("editModelMap").value.trim(), header_overrides: editorHeaderOverrides(), structured_output: editorUpstreamType()==="cliproxy"?"":$("editStructuredOutput").value };
+  const body = { name: $("editName").value.trim(), type: editorUpstreamType(), base_url: $("editBase").value.trim().replace(/\/+$/, ""), proxy_id: Number($("editProxy").value), priority: Number($("editPriority").value), weight: Number($("editWeight").value), cooldown_disabled: cooldownDisabled, cooldown_threshold: cooldownThreshold, cooldown_seconds: cooldownSeconds, cooldown_max_seconds: cooldownMaxSeconds, models: parseAllowlist($("editModels").value).join(","), model_map: $("editModelMap").value.trim(), header_overrides: editorHeaderOverrides(), structured_output: editorUpstreamType()==="cliproxy"?"":$("editStructuredOutput").value };
   body.openai_protocol = editorOpenAIProtocol();
   body.opencode_tier = editorUpstreamType() === "opencode-free" ? "zen" : editorUpstreamType() === "opencode" ? $("editOpenCodeTier").value : "";
   if (!creating) body.enabled = $("editEnabled").checked;

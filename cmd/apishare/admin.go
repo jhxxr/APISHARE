@@ -309,14 +309,15 @@ func registerAdminRoutes(r *gin.Engine) {
 		}
 		type upView struct {
 			Upstream
-			APIKey       string                   `json:"api_key"`
-			APIKeys      []upstreamCredentialView `json:"api_keys"`
-			KeyMasked    string                   `json:"key_masked"`
-			Fails        int                      `json:"fails"`
-			Healthy      bool                     `json:"healthy"`
-			PoolAccounts int                      `json:"pool_accounts,omitempty"`
-			PoolRunning  bool                     `json:"pool_running,omitempty"`
-			ManagedPool  bool                     `json:"managed_pool,omitempty"`
+			APIKey        string                   `json:"api_key"`
+			APIKeys       []upstreamCredentialView `json:"api_keys"`
+			KeyMasked     string                   `json:"key_masked"`
+			Fails         int                      `json:"fails"`
+			Healthy       bool                     `json:"healthy"`
+			CooldownUntil string                   `json:"cooldown_until,omitempty"`
+			PoolAccounts  int                      `json:"pool_accounts,omitempty"`
+			PoolRunning   bool                     `json:"pool_running,omitempty"`
+			ManagedPool   bool                     `json:"managed_pool,omitempty"`
 		}
 		out := make([]upView, 0, len(ups))
 		for _, u := range ups {
@@ -327,13 +328,18 @@ func registerAdminRoutes(r *gin.Engine) {
 					count, running, managed = manager.CredentialCount(), manager.Status().Running, true
 				}
 			}
+			var cooldownUntil string
+			if until := u.cooldownUntil(); !until.IsZero() {
+				cooldownUntil = until.UTC().Format(time.RFC3339)
+			}
 			out = append(out, upView{
-				Upstream:     u,
-				APIKeys:      u.credentialViews(),
-				KeyMasked:    maskKey(u.APIKey),
-				Fails:        u.relayFailures(),
-				Healthy:      u.availableForRelay(),
-				PoolAccounts: count, PoolRunning: running, ManagedPool: managed,
+				Upstream:      u,
+				APIKeys:       u.credentialViews(),
+				KeyMasked:     maskKey(u.APIKey),
+				Fails:         u.relayFailures(),
+				Healthy:       u.availableForRelay(),
+				CooldownUntil: cooldownUntil,
+				PoolAccounts:  count, PoolRunning: running, ManagedPool: managed,
 			})
 		}
 		c.JSON(200, out)
@@ -348,6 +354,10 @@ func registerAdminRoutes(r *gin.Engine) {
 		}
 		if u.Priority < 0 {
 			c.JSON(400, gin.H{"error": "priority must be zero or a positive integer"})
+			return
+		}
+		if err := u.validateCooldownConfig(); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
 		if !validUpstreamType(u.Type) {
@@ -437,23 +447,27 @@ func registerAdminRoutes(r *gin.Engine) {
 		}
 		previous := *u
 		var req struct {
-			Name             *string               `json:"name"`
-			Type             *string               `json:"type"`
-			BaseURL          *string               `json:"base_url"`
-			APIKey           *string               `json:"api_key"`
-			APIKeys          *[]UpstreamCredential `json:"api_keys"`
-			KeyProxyMode     *string               `json:"key_proxy_mode"`
-			Priority         *int                  `json:"priority"`
-			Weight           *int                  `json:"weight"`
-			Models           *string               `json:"models"`
-			ModelMap         *string               `json:"model_map"`
-			Enabled          *bool                 `json:"enabled"`
-			ProxyID          *int64                `json:"proxy_id"`
-			HeaderOverrides  *string               `json:"header_overrides"`
-			OpenAIProtocol   *string               `json:"openai_protocol"`
-			OpenCodeTier     *string               `json:"opencode_tier"`
-			StructuredOutput *string               `json:"structured_output"`
-			PoolProxyID      *int64                `json:"pool_proxy_id"`
+			Name               *string               `json:"name"`
+			Type               *string               `json:"type"`
+			BaseURL            *string               `json:"base_url"`
+			APIKey             *string               `json:"api_key"`
+			APIKeys            *[]UpstreamCredential `json:"api_keys"`
+			KeyProxyMode       *string               `json:"key_proxy_mode"`
+			Priority           *int                  `json:"priority"`
+			Weight             *int                  `json:"weight"`
+			Models             *string               `json:"models"`
+			ModelMap           *string               `json:"model_map"`
+			Enabled            *bool                 `json:"enabled"`
+			ProxyID            *int64                `json:"proxy_id"`
+			HeaderOverrides    *string               `json:"header_overrides"`
+			OpenAIProtocol     *string               `json:"openai_protocol"`
+			OpenCodeTier       *string               `json:"opencode_tier"`
+			StructuredOutput   *string               `json:"structured_output"`
+			PoolProxyID        *int64                `json:"pool_proxy_id"`
+			CooldownDisabled   *bool                 `json:"cooldown_disabled"`
+			CooldownThreshold  *int                  `json:"cooldown_threshold"`
+			CooldownSeconds    *int                  `json:"cooldown_seconds"`
+			CooldownMaxSeconds *int                  `json:"cooldown_max_seconds"`
 		}
 		if c.BindJSON(&req) != nil {
 			return
@@ -529,6 +543,22 @@ func registerAdminRoutes(r *gin.Engine) {
 		}
 		if req.Weight != nil {
 			u.Weight = *req.Weight
+		}
+		if req.CooldownDisabled != nil {
+			u.CooldownDisabled = *req.CooldownDisabled
+		}
+		if req.CooldownThreshold != nil {
+			u.CooldownThreshold = *req.CooldownThreshold
+		}
+		if req.CooldownSeconds != nil {
+			u.CooldownSeconds = *req.CooldownSeconds
+		}
+		if req.CooldownMaxSeconds != nil {
+			u.CooldownMaxSeconds = *req.CooldownMaxSeconds
+		}
+		if err := u.validateCooldownConfig(); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
 		}
 		if req.Models != nil {
 			u.Models = *req.Models

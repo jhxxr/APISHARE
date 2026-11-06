@@ -59,12 +59,13 @@ function upstreamHealthHTML(item) {
   const rate = calls ? Math.round(successes / calls * 100) + "%" : "—";
   const status = !item.enabled ? "已停用" : !item.healthy ? "冷却中" : calls ? "健康" : "暂无调用";
   const state = !item.enabled ? "off" : !item.healthy ? "warn" : calls ? "on" : "off";
+  const coolTitle = !item.healthy && item.cooldown_until ? ' title="' + esc("冷却至 " + fmtTime(item.cooldown_until)) + '"' : '';
   const start = upstreamOverviewCache ? new Date(upstreamOverviewCache.health_start).getTime() : 0;
   return '<div class="upstream-health"><div class="upstream-health-line" tabindex="0" role="img" aria-label="最近 200 分钟，' + calls + ' 次调用，' + successes + ' 次成功，成功率 ' + rate + '"><span class="upstream-health-bars">' + buckets.map((b, i) => {
     const tone = !b.calls ? "empty" : b.successes === b.calls ? "good" : b.successes / b.calls >= .8 ? "mixed" : "bad";
     const time = start ? fmtTime(new Date(start + i * 600000).toISOString()).slice(11, 16) + '–' + fmtTime(new Date(start + (i + 1) * 600000).toISOString()).slice(11, 16) + ' · ' : '';
     return '<span class="' + tone + '" title="' + esc(time + (b.calls ? b.successes + '/' + b.calls + ' 次成功' : '暂无调用')) + '"></span>';
-  }).join("") + '</span><span class="upstream-health-rate">' + rate + '</span></div><span class="badge ' + state + '">' + status + '</span>' + (item.fails ? '<small class="upstream-failure-count">连续失败 ' + number(item.fails) + ' 次</small>' : '') + ((!item.healthy && item.enabled) ? ' <button class="text-btn upstream-recover" onclick="recoverUpstream(' + item.id + ', this)" aria-label="恢复 ' + esc(item.name) + '">恢复</button>' : '') + '</div>';
+  }).join("") + '</span><span class="upstream-health-rate">' + rate + '</span></div><span class="badge ' + state + '"' + coolTitle + '>' + status + '</span>' + (item.cooldown_disabled ? '<span class="badge off" title="已禁用网关层错误冷却（号池模式）">免冷却</span>' : '') + (item.fails ? '<small class="upstream-failure-count">连续失败 ' + number(item.fails) + ' 次</small>' : '') + ((!item.healthy && item.enabled) ? ' <button class="text-btn upstream-recover" onclick="recoverUpstream(' + item.id + ', this)" aria-label="恢复 ' + esc(item.name) + '">恢复</button>' : '') + '</div>';
 }
 function upstreamToggle(item) {
   return '<button class="toggle-btn" role="switch" aria-checked="' + !!item.enabled + '" aria-label="' + (item.enabled ? "停用 " : "启用 ") + esc(item.name) + '" onclick="toggleUpstream(' + item.id + ', ' + !item.enabled + ', this)"><span></span></button>';
@@ -73,8 +74,16 @@ function upstreamModelsHTML(item) {
   const models = parseAllowlist(item.models);
   return '<button class="upstream-model-count" onclick="openUpstreamSection(' + item.id + ',\'editorModels\')" title="' + esc(models.join(", ") || "允许全部模型") + '">' + icon("layers") + (models.length ? models.length + ' 条' : '全部') + '</button>';
 }
+function upstreamCooldownSummary(item) {
+  if (item.cooldown_disabled) return { short: "免冷却", title: "已禁用网关层错误冷却（号池模式）" };
+  const threshold = Number(item.cooldown_threshold) || 0, base = Number(item.cooldown_seconds) || 0, max = Number(item.cooldown_max_seconds) || 0;
+  if (!threshold && !base && !max) return { short: "", title: "默认错误冷却（连续失败 3 次触发，30s–600s）" };
+  const effThreshold = threshold || ((item.api_keys || []).length ? 1 : 3), effBase = base || 30, effMax = max || Math.max(600, effBase);
+  return { short: effBase + "s", title: "自定义错误冷却：连续失败 " + effThreshold + " 次触发，冷却 " + effBase + "s–" + effMax + "s" };
+}
 function upstreamScheduleHTML(item) {
-  return '<button class="upstream-schedule" onclick="openUpstreamSection(' + item.id + ',\'editorRouting\')" title="编辑优先级与权重">P' + (Number(item.priority) || 0) + ' · W' + upstreamWeight(item) + '</button>';
+  const cd = upstreamCooldownSummary(item);
+  return '<button class="upstream-schedule" onclick="openUpstreamSection(' + item.id + ',\'editorRouting\')" title="' + esc("编辑优先级、权重与错误冷却 · " + cd.title) + '">P' + (Number(item.priority) || 0) + ' · W' + upstreamWeight(item) + (cd.short ? ' · ' + esc(cd.short) : '') + '</button>';
 }
 function upstreamMenuButton(item) {
   return '<button class="icon-btn upstream-more" onclick="showUpstreamMenu(' + item.id + ', this)" aria-label="' + esc(item.name) + '的更多操作" aria-haspopup="true" aria-expanded="false">' + icon("more") + '</button>';

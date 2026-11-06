@@ -17,6 +17,19 @@
 .upstream-key-editor .secret-field input { min-width: 0; }
 .upstream-keys-panel details summary { cursor: pointer; color: var(--muted); font-size: 13px; padding-block: 8px; }
 .upstream-keys-panel details .field { margin-block: 12px; }
+.cooldown-config-card { display: flex; flex-direction: column; gap: 16px; margin-top: 22px; padding: 18px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); }
+.cooldown-config-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.cooldown-config-header > div { flex: 1; min-width: 0; }
+.cooldown-config-header h4 { margin: 0 0 6px; font-size: 14px; font-weight: 600; }
+.cooldown-config-header p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.cooldown-switch-row { flex-shrink: 0; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); }
+.cooldown-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; align-items: start; }
+.cooldown-disabled-note { padding: 10px 12px; border: 1px solid #c1e3d2; border-radius: 8px; background: var(--green-soft); color: var(--green); }
+@media (max-width: 768px) {
+  .cooldown-config-header { flex-direction: column; gap: 12px; }
+  .cooldown-switch-row { width: 100%; }
+  .cooldown-grid { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+}
 @media (max-width: 640px) {
   .upstream-key-editor .form-grid { grid-template-columns: minmax(0, 1fr); }
   .upstream-keys-heading { align-items: flex-start; flex-wrap: wrap; }

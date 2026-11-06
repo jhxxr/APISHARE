@@ -80,6 +80,10 @@ CREATE TABLE IF NOT EXISTS upstreams (
   openai_protocol TEXT NOT NULL DEFAULT '',
   opencode_tier TEXT NOT NULL DEFAULT '',
   structured_output TEXT NOT NULL DEFAULT '',
+  cooldown_disabled INTEGER NOT NULL DEFAULT 0,
+  cooldown_threshold INTEGER NOT NULL DEFAULT 0,
+  cooldown_seconds INTEGER NOT NULL DEFAULT 0,
+  cooldown_max_seconds INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS cline_tokens (
@@ -385,6 +389,10 @@ CREATE INDEX IF NOT EXISTS idx_log_key_daily ON call_log_key_daily(key_id, day);
 	for _, column := range []struct{ name, definition string }{
 		{"api_keys", "TEXT NOT NULL DEFAULT '[]'"},
 		{"key_proxy_mode", "TEXT NOT NULL DEFAULT ''"},
+		{"cooldown_disabled", "INTEGER NOT NULL DEFAULT 0"},
+		{"cooldown_threshold", "INTEGER NOT NULL DEFAULT 0"},
+		{"cooldown_seconds", "INTEGER NOT NULL DEFAULT 0"},
+		{"cooldown_max_seconds", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		var exists int
 		if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('upstreams') WHERE name=?`, column.name).Scan(&exists); err != nil {
@@ -465,10 +473,14 @@ type Upstream struct {
 	ProxyID          int64                `json:"proxy_id"`
 	PoolProxyID      int64                `json:"pool_proxy_id,omitempty"` // CLIProxy pool default; never used on the loopback hop.
 	HeaderOverrides  string               `json:"header_overrides"`
-	OpenAIProtocol   string               `json:"openai_protocol"`   // OpenAI: auto/chat/responses; OpenCode: auto/chat/responses/anthropic
-	OpenCodeTier     string               `json:"opencode_tier"`     // zen/go; empty infers the tier from BaseURL for older channels
-	StructuredOutput string               `json:"structured_output"` // empty/json_schema, json_object compatibility, disabled; converted requests only
-	CreatedAt        string               `json:"created_at"`
+	OpenAIProtocol     string               `json:"openai_protocol"`   // OpenAI: auto/chat/responses; OpenCode: auto/chat/responses/anthropic
+	OpenCodeTier       string               `json:"opencode_tier"`     // zen/go; empty infers the tier from BaseURL for older channels
+	StructuredOutput   string               `json:"structured_output"` // empty/json_schema, json_object compatibility, disabled; converted requests only
+	CooldownDisabled   bool                 `json:"cooldown_disabled"`
+	CooldownThreshold  int                  `json:"cooldown_threshold"`
+	CooldownSeconds    int                  `json:"cooldown_seconds"`
+	CooldownMaxSeconds int                  `json:"cooldown_max_seconds"`
+	CreatedAt          string               `json:"created_at"`
 }
 
 type CallLog struct {
@@ -781,24 +793,25 @@ func dbAddUsedUSD(keyID int64, cost float64) error {
 // ---------- upstreams ----------
 
 func dbGetUpstream(id int64) (*Upstream, error) {
-	row := db.QueryRow(`SELECT id,name,type,base_url,api_key,priority,weight,models,model_map,enabled,created_at,proxy_id,header_overrides,openai_protocol,structured_output,opencode_tier,api_keys,key_proxy_mode
+	row := db.QueryRow(`SELECT id,name,type,base_url,api_key,priority,weight,models,model_map,enabled,created_at,proxy_id,header_overrides,openai_protocol,structured_output,opencode_tier,api_keys,key_proxy_mode,cooldown_disabled,cooldown_threshold,cooldown_seconds,cooldown_max_seconds
 		FROM upstreams WHERE id=?`, id)
 	u := &Upstream{}
-	var enabled int
+	var enabled, cooldownDisabled int
 	var keys string
 	if err := row.Scan(&u.ID, &u.Name, &u.Type, &u.BaseURL, &u.APIKey, &u.Priority, &u.Weight,
-		&u.Models, &u.ModelMap, &enabled, &u.CreatedAt, &u.ProxyID, &u.HeaderOverrides, &u.OpenAIProtocol, &u.StructuredOutput, &u.OpenCodeTier, &keys, &u.KeyProxyMode); err != nil {
+		&u.Models, &u.ModelMap, &enabled, &u.CreatedAt, &u.ProxyID, &u.HeaderOverrides, &u.OpenAIProtocol, &u.StructuredOutput, &u.OpenCodeTier, &keys, &u.KeyProxyMode, &cooldownDisabled, &u.CooldownThreshold, &u.CooldownSeconds, &u.CooldownMaxSeconds); err != nil {
 		return nil, err
 	}
 	if err := json.Unmarshal([]byte(keys), &u.APIKeys); err != nil {
 		return nil, fmt.Errorf("invalid upstream credentials: %w", err)
 	}
 	u.Enabled = enabled == 1
+	u.CooldownDisabled = cooldownDisabled == 1
 	return u, nil
 }
 
 func dbListUpstreams() ([]Upstream, error) {
-	rows, err := db.Query(`SELECT id,name,type,base_url,api_key,priority,weight,models,model_map,enabled,created_at,proxy_id,header_overrides,openai_protocol,structured_output,opencode_tier,api_keys,key_proxy_mode
+	rows, err := db.Query(`SELECT id,name,type,base_url,api_key,priority,weight,models,model_map,enabled,created_at,proxy_id,header_overrides,openai_protocol,structured_output,opencode_tier,api_keys,key_proxy_mode,cooldown_disabled,cooldown_threshold,cooldown_seconds,cooldown_max_seconds
 		FROM upstreams ORDER BY priority,id`)
 	if err != nil {
 		return nil, err
@@ -807,16 +820,17 @@ func dbListUpstreams() ([]Upstream, error) {
 	var out []Upstream
 	for rows.Next() {
 		var u Upstream
-		var enabled int
+		var enabled, cooldownDisabled int
 		var keys string
 		if err := rows.Scan(&u.ID, &u.Name, &u.Type, &u.BaseURL, &u.APIKey, &u.Priority, &u.Weight,
-			&u.Models, &u.ModelMap, &enabled, &u.CreatedAt, &u.ProxyID, &u.HeaderOverrides, &u.OpenAIProtocol, &u.StructuredOutput, &u.OpenCodeTier, &keys, &u.KeyProxyMode); err != nil {
+			&u.Models, &u.ModelMap, &enabled, &u.CreatedAt, &u.ProxyID, &u.HeaderOverrides, &u.OpenAIProtocol, &u.StructuredOutput, &u.OpenCodeTier, &keys, &u.KeyProxyMode, &cooldownDisabled, &u.CooldownThreshold, &u.CooldownSeconds, &u.CooldownMaxSeconds); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(keys), &u.APIKeys); err != nil {
 			return nil, fmt.Errorf("invalid upstream credentials: %w", err)
 		}
 		u.Enabled = enabled == 1
+		u.CooldownDisabled = cooldownDisabled == 1
 		out = append(out, u)
 	}
 	return out, rows.Err()
@@ -836,9 +850,9 @@ func dbInsertUpstream(u *Upstream) error {
 	if u.APIKeys == nil {
 		keys = []byte("[]")
 	}
-	res, err := db.Exec(`INSERT INTO upstreams(name,type,base_url,api_key,priority,weight,models,model_map,enabled,created_at,proxy_id,header_overrides,openai_protocol,structured_output,opencode_tier,api_keys,key_proxy_mode)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		u.Name, u.Type, u.BaseURL, u.APIKey, u.Priority, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), nowStr(), u.ProxyID, u.HeaderOverrides, u.OpenAIProtocol, u.StructuredOutput, u.OpenCodeTier, string(keys), u.KeyProxyMode)
+	res, err := db.Exec(`INSERT INTO upstreams(name,type,base_url,api_key,priority,weight,models,model_map,enabled,created_at,proxy_id,header_overrides,openai_protocol,structured_output,opencode_tier,api_keys,key_proxy_mode,cooldown_disabled,cooldown_threshold,cooldown_seconds,cooldown_max_seconds)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		u.Name, u.Type, u.BaseURL, u.APIKey, u.Priority, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), nowStr(), u.ProxyID, u.HeaderOverrides, u.OpenAIProtocol, u.StructuredOutput, u.OpenCodeTier, string(keys), u.KeyProxyMode, boolToInt(u.CooldownDisabled), u.CooldownThreshold, u.CooldownSeconds, u.CooldownMaxSeconds)
 	if err == nil {
 		u.ID, _ = res.LastInsertId()
 		invalidateRoutingSnapshot()
@@ -861,13 +875,16 @@ func dbUpdateUpstream(u *Upstream) error {
 	if u.APIKeys == nil {
 		keys = []byte("[]")
 	}
-	_, err = db.Exec(`UPDATE upstreams SET name=?,type=?,base_url=?,api_key=?,priority=?,weight=?,models=?,model_map=?,enabled=?,proxy_id=?,header_overrides=?,openai_protocol=?,structured_output=?,opencode_tier=?,api_keys=?,key_proxy_mode=? WHERE id=?`,
-		u.Name, u.Type, u.BaseURL, u.APIKey, u.Priority, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), u.ProxyID, u.HeaderOverrides, u.OpenAIProtocol, u.StructuredOutput, u.OpenCodeTier, string(keys), u.KeyProxyMode, u.ID)
+	_, err = db.Exec(`UPDATE upstreams SET name=?,type=?,base_url=?,api_key=?,priority=?,weight=?,models=?,model_map=?,enabled=?,proxy_id=?,header_overrides=?,openai_protocol=?,structured_output=?,opencode_tier=?,api_keys=?,key_proxy_mode=?,cooldown_disabled=?,cooldown_threshold=?,cooldown_seconds=?,cooldown_max_seconds=? WHERE id=?`,
+		u.Name, u.Type, u.BaseURL, u.APIKey, u.Priority, u.Weight, u.Models, u.ModelMap, boolToInt(u.Enabled), u.ProxyID, u.HeaderOverrides, u.OpenAIProtocol, u.StructuredOutput, u.OpenCodeTier, string(keys), u.KeyProxyMode, boolToInt(u.CooldownDisabled), u.CooldownThreshold, u.CooldownSeconds, u.CooldownMaxSeconds, u.ID)
 	if err == nil {
 		// A replaced OpenCode credential must not inherit the row's previous
 		// connection failure. Its credential-scoped rate cooldown is independent.
 		if u.isOpenCode() {
 			healthMarkSuccess(u.ID)
+		}
+		if u.CooldownDisabled {
+			u.clearCooldowns()
 		}
 		invalidateRoutingSnapshot()
 		invalidatePublicOverviews()

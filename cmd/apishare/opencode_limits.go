@@ -111,7 +111,7 @@ func (up *Upstream) openCodeFreeExitKey() (openCodeRateKey, bool) {
 }
 
 func (up *Upstream) openCodeRateLimit(models ...string) *openCodeRateLimitError {
-	if !up.isOpenCode() {
+	if !up.isOpenCode() || up.CooldownDisabled {
 		return nil
 	}
 	if up.pooledKeys() {
@@ -263,7 +263,7 @@ func (up *Upstream) availableForRelay(models ...string) bool {
 	if len(models) > 0 {
 		mapped = []string{up.mapModel(models[0])}
 	}
-	if !healthAvailable(up.ID) || up.openCodeRateLimit(mapped...) != nil {
+	if !up.CooldownDisabled && (!healthAvailable(up.ID) || up.openCodeRateLimit(mapped...) != nil) {
 		return false
 	}
 	if up.Type != "cliproxy" {
@@ -276,6 +276,9 @@ func (up *Upstream) availableForRelay(models ...string) bool {
 }
 
 func (up *Upstream) relayFailures() int {
+	if up.CooldownDisabled {
+		return 0
+	}
 	if up.pooledKeys() {
 		failures := 0
 		for _, key := range up.APIKeys {
