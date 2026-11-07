@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestRequestClientResearchedSamples(t *testing.T) {
@@ -140,6 +142,8 @@ func TestRequestClientProductionFailoverAndEarlyErrors(t *testing.T) {
 		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("User-Agent", ua)
+		req.RemoteAddr = "203.0.113.42:54321"
+		req.Header.Set("X-Forwarded-For", "198.51.100.99, 10.0.0.1")
 		if auth != "" {
 			req.Header.Set("Authorization", "Bearer "+auth)
 		}
@@ -152,7 +156,7 @@ func TestRequestClientProductionFailoverAndEarlyErrors(t *testing.T) {
 		t.Fatalf("failover request = %d", status)
 	}
 	logs, err := dbListLogs(20, 0)
-	if err != nil || len(logs) != 1 || attempts.Load() != 2 || logs[0].Client.ID != "codex" || logs[0].Client.UserAgent != ua {
+	if err != nil || len(logs) != 1 || attempts.Load() != 2 || logs[0].Client.ID != "codex" || logs[0].Client.UserAgent != ua || logs[0].ClientIP != "203.0.113.42" || logs[0].Client.IP != "203.0.113.42" {
 		t.Fatalf("one inbound request became incorrect receipts: %+v / %v / attempts=%d", logs, err, attempts.Load())
 	}
 	if status := send(`{"model":"blocked","messages":[]}`, "QwenCode/3.2.1 (linux; x64)", key.Key); status != 403 {
@@ -184,9 +188,113 @@ func TestRequestClientProductionFailoverAndEarlyErrors(t *testing.T) {
 	}
 	want := map[int]string{200: "codex", 403: "qwen_code", 400: "cline", 502: "opencode", 429: "kimi_cli"}
 	for _, entry := range logs {
-		if entry.Client.ID != want[entry.Status] || entry.Client.RuleVersion != requestClientRuleVersion {
+		if entry.Client.ID != want[entry.Status] || entry.Client.RuleVersion != requestClientRuleVersion || entry.ClientIP != "203.0.113.42" {
 			t.Fatalf("incorrect error identity: %+v", entry)
 		}
+	}
+}
+
+func TestParseCleanIP(t *testing.T) {
+	for _, tc := range []struct{ raw, want string }{
+		{"203.0.113.99:8080", "203.0.113.99"},
+		{"::ffff:203.0.113.99", "203.0.113.99"},
+		{"[::ffff:203.0.113.99]:8080", "203.0.113.99"},
+		{"[2001:db8::1%eth0]:443", "2001:db8::1"},
+		{"2001:db8::", "2001:db8::"},
+		{"::ffff:203.0.113.99:8080", ""},
+		{"not-an-ip", ""},
+	} {
+		t.Run(tc.raw, func(t *testing.T) {
+			if got := parseCleanIP(tc.raw); got != tc.want {
+				t.Fatalf("parseCleanIP(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestExtractRequestIPTrustPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		headers        map[string]string
+		remoteAddr     string
+		trustedProxies []string
+		want           string
+	}{
+		{
+			name: "untrusted caller cannot forge any source header",
+			headers: map[string]string{
+				"CF-Connecting-IP": "198.51.100.11", "True-Client-IP": "198.51.100.12",
+				"X-Forwarded-For": "203.0.113.1", "X-Real-IP": "203.0.113.2",
+			},
+			remoteAddr: "192.0.2.55:54321",
+			want:       "192.0.2.55",
+		},
+		{
+			name:           "untrusted caller outside configured proxies",
+			headers:        map[string]string{"X-Forwarded-For": "203.0.113.1"},
+			remoteAddr:     "192.0.2.55:54321",
+			trustedProxies: []string{"10.0.0.0/8"},
+			want:           "192.0.2.55",
+		},
+		{
+			name:           "trusted proxy unmaps forwarded v4-in-v6",
+			headers:        map[string]string{"X-Forwarded-For": "::ffff:203.0.113.99, 10.0.0.1"},
+			remoteAddr:     "10.0.0.2:54321",
+			trustedProxies: []string{"10.0.0.0/8"},
+			want:           "203.0.113.99",
+		},
+		{
+			name:           "forwarded chain stops at first untrusted hop",
+			headers:        map[string]string{"X-Forwarded-For": "198.51.100.99, 203.0.113.42, 10.0.0.1"},
+			remoteAddr:     "10.0.0.2:54321",
+			trustedProxies: []string{"10.0.0.0/8"},
+			want:           "203.0.113.42",
+		},
+		{
+			name:           "trusted proxy ignores unconfigured provider headers",
+			headers:        map[string]string{"CF-Connecting-IP": "198.51.100.11", "True-Client-IP": "198.51.100.12", "X-Forwarded-For": "203.0.113.42"},
+			remoteAddr:     "10.0.0.2:54321",
+			trustedProxies: []string{"10.0.0.0/8"},
+			want:           "203.0.113.42",
+		},
+		{
+			name:           "trusted proxy X-Real-IP IPv6",
+			headers:        map[string]string{"X-Real-IP": "2001:db8::1"},
+			remoteAddr:     "10.0.0.2:54321",
+			trustedProxies: []string{"10.0.0.0/8"},
+			want:           "2001:db8::1",
+		},
+		{
+			name:           "malformed forwarded chain falls back to peer",
+			headers:        map[string]string{"X-Forwarded-For": "203.0.113.42, not-an-ip"},
+			remoteAddr:     "10.0.0.2:54321",
+			trustedProxies: []string{"10.0.0.0/8"},
+			want:           "10.0.0.2",
+		},
+		{
+			name:       "direct IPv6 peer",
+			remoteAddr: "[2001:db8::1]:54321",
+			want:       "2001:db8::1",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			router := gin.New()
+			if err := router.SetTrustedProxies(tc.trustedProxies); err != nil {
+				t.Fatal(err)
+			}
+			router.POST("/v1/chat/completions", func(c *gin.Context) {
+				if got := requestClientFor(c).identity.IP; got != tc.want {
+					t.Errorf("request IP = %q, want %q", got, tc.want)
+				}
+				c.Status(http.StatusNoContent)
+			})
+			req := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+			req.RemoteAddr = tc.remoteAddr
+			for k, v := range tc.headers {
+				req.Header.Set(k, v)
+			}
+			router.ServeHTTP(httptest.NewRecorder(), req)
+		})
 	}
 }
 

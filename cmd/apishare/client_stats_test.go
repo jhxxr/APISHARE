@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -163,7 +164,7 @@ func TestClientLogFiltersExportAndStatsAuth(t *testing.T) {
 	}
 	response := proxyAdminRequest(router, "GET", "logs?client_id=unknown&export=csv", "", true)
 	records, err := csv.NewReader(strings.NewReader(strings.TrimPrefix(response.Body.String(), "\ufeff"))).ReadAll()
-	if response.Code != 200 || err != nil || len(records) != 3 || len(records[0]) != 22 {
+	if response.Code != 200 || err != nil || len(records) != 3 || len(records[0]) != 23 {
 		t.Fatalf("client CSV = %d %v / %v", response.Code, records, err)
 	}
 	if !strings.HasPrefix(records[1][18], "'=") {
@@ -173,5 +174,120 @@ func TestClientLogFiltersExportAndStatsAuth(t *testing.T) {
 	var stats clientStatsResult
 	if err := json.Unmarshal(response.Body.Bytes(), &stats); response.Code != 200 || err != nil || stats.Summary.Calls != 3 || len(stats.Items) != 2 {
 		t.Fatalf("client stats API = %d %+v / %v", response.Code, stats, err)
+	}
+}
+
+func TestIPFilteringAndAbuseStats(t *testing.T) {
+	router := testProxyAdminRouter(t)
+	if response := proxyAdminRequest(router, "GET", "ip-stats", "", false); response.Code != 401 {
+		t.Fatalf("unauthenticated ip-stats = %d", response.Code)
+	}
+	for _, path := range []string{"ip-stats?period=invalid", "ip-stats?sort=invalid", "ip-stats?start=invalid"} {
+		if response := proxyAdminRequest(router, "GET", path, "", true); response.Code != 400 {
+			t.Fatalf("%s = %d", path, response.Code)
+		}
+	}
+	for _, entry := range []CallLog{
+		{KeyID: 1, KeyName: "key-alpha", Model: "gpt-4o", Status: 200, PromptTokens: 100, CompletionTokens: 50, CostUSD: 1.5, ClientIP: "203.0.113.10"},
+		{KeyID: 2, KeyName: "key-beta", Model: "gpt-4o", Status: 429, Error: "rate limit", ClientIP: "203.0.113.10"},
+		{KeyID: 1, KeyName: "key-alpha", Model: "gpt-4o", Status: 200, PromptTokens: 20, CompletionTokens: 10, CostUSD: 0.5, ClientIP: "198.51.100.7"},
+	} {
+		item := entry
+		if err := dbInsertLog(&item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		values url.Values
+		total  int64
+	}{
+		{url.Values{"ip": {"203.0.113.10"}}, 2},
+		{url.Values{"ip": {"203.0.113."}}, 2},
+		{url.Values{"q": {"198.51.100.7"}}, 1},
+		{url.Values{"ip": {"203.0.113.99"}}, 0},
+	} {
+		query, err := parseLogQuery(tc.values)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := queryLogs(context.Background(), query)
+		if err != nil || result.Total != tc.total {
+			t.Fatalf("%v = %+v / %v", tc.values, result, err)
+		}
+	}
+	response := proxyAdminRequest(router, "GET", "ip-stats?period=all&sort=keys", "", true)
+	var ipStats ipStatsResult
+	if err := json.Unmarshal(response.Body.Bytes(), &ipStats); response.Code != 200 || err != nil {
+		t.Fatalf("ip-stats = %d %s / %v", response.Code, response.Body.String(), err)
+	}
+	if ipStats.UniqueIPs != 2 || ipStats.MultiKeyIPs != 1 || ipStats.RateLimitedCalls != 1 || len(ipStats.Items) != 2 {
+		t.Fatalf("unexpected ipStats summary: %+v", ipStats)
+	}
+	top := ipStats.Items[0]
+	if top.IP != "203.0.113.10" || top.KeyCount != 2 || top.Calls != 2 || top.Failed != 1 || top.RateLimited != 1 || len(top.Keys) != 2 {
+		t.Fatalf("unexpected top abuse IP row: %+v", top)
+	}
+}
+
+func TestIPStatsSummaryBeyondDisplayLimit(t *testing.T) {
+	modelsTestDB(t)
+	for i := 1; i <= 101; i++ {
+		ip := fmt.Sprintf("203.0.113.%d", i)
+		for _, entry := range []CallLog{
+			{ClientIP: ip, KeyID: 1, KeyName: "alpha", Status: 200, PromptTokens: 10, CompletionTokens: 5, CostUSD: float64(i)},
+			{ClientIP: ip, KeyID: 2, KeyName: "beta", Status: 429, PromptTokens: 2, CompletionTokens: 3, CostUSD: 99},
+		} {
+			item := entry
+			if err := dbInsertLog(&item); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	want := logQuerySummary{Calls: 202, Successes: 101, PromptTokens: 1212, CompletionTokens: 808, CostUSD: 5151}
+	for _, sort := range []string{"calls", "cost", "failed", "rate_limited", "keys"} {
+		t.Run(sort, func(t *testing.T) {
+			result, status, err := queryIPStatsFromValues(context.Background(), url.Values{"period": {"all"}, "sort": {sort}}, beijingNow())
+			if err != nil || status != 200 {
+				t.Fatalf("IP stats status=%d, err=%v", status, err)
+			}
+			if len(result.Items) != 100 || result.UniqueIPs != 101 || result.MultiKeyIPs != 101 || result.RateLimitedCalls != 101 || result.Summary != want {
+				t.Fatalf("truncated IP summary: %+v", result)
+			}
+			for _, row := range result.Items {
+				if row.KeyCount != 2 || len(row.Keys) != 2 {
+					t.Fatalf("missing displayed IP key references: %+v", row)
+				}
+			}
+		})
+	}
+	for _, tc := range []struct {
+		name    string
+		values  url.Values
+		unique  int
+		multi   int
+		limited int64
+		summary logQuerySummary
+	}{
+		{
+			name: "key filter", values: url.Values{"period": {"all"}, "key_id": {"1"}}, unique: 101,
+			summary: logQuerySummary{Calls: 101, Successes: 101, PromptTokens: 1010, CompletionTokens: 505, CostUSD: 5151},
+		},
+		{
+			name: "search filter", values: url.Values{"period": {"all"}, "q": {"beta"}}, unique: 101, limited: 101,
+			summary: logQuerySummary{Calls: 101, PromptTokens: 202, CompletionTokens: 303},
+		},
+		{
+			name: "empty range", values: url.Values{"start": {"2000-01-01T00:00:00+08:00"}, "end": {"2000-01-01T23:59:59+08:00"}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, status, err := queryIPStatsFromValues(context.Background(), tc.values, beijingNow())
+			if err != nil || status != 200 {
+				t.Fatalf("IP stats status=%d, err=%v", status, err)
+			}
+			if result.UniqueIPs != tc.unique || result.MultiKeyIPs != tc.multi || result.RateLimitedCalls != tc.limited || result.Summary != tc.summary {
+				t.Fatalf("filtered IP summary: %+v", result)
+			}
+		})
 	}
 }

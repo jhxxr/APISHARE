@@ -2,7 +2,9 @@ package main
 
 import (
 	"log"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"sort"
@@ -27,6 +29,7 @@ type requestClientIdentity struct {
 	SDKName     string   `json:"sdk_name,omitempty"`
 	SDKVersion  string   `json:"sdk_version,omitempty"`
 	UserAgent   string   `json:"user_agent,omitempty"`
+	IP          string   `json:"ip,omitempty"`
 	Source      string   `json:"source"`
 	RuleVersion int      `json:"rule_version"`
 	Ambiguous   bool     `json:"ambiguous,omitempty"`
@@ -207,6 +210,34 @@ func detectRequestClient(header http.Header) requestClientIdentity {
 	return normalizeRequestClient(result)
 }
 
+func parseCleanIP(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(s); err == nil {
+		s = host
+	} else if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
+		s = s[1 : len(s)-1]
+	}
+	if idx := strings.IndexByte(s, '%'); idx >= 0 {
+		s = s[:idx]
+	}
+	addr, err := netip.ParseAddr(strings.TrimSpace(s))
+	if err != nil || !addr.IsValid() {
+		return ""
+	}
+	return addr.Unmap().String()
+}
+
+func extractRequestIP(c *gin.Context) string {
+	if c == nil || c.Request == nil {
+		return ""
+	}
+	// Use the router's trusted proxy policy and validate forwarded hops there.
+	return parseCleanIP(c.ClientIP())
+}
+
 type requestClientState struct {
 	identity requestClientIdentity
 	model    string
@@ -221,7 +252,11 @@ func requestClientFor(c *gin.Context) *requestClientState {
 	if c.Request != nil {
 		header = c.Request.Header
 	}
-	state := &requestClientState{identity: detectRequestClient(header)}
+	identity := detectRequestClient(header)
+	if c.Request != nil {
+		identity.IP = extractRequestIP(c)
+	}
+	state := &requestClientState{identity: identity}
 	c.Set(requestClientContextKey, state)
 	return state
 }
@@ -279,7 +314,7 @@ func trackRequestClient() gin.HandlerFunc {
 		}
 		ak := c.MustGet("apiKey").(ApiKey)
 		if err := dbInsertLog(&CallLog{KeyID: ak.ID, KeyName: ak.Name, Model: state.model,
-			Endpoint: string(endpoint), Status: status, Error: message, Client: state.identity}); err != nil {
+			Endpoint: string(endpoint), Status: status, Error: message, Client: state.identity, ClientIP: state.identity.IP}); err != nil {
 			log.Printf("[client-log] key_id=%d: %v", ak.ID, err)
 		}
 	}

@@ -485,6 +485,7 @@ type Upstream struct {
 
 type CallLog struct {
 	Client           requestClientIdentity `json:"client"`
+	ClientIP         string                `json:"client_ip"`
 	ID               int64                 `json:"id"`
 	KeyID            int64                 `json:"key_id"`
 	KeyName          string                `json:"key_name"`
@@ -916,6 +917,12 @@ type logExecutor interface {
 }
 
 func insertCallLog(executor logExecutor, l *CallLog) error {
+	ip := parseCleanIP(l.ClientIP)
+	if ip == "" {
+		ip = parseCleanIP(l.Client.IP)
+	}
+	l.ClientIP = ip
+	l.Client.IP = ip
 	l.Client = normalizeRequestClient(l.Client)
 	clientJSON, err := json.Marshal(l.Client)
 	if err != nil {
@@ -930,16 +937,16 @@ func insertCallLog(executor logExecutor, l *CallLog) error {
 		billingJSON = string(encoded)
 	}
 	_, err = executor.Exec(`INSERT INTO call_logs(key_id,key_name,upstream_id,upstream_name,model,endpoint,
-		prompt_tokens,completion_tokens,cost_usd,status,latency_ms,first_token_ms,duration_ms,error,created_at,billing_json,trace_id,client_id,client_json)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		prompt_tokens,completion_tokens,cost_usd,status,latency_ms,first_token_ms,duration_ms,error,created_at,billing_json,trace_id,client_id,client_json,client_ip)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		l.KeyID, l.KeyName, l.UpstreamID, l.UpstreamName, l.Model, l.Endpoint,
-		l.PromptTokens, l.CompletionTokens, l.CostUSD, l.Status, l.LatencyMS, l.FirstTokenMS, l.DurationMS, l.Error, nowStr(), billingJSON, l.TraceID, l.Client.ID, string(clientJSON))
+		l.PromptTokens, l.CompletionTokens, l.CostUSD, l.Status, l.LatencyMS, l.FirstTokenMS, l.DurationMS, l.Error, nowStr(), billingJSON, l.TraceID, l.Client.ID, string(clientJSON), l.ClientIP)
 	return err
 }
 
 func dbListLogs(limit, offset int) ([]CallLog, error) {
 	rows, err := db.Query(`SELECT id,key_id,key_name,upstream_id,upstream_name,model,endpoint,
-		prompt_tokens,completion_tokens,cost_usd,status,latency_ms,first_token_ms,duration_ms,error,created_at,billing_json,trace_id,client_id,client_json
+		prompt_tokens,completion_tokens,cost_usd,status,latency_ms,first_token_ms,duration_ms,error,created_at,billing_json,trace_id,client_id,client_json,client_ip
 		FROM call_logs ORDER BY id DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, err

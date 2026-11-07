@@ -1,14 +1,18 @@
 /* Request records: server-wide filters, configurable columns and detail drawer. */
 const logColumnDefinitions = [
-  ["time", "时间", 100], ["model", "模型", 170], ["upstream", "上游", 155], ["key", "密钥", 115], ["client", "客户端", 160],
+  ["time", "时间", 100], ["model", "模型", 170], ["upstream", "上游", 155], ["key", "密钥", 115], ["ip", "请求 IP", 135], ["client", "客户端", 160],
   ["tokens", "Tokens", 135], ["performance", "性能", 145], ["cost", "费用", 100], ["status", "状态", 65],
 ];
 let visibleLogColumns = new Set(logColumnDefinitions.map(([id]) => id));
 try {
-  const saved = JSON.parse(localStorage.getItem("apishare_log_columns"));
-  if (Array.isArray(saved)) visibleLogColumns = new Set(saved.filter((id) => logColumnDefinitions.some(([name]) => name === id)).concat("time", "status"));
+  const hasV2 = localStorage.getItem("apishare_log_columns_v2");
+  const saved = JSON.parse(hasV2 || localStorage.getItem("apishare_log_columns"));
+  if (Array.isArray(saved)) {
+    const list = hasV2 ? saved : saved.concat("ip");
+    visibleLogColumns = new Set(list.filter((id) => logColumnDefinitions.some(([name]) => name === id)).concat("time", "status"));
+  }
 } catch { /* Ignore a stale or malformed display preference. */ }
-let logPeriod = "today", logSearchTimer = null, logAbortController = null;
+let logPeriod = "today", logSearchTimer = null, logAbortController = null, ipStatsTimer = null, ipStatsAbortController = null;
 const logFeatures = new Set();
 let logDetailRecord = null, logDetailTab = "overview";
 
@@ -63,7 +67,7 @@ function logQueryParams(page = 1) {
   if (start && end && new Date(start) > new Date(end)) throw new Error("开始时间不能晚于结束时间");
   if (start) params.set("start", start);
   if (end) params.set("end", end);
-  for (const [field, id] of [["q", "logSearch"], ["status", "logStatusFilter"], ["key_id", "logKeyFilter"], ["upstream_id", "logUpstreamFilter"], ["model", "logModelFilter"], ["client_id", "logClientFilter"], ["client_version", "logClientVersionFilter"]]) {
+  for (const [field, id] of [["q", "logSearch"], ["status", "logStatusFilter"], ["key_id", "logKeyFilter"], ["ip", "logIPFilter"], ["upstream_id", "logUpstreamFilter"], ["model", "logModelFilter"], ["client_id", "logClientFilter"], ["client_version", "logClientVersionFilter"]]) {
     const value = $(id).value.trim(); if (value) params.set(field, value);
   }
   if (logFeatures.size) params.set("features", [...logFeatures].join(","));
@@ -71,6 +75,7 @@ function logQueryParams(page = 1) {
 }
 async function loadLogs(page = 1) {
   clearTimeout(logSearchTimer);
+  if (page === 1 && $("logIPStatsPanel") && !$("logIPStatsPanel").classList.contains("hidden")) loadIPStats();
   let params;
   try { params = logQueryParams(page); }
   catch (error) {
@@ -121,8 +126,7 @@ function toggleLogFeature(feature) {
   document.querySelectorAll("[data-log-feature]").forEach((button) => button.setAttribute("aria-pressed", String(logFeatures.has(button.dataset.logFeature))));
   loadLogs(1);
 }
-function toggleLogFilters() {
-  const panel = $("logAdvancedFilters"), opening = panel.classList.contains("hidden");
+function populateLogFilterOptions() {
   for (const [id, items, label] of [["logKeyFilter", keysCache, "全部密钥"], ["logUpstreamFilter", upsCache, "全部上游"]]) {
     const field = $(id), selected = field.value;
     field.replaceChildren(new Option(label, ""));
@@ -130,14 +134,98 @@ function toggleLogFilters() {
     if (selected && !items.some((item) => String(item.id) === selected)) field.add(new Option("已删除配置 #" + selected, selected));
     field.value = selected;
   }
+}
+function toggleLogFilters() {
+  const panel = $("logAdvancedFilters"), opening = panel.classList.contains("hidden");
+  populateLogFilterOptions();
   panel.classList.toggle("hidden", !opening); $("logFilterButton").setAttribute("aria-expanded", String(opening));
   if (opening) $("logStatusFilter").focus();
 }
 function resetLogFilters() {
-  for (const id of ["logSearch", "logStatusFilter", "logKeyFilter", "logUpstreamFilter", "logModelFilter", "logClientFilter", "logClientVersionFilter"]) $(id).value = "";
+  for (const id of ["logSearch", "logStatusFilter", "logKeyFilter", "logIPFilter", "logUpstreamFilter", "logModelFilter", "logClientFilter", "logClientVersionFilter"]) $(id).value = "";
   logFeatures.clear();
   document.querySelectorAll("[data-log-feature]").forEach((button) => button.setAttribute("aria-pressed", "false"));
   loadLogs(1);
+}
+function filterLogsByIP(ip, keyId = "") {
+  closeLogDetails();
+  populateLogFilterOptions();
+  $("logIPFilter").value = ip || "";
+  if (keyId !== "") $("logKeyFilter").value = String(keyId);
+  $("logAdvancedFilters").classList.remove("hidden");
+  $("logFilterButton").setAttribute("aria-expanded", "true");
+  loadLogs(1);
+}
+function toggleIPStatsPanel() {
+  const panel = $("logIPStatsPanel"), opening = panel.classList.contains("hidden");
+  panel.classList.toggle("hidden", !opening);
+  $("logIPStatsButton").setAttribute("aria-expanded", String(opening));
+  if (opening) loadIPStats();
+}
+function scheduleIPStatsLoad() {
+  requestVersions.ipStats = (requestVersions.ipStats || 0) + 1;
+  if (ipStatsAbortController) ipStatsAbortController.abort();
+  clearTimeout(ipStatsTimer); ipStatsTimer = setTimeout(() => loadIPStats(), 280);
+}
+async function loadIPStats() {
+  clearTimeout(ipStatsTimer);
+  const table = $("ipStatsTable");
+  if (!table) return;
+  const params = new URLSearchParams();
+  const start = logDateISO($("logStart").value), end = logDateISO($("logEnd").value, true);
+  if (start && end && new Date(start) > new Date(end)) {
+    $("ipStatsSummary").textContent = "开始时间不能晚于结束时间";
+    return;
+  }
+  if (start) params.set("start", start);
+  if (end) params.set("end", end);
+  if (!start && !end) params.set("period", "today");
+  const sort = $("ipStatsSort")?.value || "calls";
+  params.set("sort", sort);
+  const q = $("ipStatsSearch")?.value.trim() || "";
+  if (q) params.set("q", q);
+  const keyFilter = $("logKeyFilter")?.value.trim() || "";
+  if (keyFilter) params.set("key_id", keyFilter);
+
+  const version = requestVersions.ipStats = (requestVersions.ipStats || 0) + 1;
+  if (ipStatsAbortController) ipStatsAbortController.abort();
+  ipStatsAbortController = new AbortController();
+  table.setAttribute("aria-busy", "true");
+  try {
+    const result = await api("api/ip-stats?" + params, {signal: ipStatsAbortController.signal});
+    if (version !== requestVersions.ipStats) return;
+    const items = result.items || [];
+    $("ipStatsSummary").textContent = "共 " + number(result.unique_ips || 0) + " 个请求 IP · 多密钥共用 IP " + number(result.multi_key_ips || 0) + " 个 · 429 限流 " + number(result.rate_limited_calls || 0) + " 次 · 合计 " + number(result.summary?.calls || 0) + " 次调用 / " + fmtUSD(result.summary?.cost_usd || 0);
+    table.querySelector("tbody").innerHTML = items.map((item) => {
+      const multiKeyBadge = item.key_count > 1 ? '<span class="badge warn log-ip-multikey-badge" title="同一 IP 使用了多个密钥">' + number(item.key_count) + ' 个密钥</span>' : '';
+      const keysHtml = (item.keys || []).map((k) => {
+        const label = k.key_name || ("#" + k.key_id);
+        return '<button type="button" class="log-ip-key-chip" data-filter-ip="' + esc(item.ip) + '" data-filter-key="' + esc(k.key_id || "") + '" title="筛选此 IP + 密钥 ' + esc(label) + ' 的调用记录">' + esc(label) + ' <span>(' + number(k.calls) + ')</span></button>';
+      }).join("") + (item.key_count > (item.keys || []).length ? '<small class="muted">等 ' + number(item.key_count) + ' 个</small>' : '');
+      const failBadge = item.failed > 0 ? '<span class="log-ip-fail">' + number(item.failed) + ' 失败</span>' : '<span class="muted">0</span>';
+      const rlBadge = item.rate_limited > 0 ? ' <span class="badge error" title="触发 429 速率/并发限制">' + number(item.rate_limited) + ' 次 429</span>' : '';
+      return '<tr class="' + (item.key_count > 1 || item.rate_limited >= 5 ? 'log-ip-suspect-row' : '') + '">'
+        + '<td><button type="button" class="text-btn log-ip-code" data-filter-ip="' + esc(item.ip) + '">' + esc(item.ip) + '</button></td>'
+        + '<td><div class="log-ip-keys-cell">' + multiKeyBadge + (keysHtml || '<span class="muted">—</span>') + '</div></td>'
+        + '<td>' + number(item.calls) + ' / ' + number(item.successes) + '</td>'
+        + '<td>' + failBadge + rlBadge + '</td>'
+        + '<td>↑ ' + compactUpstreamNumber(item.prompt_tokens) + ' / ↓ ' + compactUpstreamNumber(item.completion_tokens) + '</td>'
+        + '<td>' + fmtUSD(item.cost_usd) + '</td>'
+        + '<td>' + esc(fmtTime(item.last_at) || "—") + '</td>'
+        + '<td class="actions"><button type="button" class="btn mini ghost" data-filter-ip="' + esc(item.ip) + '">筛选此 IP</button></td>'
+        + '</tr>';
+    }).join("") || emptyRow(8, "当前范围没有带 IP 的调用记录", "产生模型请求后会自动采集请求来源 IP。", "", "", "shield");
+    table.querySelectorAll("[data-filter-ip]").forEach((btn) => {
+      btn.addEventListener("click", () => filterLogsByIP(btn.dataset.filterIp, btn.dataset.filterKey || ""));
+    });
+  } catch (error) {
+    if (error.name === "AbortError" || version !== requestVersions.ipStats) return;
+    $("ipStatsSummary").textContent = "IP 统计加载失败";
+    errorRow("ipStatsTable", 8, error);
+    reportError(error, "IP 统计加载失败");
+  } finally {
+    if (version === requestVersions.ipStats) table.setAttribute("aria-busy", "false");
+  }
 }
 function logPerformance(log) {
   const first = Number(log.first_token_ms) || 0, total = Number(log.duration_ms) || Number(log.latency_ms) || 0;
@@ -155,8 +243,15 @@ function renderLogs() {
     const performance = logPerformance(log), usage = log.billing?.usage, failed = !(log.status >= 200 && log.status < 300);
     const open = 'onclick="openLogDetails(' + log.id + ')"';
     const cache = usage?.cache_read || usage?.cache_write ? '<small class="log-cache" title="缓存创建 / 缓存读取">' + icon("layers") + compactUpstreamNumber(usage.cache_write) + ' / ' + compactUpstreamNumber(usage.cache_read) + '</small>' : '';
-    return '<tr class="' + (failed ? 'log-failed-row' : '') + '"><td data-log-column="time"><button class="log-cell-button log-time" ' + open + ' title="' + esc(fmtTime(log.created_at)) + '">' + esc(logTimeLabel(log.created_at)) + '</button><small>' + esc(fmtTime(log.created_at).slice(5, 10)) + '</small></td><td data-log-column="model"><button class="log-cell-button log-model" ' + open + ' title="' + esc(log.model) + '">' + modelIcon(log.model) + '<span>' + esc(log.model || "未识别模型") + '</span></button></td><td data-log-column="upstream"><button class="log-cell-button log-upstream" ' + open + ' title="' + esc(log.upstream_name || "未分配上游") + '">' + esc(log.upstream_name || "未分配上游") + '</button><small class="log-endpoint" title="' + esc(log.endpoint) + '">' + esc(log.endpoint || '—') + '</small></td><td data-log-column="key"><button class="log-cell-button" ' + open + ' title="' + esc(log.key_name) + '">' + esc(log.key_name || '—') + '</button></td><td data-log-column="client"><button class="log-cell-button" ' + open + ' title="' + esc(log.client?.user_agent || logClientLabel(log)) + '">' + esc(logClientLabel(log)) + '</button><small class="log-client-note">' + esc(logClientNote(log)) + '</small></td><td data-log-column="tokens"><button class="log-cell-button log-token-count" ' + open + ' title="输入 / 输出 Tokens">↑' + compactUpstreamNumber(log.prompt_tokens) + ' ↓' + compactUpstreamNumber(log.completion_tokens) + '</button>' + cache + (usage?.reasoning ? '<small class="log-reasoning">推理 ' + compactUpstreamNumber(usage.reasoning) + '</small>' : '') + '</td><td data-log-column="performance"><button class="log-cell-button log-performance" ' + open + ' title="总耗时 / 首 Token 延迟">' + (performance.total ? fmtDuration(performance.total) : '—') + '<span> / ' + (performance.first ? fmtDuration(performance.first) : '—') + '</span></button><small>' + (performance.tps ? performance.tps + ' TPS' : '暂无速度数据') + '</small></td><td data-log-column="cost"><button class="log-cell-button log-cost" ' + open + '>' + fmtUSD(log.cost_usd) + '</button>' + (log.billing?.usage?.estimated_input || log.billing?.usage?.estimated_output ? '<small class="log-estimate">含估算用量</small>' : '') + '</td><td data-log-column="status"><button class="log-status-button" ' + open + ' aria-label="请求 #' + log.id + ' 详情，状态 ' + Number(log.status) + '"><span class="badge ' + (failed ? 'error' : 'on') + '">' + Number(log.status) + '</span></button></td></tr>';
+    const ipValue = log.client_ip || log.client?.ip || "";
+    const ipCell = ipValue
+      ? '<button class="log-cell-button log-ip-code" ' + open + ' title="' + esc(ipValue) + '">' + esc(ipValue) + '</button><button type="button" class="log-ip-filter-btn" data-filter-ip="' + esc(ipValue) + '" title="筛选此 IP 的全部请求">筛选此 IP</button>'
+      : '<button class="log-cell-button muted" ' + open + '>—</button>';
+    return '<tr class="' + (failed ? 'log-failed-row' : '') + '"><td data-log-column="time"><button class="log-cell-button log-time" ' + open + ' title="' + esc(fmtTime(log.created_at)) + '">' + esc(logTimeLabel(log.created_at)) + '</button><small>' + esc(fmtTime(log.created_at).slice(5, 10)) + '</small></td><td data-log-column="model"><button class="log-cell-button log-model" ' + open + ' title="' + esc(log.model) + '">' + modelIcon(log.model) + '<span>' + esc(log.model || "未识别模型") + '</span></button></td><td data-log-column="upstream"><button class="log-cell-button log-upstream" ' + open + ' title="' + esc(log.upstream_name || "未分配上游") + '">' + esc(log.upstream_name || "未分配上游") + '</button><small class="log-endpoint" title="' + esc(log.endpoint) + '">' + esc(log.endpoint || '—') + '</small></td><td data-log-column="key"><button class="log-cell-button" ' + open + ' title="' + esc(log.key_name) + '">' + esc(log.key_name || '—') + '</button></td><td data-log-column="ip">' + ipCell + '</td><td data-log-column="client"><button class="log-cell-button" ' + open + ' title="' + esc(log.client?.user_agent || logClientLabel(log)) + '">' + esc(logClientLabel(log)) + '</button><small class="log-client-note">' + esc(logClientNote(log)) + '</small></td><td data-log-column="tokens"><button class="log-cell-button log-token-count" ' + open + ' title="输入 / 输出 Tokens">↑' + compactUpstreamNumber(log.prompt_tokens) + ' ↓' + compactUpstreamNumber(log.completion_tokens) + '</button>' + cache + (usage?.reasoning ? '<small class="log-reasoning">推理 ' + compactUpstreamNumber(usage.reasoning) + '</small>' : '') + '</td><td data-log-column="performance"><button class="log-cell-button log-performance" ' + open + ' title="总耗时 / 首 Token 延迟">' + (performance.total ? fmtDuration(performance.total) : '—') + '<span> / ' + (performance.first ? fmtDuration(performance.first) : '—') + '</span></button><small>' + (performance.tps ? performance.tps + ' TPS' : '暂无速度数据') + '</small></td><td data-log-column="cost"><button class="log-cell-button log-cost" ' + open + '>' + fmtUSD(log.cost_usd) + '</button>' + (log.billing?.usage?.estimated_input || log.billing?.usage?.estimated_output ? '<small class="log-estimate">含估算用量</small>' : '') + '</td><td data-log-column="status"><button class="log-status-button" ' + open + ' aria-label="请求 #' + log.id + ' 详情，状态 ' + Number(log.status) + '"><span class="badge ' + (failed ? 'error' : 'on') + '">' + Number(log.status) + '</span></button></td></tr>';
   }).join("") || emptyRow(visibleLogColumns.size, "当前范围没有请求记录", "调整时间范围或筛选条件后重试。", "", "", "activity");
+  $("logsTable").querySelectorAll("[data-filter-ip]").forEach((btn) => {
+    btn.addEventListener("click", () => filterLogsByIP(btn.dataset.filterIp));
+  });
   applyLogColumns();
 }
 function applyLogColumns() {
@@ -167,7 +262,10 @@ function applyLogColumns() {
 function toggleLogColumn(id, selected) {
   if (selected) visibleLogColumns.add(id); else visibleLogColumns.delete(id);
   visibleLogColumns.add("time"); visibleLogColumns.add("status");
-  localStorage.setItem("apishare_log_columns", JSON.stringify([...visibleLogColumns])); applyLogColumns();
+  const saved = JSON.stringify([...visibleLogColumns]);
+  localStorage.setItem("apishare_log_columns_v2", saved);
+  localStorage.setItem("apishare_log_columns", saved);
+  applyLogColumns();
 }
 function toggleLogColumns(button) {
   const menu = $("logColumnsMenu");
@@ -198,8 +296,17 @@ function renderLogDetails() {
     $("logDetailBody").querySelectorAll("details").forEach((detail) => { detail.open = true; });
     return;
   }
-  const fields = [["模型", log.model || "—"], ["上游服务", log.upstream_name || "未分配"], ["API 密钥", log.key_name || "—"], ["请求端点", log.endpoint || "—"], ["总耗时", perf.total ? fmtDuration(perf.total) : "—"], ["首 Token 延迟", perf.first ? fmtDuration(perf.first) : "—"], ["输出速度", perf.tps ? perf.tps + " tok/s" : "—"], ["费用", fmtUSD(log.cost_usd)]];
-  $("logDetailBody").innerHTML = '<div class="log-detail-status">' + statusBadge(log.status) + '<strong>' + (log.status >= 200 && log.status < 300 ? "请求成功" : "请求失败") + '</strong></div><dl class="log-detail-fields">' + fields.map(([label, value]) => '<div><dt>' + label + '</dt><dd>' + (label === "模型" ? modelLabel(log.model) : esc(value)) + '</dd></div>').join("") + '</dl>' + logClientDetails(log) + (log.error ? '<section class="log-error-box"><h3>错误信息</h3><pre>' + esc(log.error) + '</pre></section>' : '');
+  const ipValue = log.client_ip || log.client?.ip || "";
+  const fields = [["模型", log.model || "—"], ["上游服务", log.upstream_name || "未分配"], ["API 密钥", log.key_name || "—"], ["请求 IP", ipValue || "—"], ["请求端点", log.endpoint || "—"], ["总耗时", perf.total ? fmtDuration(perf.total) : "—"], ["首 Token 延迟", perf.first ? fmtDuration(perf.first) : "—"], ["输出速度", perf.tps ? perf.tps + " tok/s" : "—"], ["费用", fmtUSD(log.cost_usd)]];
+  $("logDetailBody").innerHTML = '<div class="log-detail-status">' + statusBadge(log.status) + '<strong>' + (log.status >= 200 && log.status < 300 ? "请求成功" : "请求失败") + '</strong></div><dl class="log-detail-fields">' + fields.map(([label, value]) => {
+    let ddContent = esc(value);
+    if (label === "模型") ddContent = modelLabel(log.model);
+    else if (label === "请求 IP" && ipValue) ddContent = '<span class="log-ip-code">' + esc(ipValue) + '</span> <button type="button" class="text-btn log-detail-ip-btn" data-filter-ip="' + esc(ipValue) + '">筛选此 IP</button>';
+    return '<div><dt>' + label + '</dt><dd>' + ddContent + '</dd></div>';
+  }).join("") + '</dl>' + logClientDetails(log) + (log.error ? '<section class="log-error-box"><h3>错误信息</h3><pre>' + esc(log.error) + '</pre></section>' : '');
+  $("logDetailBody").querySelectorAll("[data-filter-ip]").forEach((btn) => {
+    btn.addEventListener("click", () => filterLogsByIP(btn.dataset.filterIp));
+  });
   renderGatewayAccountAttempts(log);
 }
 function closeLogDetails() {

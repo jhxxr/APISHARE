@@ -3,7 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -20,6 +23,7 @@ func migrateRequestClientSchema() error {
 	for _, column := range []struct{ name, definition string }{
 		{"client_id", "TEXT NOT NULL DEFAULT 'unknown'"},
 		{"client_json", "TEXT NOT NULL DEFAULT ''"},
+		{"client_ip", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		var exists int
 		if err := tx.QueryRow(`SELECT count(*) FROM pragma_table_info('call_logs') WHERE name=?`, column.name).Scan(&exists); err != nil {
@@ -32,6 +36,7 @@ func migrateRequestClientSchema() error {
 		}
 	}
 	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_logs_client_epoch ON call_logs(client_id,unixepoch(created_at) DESC,id DESC);
+		CREATE INDEX IF NOT EXISTS idx_logs_ip_epoch ON call_logs(client_ip,unixepoch(created_at) DESC,id DESC);
 		CREATE TABLE IF NOT EXISTS call_log_client_daily (
 		 day TEXT NOT NULL, client_id TEXT NOT NULL,
 		 calls INTEGER NOT NULL DEFAULT 0, successes INTEGER NOT NULL DEFAULT 0,
@@ -205,4 +210,217 @@ func registerClientStatsRoutes(auth *gin.RouterGroup) {
 		}
 		c.JSON(200, result)
 	})
+	auth.GET("/ip-stats", func(c *gin.Context) {
+		result, status, err := queryIPStatsFromValues(c.Request.Context(), c.Request.URL.Query(), beijingNow())
+		if err != nil {
+			c.JSON(status, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, result)
+	})
+}
+
+type ipStatKeyRef struct {
+	KeyID   int64  `json:"key_id"`
+	KeyName string `json:"key_name"`
+	Calls   int64  `json:"calls"`
+}
+
+type ipStatRow struct {
+	IP          string         `json:"ip"`
+	Failed      int64          `json:"failed"`
+	RateLimited int64          `json:"rate_limited"`
+	KeyCount    int            `json:"key_count"`
+	Keys        []ipStatKeyRef `json:"keys"`
+	logQuerySummary
+	LastAt string `json:"last_at"`
+}
+
+type ipStatsResult struct {
+	Period           string          `json:"period"`
+	Start            string          `json:"start,omitempty"`
+	End              string          `json:"end"`
+	UniqueIPs        int             `json:"unique_ips"`
+	MultiKeyIPs      int             `json:"multi_key_ips"`
+	RateLimitedCalls int64           `json:"rate_limited_calls"`
+	Summary          logQuerySummary `json:"summary"`
+	Items            []ipStatRow     `json:"items"`
+}
+
+func queryIPStatsFromValues(ctx context.Context, values url.Values, now time.Time) (*ipStatsResult, int, error) {
+	period := values.Get("period")
+	startStr := strings.TrimSpace(values.Get("start"))
+	endStr := strings.TrimSpace(values.Get("end"))
+	var start, end time.Time
+	if startStr != "" || endStr != "" {
+		if period == "" {
+			period = "custom"
+		}
+		if startStr != "" {
+			parsed, err := time.Parse(time.RFC3339, startStr)
+			if err != nil {
+				return nil, 400, fmt.Errorf("时间范围格式不正确")
+			}
+			start = parsed
+		}
+		if endStr != "" {
+			parsed, err := time.Parse(time.RFC3339, endStr)
+			if err != nil {
+				return nil, 400, fmt.Errorf("时间范围格式不正确")
+			}
+			end = parsed
+		}
+		if !start.IsZero() && !end.IsZero() && start.After(end) {
+			return nil, 400, fmt.Errorf("开始时间不能晚于结束时间")
+		}
+	} else {
+		if period == "" {
+			period = "today"
+		}
+		var err error
+		start, end, err = clientStatsWindow(period, now)
+		if err != nil {
+			return nil, 400, fmt.Errorf("IP 统计范围仅支持 today、7d、30d、all")
+		}
+		end = end.Add(-time.Second)
+	}
+
+	conditions := []string{"client_ip<>''"}
+	var args []any
+	if !start.IsZero() {
+		conditions = append(conditions, "unixepoch(created_at)>=?")
+		args = append(args, start.Unix())
+	}
+	if !end.IsZero() {
+		conditions = append(conditions, "unixepoch(created_at)<=?")
+		args = append(args, end.Unix())
+	}
+	if keyVal := strings.TrimSpace(values.Get("key_id")); keyVal != "" {
+		keyID, err := strconv.ParseInt(keyVal, 10, 64)
+		if err != nil || keyID < 0 {
+			return nil, 400, fmt.Errorf("筛选 ID 不正确")
+		}
+		conditions = append(conditions, "key_id=?")
+		args = append(args, keyID)
+	}
+	if q := strings.TrimSpace(values.Get("q")); q != "" {
+		if len(q) > 200 {
+			return nil, 400, fmt.Errorf("搜索内容过长")
+		}
+		conditions = append(conditions, "(instr(lower(client_ip),lower(?))>0 OR instr(lower(key_name),lower(?))>0)")
+		args = append(args, q, q)
+	}
+
+	orderBy := "calls DESC, cost_usd DESC, client_ip ASC"
+	switch values.Get("sort") {
+	case "", "calls":
+	case "cost":
+		orderBy = "cost_usd DESC, calls DESC, client_ip ASC"
+	case "failed":
+		orderBy = "(calls - successes) DESC, rate_limited DESC, calls DESC, client_ip ASC"
+	case "rate_limited":
+		orderBy = "rate_limited DESC, (calls - successes) DESC, calls DESC, client_ip ASC"
+	case "keys":
+		orderBy = "key_count DESC, calls DESC, cost_usd DESC, client_ip ASC"
+	default:
+		return nil, 400, fmt.Errorf("IP 排序依据不正确")
+	}
+
+	where := strings.Join(conditions, " AND ")
+	result := &ipStatsResult{
+		Period: period,
+		Items:  []ipStatRow{},
+	}
+	if !start.IsZero() {
+		result.Start = start.In(beijingLocation).Format(time.RFC3339)
+	}
+	if !end.IsZero() {
+		result.End = end.In(beijingLocation).Format(time.RFC3339)
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, 500, fmt.Errorf("无法读取 IP 统计")
+	}
+	defer tx.Rollback()
+
+	groupedSQL := `SELECT client_ip,
+		COUNT(*) AS calls,
+		COALESCE(SUM(CASE WHEN status BETWEEN 200 AND 299 THEN 1 ELSE 0 END),0) AS successes,
+		COALESCE(SUM(CASE WHEN status=429 THEN 1 ELSE 0 END),0) AS rate_limited,
+		COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
+		COALESCE(SUM(completion_tokens),0) AS completion_tokens,
+		COALESCE(SUM(CASE WHEN status BETWEEN 200 AND 299 THEN cost_usd ELSE 0 END),0) AS cost_usd,
+		COUNT(DISTINCT CASE WHEN key_id>0 THEN CAST(key_id AS TEXT) WHEN key_name<>'' THEN key_name END) AS key_count,
+		COALESCE(MAX(unixepoch(created_at)),0) AS last_epoch
+		FROM call_logs WHERE ` + where + ` GROUP BY client_ip`
+	// Summarize the complete snapshot before limiting the displayed IP rows.
+	err = tx.QueryRowContext(ctx, `SELECT COUNT(*),
+		COALESCE(SUM(CASE WHEN key_count>1 THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(rate_limited),0),COALESCE(SUM(calls),0),
+		COALESCE(SUM(successes),0),COALESCE(SUM(prompt_tokens),0),
+		COALESCE(SUM(completion_tokens),0),COALESCE(SUM(cost_usd),0)
+		FROM (`+groupedSQL+`)`, args...).Scan(
+		&result.UniqueIPs, &result.MultiKeyIPs, &result.RateLimitedCalls,
+		&result.Summary.Calls, &result.Summary.Successes, &result.Summary.PromptTokens,
+		&result.Summary.CompletionTokens, &result.Summary.CostUSD)
+	if err != nil {
+		return nil, 500, fmt.Errorf("无法读取 IP 统计")
+	}
+	rows, err := tx.QueryContext(ctx, groupedSQL+` ORDER BY `+orderBy+` LIMIT 100`, args...)
+	if err != nil {
+		return nil, 500, fmt.Errorf("无法读取 IP 统计")
+	}
+	indexByIP := make(map[string]int)
+	for rows.Next() {
+		var row ipStatRow
+		var lastEpoch int64
+		if err := rows.Scan(&row.IP, &row.Calls, &row.Successes, &row.RateLimited, &row.PromptTokens, &row.CompletionTokens, &row.CostUSD, &row.KeyCount, &lastEpoch); err != nil {
+			rows.Close()
+			return nil, 500, fmt.Errorf("无法读取 IP 统计")
+		}
+		row.Failed = row.Calls - row.Successes
+		row.Keys = []ipStatKeyRef{}
+		if lastEpoch > 0 {
+			row.LastAt = time.Unix(lastEpoch, 0).In(beijingLocation).Format(time.RFC3339)
+		}
+		indexByIP[row.IP] = len(result.Items)
+		result.Items = append(result.Items, row)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, 500, fmt.Errorf("无法读取 IP 统计")
+	}
+
+	if len(result.Items) > 0 {
+		keyRows, err := tx.QueryContext(ctx, `SELECT client_ip,key_id,COALESCE(MAX(key_name),''),COUNT(*) AS calls
+			FROM call_logs WHERE `+where+` AND (key_id>0 OR key_name<>'')
+			GROUP BY client_ip,key_id,CASE WHEN key_id>0 THEN '' ELSE key_name END
+			ORDER BY calls DESC,key_id ASC`, args...)
+		if err != nil {
+			return nil, 500, fmt.Errorf("无法读取 IP 统计")
+		}
+		for keyRows.Next() {
+			var ip string
+			var ref ipStatKeyRef
+			if err := keyRows.Scan(&ip, &ref.KeyID, &ref.KeyName, &ref.Calls); err != nil {
+				keyRows.Close()
+				return nil, 500, fmt.Errorf("无法读取 IP 统计")
+			}
+			if idx, ok := indexByIP[ip]; ok && len(result.Items[idx].Keys) < 8 {
+				result.Items[idx].Keys = append(result.Items[idx].Keys, ref)
+			}
+		}
+		err = keyRows.Err()
+		keyRows.Close()
+		if err != nil {
+			return nil, 500, fmt.Errorf("无法读取 IP 统计")
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, 500, fmt.Errorf("无法读取 IP 统计")
+	}
+	return result, 200, nil
 }

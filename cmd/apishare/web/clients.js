@@ -27,6 +27,7 @@ function logClientDetails(log) {
   const client = log.client || {};
   const sources = {user_agent: "User-Agent", auxiliary_headers: "应用归属头", originator: "originator", sdk_only: "仅识别出 SDK", unknown: "未识别"};
   const fields = [
+    ["请求 IP", log.client_ip || client.ip || "—"],
     ["客户端", logClientLabel(log)], ["客户端版本", client.version || "—"],
     ["SDK", client.sdk_name || "—"], ["SDK 版本", client.sdk_version || "—"],
     ["识别依据", sources[client.source] || "未识别"],
@@ -73,7 +74,7 @@ async function loadClientStats() {
 
 async function showClientLogs(id) {
   await loadClientOptions();
-  for (const field of ["logSearch", "logStatusFilter", "logKeyFilter", "logUpstreamFilter", "logModelFilter", "logClientVersionFilter"]) $(field).value = "";
+  for (const field of ["logSearch", "logStatusFilter", "logKeyFilter", "logIPFilter", "logUpstreamFilter", "logModelFilter", "logClientVersionFilter"]) $(field).value = "";
   logFeatures.clear();
   document.querySelectorAll("[data-log-feature]").forEach((button) => button.setAttribute("aria-pressed", "false"));
   $("logClientFilter").value = id;

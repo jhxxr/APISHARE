@@ -9,6 +9,38 @@ import (
 	"time"
 )
 
+func TestLogQueryIPv6ExactAndPrefixFilters(t *testing.T) {
+	modelsTestDB(t)
+	for _, ip := range []string{"2001:db8::", "2001:db8::1", "2001:db9::1"} {
+		if err := dbInsertLog(&CallLog{ClientIP: ip, Status: 200}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		ip    string
+		total int64
+	}{
+		{"2001:db8::", 1},
+		{"2001:0db8:0000:0000:0000:0000:0000:0000", 1},
+		{"2001:db8::1", 1},
+		{"2001:db8:", 2},
+	} {
+		t.Run(tc.ip, func(t *testing.T) {
+			query, err := parseLogQuery(url.Values{"ip": {tc.ip}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := queryLogs(context.Background(), query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Total != tc.total {
+				t.Fatalf("filter %q matched %d rows, want %d", tc.ip, result.Total, tc.total)
+			}
+		})
+	}
+}
+
 func TestLogQueryFiltersBeforePagination(t *testing.T) {
 	modelOverviewTestDB(t)
 	now := time.Date(2026, 10, 20, 0, 5, 0, 0, beijingLocation)
