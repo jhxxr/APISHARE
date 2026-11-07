@@ -9,6 +9,9 @@
 | `PORT` | `8080` | 服务监听端口 |
 | `API_DB` | `apishare.db` | SQLite 数据库文件存放路径（容器内为 `/data/apishare.db`） |
 | `ADMIN_PATH` | `admin` | 首次配置向导设定的默认后台路径（首启后以数据库中的配置为准） |
+| `LOG_TRUST_FORWARDED_IP` | `true` | 请求日志使用代理头兼容模式，优先提取公网 IP；设为 `false` 时仅按 `TRUSTED_PROXIES` 解析 |
+| `LOG_FORWARDED_IP_HEADERS` | 空 | 请求日志额外读取的 IP 请求头名称，按优先级用逗号分隔 |
+| `TRUSTED_PROXIES` | 空 | 可信入站代理 IP／CIDR，支持逗号或空白分隔；为空时不信任任何代理，影响严格模式及登录限流的来源 IP |
 | `UPSTREAM_MAX_IDLE_CONNS` | `256` | 连接池最大空闲连接总数 |
 | `UPSTREAM_MAX_IDLE_CONNS_PER_HOST` | `64` | 每个目标主机保留的最大空闲连接数 |
 | `UPSTREAM_DIAL_TIMEOUT_SEC` | `15` | TCP 建连与 TLS 握手超时时间（秒） |
@@ -21,6 +24,29 @@
 | `RESPONSES_WS_MAX_CONNECTIONS_PER_KEY` | `16` | 每个 Key 的 Responses WS 连接数上限（1～1024），独立于推理并发；每连接最多 64 个待完成请求 |
 | `RESPONSES_WS_DRAIN_TIMEOUT_MS` | `1500` | 客户端断开或写入失败后，继续读取上游末尾 usage 的短窗口（毫秒，0～30000，0 关闭）；期间不再接收新轮次 |
 | `TIKTOKEN_CACHE_DIR` | 临时目录/`data-gym-cache` | 本地 Token 分词词表缓存路径 |
+
+## 请求 IP 与反向代理
+
+请求日志默认启用兼容模式，适用于 Docker、Nginx 和 CDN 转发。依次检查 `LOG_FORWARDED_IP_HEADERS` 中的自定义头、`CF-Connecting-IP`、`True-Client-IP`、`X-Real-IP`、`X-Forwarded-For`。跳过非法值、未指定地址和多播地址，优先选择公网地址；私网、回环及链路本地地址仅作为后备。因此即使 `X-Real-IP` 中误填了 Docker 网桥地址，只要 `X-Forwarded-For` 中有公网 IP，日志仍会记录公网 IP。没有公网候选时保留第一个有效后备地址；没有有效转发头时使用 Gin 解析的连接来源地址。IPv4、IPv6、IPv4 映射地址和带端口地址会统一规范化。
+
+兼容模式的日志 IP 来自请求头自报信息，反向代理应覆盖或正确维护这些头。登录限流仍通过 Gin 的可信代理链解析来源，不使用日志兼容模式。需要严格验证来源时设置 `LOG_TRUST_FORWARDED_IP=false`，并配置实际代理的 IP 或 CIDR：
+
+```yaml
+environment:
+  - LOG_TRUST_FORWARDED_IP=false
+  - TRUSTED_PROXIES=172.18.0.2/32,127.0.0.1/32
+```
+
+这里的地址仅为示例，应替换为应用实际收到连接的反向代理地址。严格模式从 `X-Forwarded-For` 右侧验证代理链，遇到第一个不可信节点即停止；不属于可信代理的直连请求不能通过伪造转发头改变来源 IP。自定义头仅在日志兼容模式中使用，例如 `LOG_FORWARDED_IP_HEADERS=X-Client-IP,X-Edge-IP`。
+
+反向代理必须传递来源 IP。Nginx 常见配置如下；若 Nginx 本身位于 CDN 之后，还需正确配置其真实 IP 解析：
+
+```nginx
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+```
+
+以上环境变量在启动时读取，修改后需重启容器。配置错误的可信代理列表会整体禁用代理信任；无法解析的兼容模式开关会回退到严格模式，并在启动日志中提示。历史请求已经丢失的公网 IP 无法通过本次修改补回，新请求会使用新的解析方式。
 
 ## 独立上游代理池
 

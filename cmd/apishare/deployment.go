@@ -147,7 +147,7 @@ func registerSetupRoutes(r *gin.Engine) {
 func registerAdmin(r *gin.Engine) {
 	admin := gin.New()
 	admin.Use(gin.Recovery(), func(c *gin.Context) { c.Header("Cache-Control", "no-store") })
-	admin.SetTrustedProxies(nil)
+	configureRequestIP(admin)
 	registerAdminRoutes(admin)
 	r.Use(func(c *gin.Context) {
 		prefix := currentAdminPath()

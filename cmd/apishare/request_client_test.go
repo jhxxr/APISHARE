@@ -104,6 +104,8 @@ func TestRequestClientEvidenceAndBounds(t *testing.T) {
 }
 
 func TestRequestClientProductionFailoverAndEarlyErrors(t *testing.T) {
+	t.Setenv("LOG_TRUST_FORWARDED_IP", "false")
+	t.Setenv("TRUSTED_PROXIES", "")
 	modelsTestDB(t)
 	key := &ApiKey{Name: "client-member", Key: "sk-client-identity", Models: "alias,unavailable", Enabled: true, QPS: 1000000, Concurrency: 10}
 	if err := dbInsertKey(key); err != nil {

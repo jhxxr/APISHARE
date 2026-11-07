@@ -2,9 +2,7 @@ package main
 
 import (
 	"log"
-	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"regexp"
 	"sort"
@@ -208,34 +206,6 @@ func detectRequestClient(header http.Header) requestClientIdentity {
 		result.Candidates = unique
 	}
 	return normalizeRequestClient(result)
-}
-
-func parseCleanIP(raw string) string {
-	s := strings.TrimSpace(raw)
-	if s == "" {
-		return ""
-	}
-	if host, _, err := net.SplitHostPort(s); err == nil {
-		s = host
-	} else if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
-		s = s[1 : len(s)-1]
-	}
-	if idx := strings.IndexByte(s, '%'); idx >= 0 {
-		s = s[:idx]
-	}
-	addr, err := netip.ParseAddr(strings.TrimSpace(s))
-	if err != nil || !addr.IsValid() {
-		return ""
-	}
-	return addr.Unmap().String()
-}
-
-func extractRequestIP(c *gin.Context) string {
-	if c == nil || c.Request == nil {
-		return ""
-	}
-	// Use the router's trusted proxy policy and validate forwarded hops there.
-	return parseCleanIP(c.ClientIP())
 }
 
 type requestClientState struct {

@@ -98,7 +98,7 @@ func main() {
 func newRouter() *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
-	r.SetTrustedProxies(nil)
+	configureRequestIP(r)
 
 	r.GET("/healthz", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 
