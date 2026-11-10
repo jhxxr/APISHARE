@@ -1,6 +1,6 @@
 module apishare
 
-go 1.26.2
+go 1.26.10
 
 require (
 	github.com/andybalholm/brotli v1.1.1
@@ -9,12 +9,12 @@ require (
 	github.com/klauspost/compress v1.18.0
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/refraction-networking/utls v1.8.2
-	github.com/router-for-me/CLIProxyAPI/v8 v8.0.38
+	github.com/router-for-me/CLIProxyAPI/v8 v8.0.63
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/sergeymakinen/go-ico v1.0.0
 	golang.org/x/crypto v0.57.0
 	golang.org/x/image v0.46.0
-	golang.org/x/net v0.58.0
+	golang.org/x/net v0.60.0
 	golang.org/x/time v0.16.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.60.1
@@ -22,6 +22,7 @@ require (
 
 require (
 	cloud.google.com/go/compute/metadata v0.3.0 // indirect
+	github.com/MoeForge/moego v0.1.0-alpha.1 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
 	github.com/bytedance/sonic v1.15.0 // indirect
 	github.com/bytedance/sonic/loader v0.5.0 // indirect
@@ -49,7 +50,7 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
-	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
+	github.com/pelletier/go-toml/v2 v2.4.3-0.20260624044523-35f78d5908f1 // indirect
 	github.com/pierrec/xxHash v0.1.5 // indirect
 	github.com/pion/datachannel v1.6.2 // indirect
 	github.com/pion/dtls/v3 v3.1.5 // indirect
@@ -74,14 +75,11 @@ require (
 	github.com/sergeymakinen/go-bmp v1.0.0 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/skratchdot/open-golang v0.0.0-20200116055534-eef842397966 // indirect
-	github.com/tidwall/gjson v1.18.0 // indirect
-	github.com/tidwall/match v1.1.1 // indirect
-	github.com/tidwall/pretty v1.2.0 // indirect
-	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/tiktoken-go/tokenizer v0.8.1 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.1 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
+	go.etcd.io/bbolt v1.5.0 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.5.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	golang.org/x/arch v0.22.0 // indirect
