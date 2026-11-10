@@ -941,13 +941,33 @@ func resolveAutoRouterThinking(
 		directive = policy
 		explicitConfig = true
 	default:
-		// "auto" policy
-		if strings.HasPrefix(cause, "housekeeping") {
+		// "auto" policy: combine client hints with 2D Adaptive Test-Time Compute Scaling
+		if strings.HasPrefix(cause, "housekeeping") || strings.HasPrefix(cause, "short_circuit") {
 			directive = "none"
 		} else if clientMode == "disabled" || clientEffort == "none" {
 			directive = "none"
 		} else if clientSentThinking {
 			directive, desiredBudget = adaptClientThinkingForTier(sourceTier, clientEffort, clientMode, clientBudget)
+			if strings.Contains(cause, "retry_escalated") || (isFastLightweightModel(targetModel) && (sourceTier == TierComplex || sourceTier == TierReasoning)) {
+				directive = stepUpEffort(directive)
+				if desiredBudget > 0 {
+					desiredBudget = desiredBudget * 3 / 2
+				}
+			}
+		} else if strings.Contains(cause, "retry_escalated") {
+			// User reported error/retry: proactively activate deep thinking even if client omitted reasoning_effort
+			directive = "high"
+			if sourceTier == TierReasoning {
+				directive = "xhigh"
+			}
+		} else if isFastLightweightModel(targetModel) && (sourceTier == TierComplex || sourceTier == TierReasoning) {
+			// Small-model deep-thinking compensation: when a lightweight model serves COMPLEX/REASONING,
+			// automatically enable medium/high thinking to compensate for smaller parameter count.
+			if sourceTier == TierReasoning {
+				directive = "high"
+			} else {
+				directive = "medium"
+			}
 		} else {
 			return autoRouterThinkingPlan{
 				EffectiveLabel: "default",
@@ -1293,6 +1313,160 @@ func computeClampedMaxTokens(targetModel string, requestedMaxTokens, estimatedIn
 	return requestedMaxTokens
 }
 
+func isFastLightweightModel(rawModel string) bool {
+	base := protocolModelName(parseRouterModelSpec(rawModel).BaseModel)
+	for _, kw := range []string{"flash", "mini", "haiku", "lite", "turbo", "nano", "instant", "8b", "7b"} {
+		if strings.Contains(base, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+func stepUpEffort(effort string) string {
+	switch strings.ToLower(strings.TrimSpace(effort)) {
+	case "", "none", "minimal":
+		return "low"
+	case "low":
+		return "medium"
+	case "medium":
+		return "high"
+	case "high":
+		return "xhigh"
+	case "xhigh", "max":
+		return "max"
+	default:
+		return "high"
+	}
+}
+
+// modelSupportsRequestModalities checks whether a candidate model supports
+// modalities required by the request (such as Vision/Multimodal or Tool Calling).
+func modelSupportsRequestModalities(rawModel string, sig routerRequestSignals) (bool, string) {
+	base := protocolModelName(parseRouterModelSpec(rawModel).BaseModel)
+	if base == "" {
+		return true, ""
+	}
+	if sig.HasVision {
+		// Pure text / pure reasoning models without vision support
+		if strings.HasPrefix(base, "deepseek-reasoner") ||
+			strings.HasPrefix(base, "deepseek-r1") ||
+			strings.HasPrefix(base, "deepseek-chat") ||
+			strings.HasPrefix(base, "deepseek-v3") ||
+			strings.HasPrefix(base, "deepseek-coder") ||
+			strings.HasPrefix(base, "qwq") ||
+			strings.HasPrefix(base, "o1-mini") ||
+			strings.HasPrefix(base, "o1-preview") ||
+			strings.HasPrefix(base, "o3-mini") ||
+			strings.HasPrefix(base, "glm-z1") {
+			return false, "vision_unsupported"
+		}
+	}
+	if sig.HasTools {
+		if strings.HasPrefix(base, "o1-mini") || strings.HasPrefix(base, "o1-preview") {
+			return false, "tools_unsupported"
+		}
+	}
+	return true, ""
+}
+
+// effectiveContextCapacityForRequest computes the usable input token ceiling for
+// a model by reserving output + thinking headroom when context size is non-trivial.
+func effectiveContextCapacityForRequest(ctxLimit int, estimatedInputTokens int) int {
+	if ctxLimit <= 0 {
+		return 0
+	}
+	if estimatedInputTokens <= 4096 || ctxLimit < 8192 {
+		return ctxLimit
+	}
+	reserve := ctxLimit / 16
+	if reserve > 4096 {
+		reserve = 4096
+	} else if reserve < 512 {
+		reserve = 512
+	}
+	return ctxLimit - reserve
+}
+
+// compressCanonReqToFitContext performs loss-minimizing middle-out compression
+// when a multi-turn conversation exceeds the target model's context ceiling:
+//  1. Truncates oversized historical tool_result outputs (older than the last 4 messages).
+//  2. If still over capacity, drops middle conversation turns while keeping the initial
+//     user goal, recent turns, and tool_use/tool_result pair integrity.
+func compressCanonReqToFitContext(cr *canonReq, ctxLimit int) bool {
+	if cr == nil || ctxLimit <= 0 || len(cr.Messages) <= 2 {
+		return false
+	}
+	targetInput := ctxLimit - 2048
+	if targetInput < ctxLimit*3/4 {
+		targetInput = ctxLimit * 3 / 4
+	}
+	if estimateRequestContextTokens(cr) <= targetInput {
+		return false
+	}
+
+	msgs := make([]canonMsg, len(cr.Messages))
+	copy(msgs, cr.Messages)
+	changed := false
+
+	// Phase 1: Compress oversized historical tool_result outputs (older than last 4 messages)
+	safeTailStart := len(msgs) - 4
+	if safeTailStart < 1 {
+		safeTailStart = 1
+	}
+	for i := 0; i < safeTailStart; i++ {
+		m := &msgs[i]
+		if (m.ToolID != "" || m.ToolName != "") && len(m.Text) > 1200 {
+			m.Text = m.Text[:600] + "\n...[auto-router compressed historical tool output]...\n" + m.Text[len(m.Text)-400:]
+			changed = true
+		}
+		if len(m.Parts) > 0 {
+			parts := make([]canonPart, len(m.Parts))
+			copy(parts, m.Parts)
+			for j := range parts {
+				if parts[j].Kind == "tool_result" && len(parts[j].Text) > 1200 {
+					t := parts[j].Text
+					parts[j].Text = t[:600] + "\n...[auto-router compressed historical tool output]...\n" + t[len(t)-400:]
+					changed = true
+				}
+			}
+			m.Parts = parts
+		}
+	}
+	cr.Messages = msgs
+	if estimateRequestContextTokens(cr) <= targetInput {
+		return changed
+	}
+
+	// Phase 2: Middle-out sliding window (preserve message[0] and the latest tail that fits,
+	// never starting the tail on an orphan tool_result message).
+	for dropEnd := 2; dropEnd < len(msgs)-2; dropEnd++ {
+		// Do not start the kept tail right on a tool_result turn without its preceding assistant tool_use
+		tailMsg := msgs[dropEnd]
+		isOrphanToolResult := tailMsg.ToolID != "" || tailMsg.ToolName != ""
+		if !isOrphanToolResult {
+			for _, p := range tailMsg.Parts {
+				if p.Kind == "tool_result" {
+					isOrphanToolResult = true
+					break
+				}
+			}
+		}
+		if isOrphanToolResult {
+			continue
+		}
+		candidate := make([]canonMsg, 0, 1+len(msgs)-dropEnd)
+		candidate = append(candidate, msgs[0])
+		candidate = append(candidate, msgs[dropEnd:]...)
+		cr.Messages = candidate
+		changed = true
+		if estimateRequestContextTokens(cr) <= targetInput {
+			break
+		}
+	}
+	return changed
+}
+
 func isRecoverableAutoRouterConversionError(err error) bool {
 	if err == nil {
 		return false
@@ -1312,6 +1486,12 @@ func isRecoverableAutoRouterConversionError(err error) bool {
 func adaptAutoRouterCanonReq(cr *canonReq, wireFormat clientFormat, up *Upstream, upModel string, task *relayTask, effortLevels []string) {
 	if cr == nil || task == nil {
 		return
+	}
+
+	// 0. If request tokens exceed target model's context window, perform middle-out compression
+	targetCtxLimit := effectiveModelContextLimit(upModel, task.modelContextLimits)
+	if compressCanonReqToFitContext(cr, targetCtxLimit) {
+		task.estimatedInputTokens = estimateRequestContextTokens(cr)
 	}
 
 	plan := resolveAutoRouterThinking(

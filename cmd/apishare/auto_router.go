@@ -746,36 +746,63 @@ func resolveAutoRouteWithConfig(
 
 	// Compute session key for multi-turn agent consistency
 	var rSessionKey string
+	var prevSessionModel, prevSessionTier string
+	var hasPrevSession bool
 	if cr != nil && cfg.SessionMode != "every_turn" {
 		endpoint := nativeEndpoint(format, cr)
 		rSessionKey = scopedSessionKey(ak.ID, sessionKeyFromCanon(endpoint, headers, cr))
+		if rSessionKey != "" {
+			prevSessionModel, prevSessionTier, hasPrevSession = lookupAutoRouterSession(rSessionKey)
+		}
 	}
 
-	// 1. Determine target tier
+	// Extract full-conversation structural, modality, and retry/follow-up signals
+	sig := analyzeRequestSignals(cr, lastUser, stateText, prevSessionTier)
+
+	// 1. Determine target tier (with Session Ratchet & Prompt-Cache Affinity)
 	var chosenTier string
-	if rSessionKey != "" && (cfg.SessionMode == "session_lock" || (cfg.SessionMode == "user_turn" && isToolResultTurn(cr))) {
-		if prevModel, prevTier, ok := lookupAutoRouterSession(rSessionKey); ok {
-			prevCtxLimit := effectiveModelContextLimit(prevModel, cfg.ModelContextLimits)
-			fitsContext := prevCtxLimit <= 0 || estimatedTokens <= prevCtxLimit
-			if fitsContext &&
-				!routerCandidateQuotaExhausted(ak, cfg.VirtualModel, prevModel) &&
-				(cfg.AllowUnlistedTargetModels || allowsRouterCandidate(ak, prevModel)) {
-				if _, _, err := pickUpstreamForRouterCandidate(format, prevModel, nil, nativeOnly, cr); err == nil {
-					chosenTier = prevTier
+	if hasPrevSession {
+		wantSticky := cfg.SessionMode == "session_lock" ||
+			(cfg.SessionMode == "user_turn" && (sig.IsToolLoop || sig.IsFollowUpDirective || (estimatedTokens >= 6000 && tierRank(prevSessionTier) >= tierRank(TierComplex) && !sig.IsFrustrationOrRetry)))
+		// Session Ratchet: if the user expresses frustration/retry or the current turn's
+		// structural floor demands a higher tier than prevSessionTier, unlock and ratchet UP!
+		needsRatchetUp := sig.IsFrustrationOrRetry || (sig.StructuralFloor != "" && tierRank(sig.StructuralFloor) > tierRank(prevSessionTier))
+		if cfg.SessionMode == "session_lock" && !needsRatchetUp {
+			if hTier, _ := classifyHeuristic(lastUser, stateText, cr); tierRank(hTier) > tierRank(prevSessionTier) {
+				needsRatchetUp = true
+			}
+		}
+		if wantSticky && !needsRatchetUp {
+			prevCtxLimit := effectiveModelContextLimit(prevSessionModel, cfg.ModelContextLimits)
+			usableCap := effectiveContextCapacityForRequest(prevCtxLimit, estimatedTokens)
+			fitsContext := usableCap <= 0 || estimatedTokens <= usableCap
+			modOK, _ := modelSupportsRequestModalities(prevSessionModel, sig)
+			if fitsContext && modOK &&
+				!routerCandidateQuotaExhausted(ak, cfg.VirtualModel, prevSessionModel) &&
+				(cfg.AllowUnlistedTargetModels || allowsRouterCandidate(ak, prevSessionModel)) {
+				if _, _, err := pickUpstreamForRouterCandidate(format, prevSessionModel, nil, nativeOnly, cr); err == nil {
+					chosenTier = prevSessionTier
 					if chosenTier == "" {
 						chosenTier = TierComplex
 					}
 					decision.Tier = chosenTier
 					decision.Cause = "session_affinity"
-					decision.SelectedModel = prevModel
+					decision.SelectedModel = prevSessionModel
 				}
 			}
 		}
 	}
 
-	// Do not short-circuit to SIMPLE if the multi-turn conversation context is already large
-	// or contains tool/reasoning history.
-	canShortCircuit := estimatedTokens <= 2000 && (cr == nil || len(cr.Messages) <= 4) && !isToolResultTurn(cr)
+	// Do not short-circuit to SIMPLE if the multi-turn conversation context is already large,
+	// or contains tool/code/error/retry signals.
+	canShortCircuit := estimatedTokens <= 2000 &&
+		(cr == nil || len(cr.Messages) <= 4) &&
+		!sig.IsToolLoop &&
+		!sig.HasCodeInHistory &&
+		!sig.HasErrorOrStackTrace &&
+		!sig.IsFrustrationOrRetry &&
+		!sig.HasVision &&
+		sig.StructuralFloor == ""
 
 	if chosenTier == "" {
 		if cfg.RouteHousekeeping && isHousekeepingRequest(cr, lastUser) {
@@ -793,10 +820,22 @@ func resolveAutoRouteWithConfig(
 			decision.Cause = "heuristic"
 			decision.HeuristicScore = &score
 		} else {
-			res, err := classifyWithDecisionModel(ctx, cfg, stateText, bypassBreaker)
+			res, err := classifyWithDecisionModel(ctx, cfg, sig.EnrichedState, bypassBreaker)
 			if err == nil && res != nil {
 				chosenTier = res.Tier
-				decision.Tier = res.Tier
+				// Probability Margin Fusion: if classifier is nearly tied (<0.12 margin) with a higher
+				// tier while technical/code/tool signals exist, prefer the safer higher tier.
+				if (sig.HasCodeInHistory || sig.HasTools || sig.HasErrorOrStackTrace) && len(res.Probabilities) > 0 {
+					for _, higher := range allRouterTiers {
+						if tierRank(higher) > tierRank(chosenTier) {
+							if p, ok := res.Probabilities[higher]; ok && p >= 0.25 && (res.Confidence-p) <= 0.12 {
+								chosenTier = higher
+								res.UpgradedLowConfidence = true
+							}
+						}
+					}
+				}
+				decision.Tier = chosenTier
 				decision.Cause = res.Provider
 				if res.Provider == "cloudflare" {
 					decision.Cause = "clef_flash"
@@ -829,6 +868,21 @@ func resolveAutoRouteWithConfig(
 		}
 	}
 
+	// Enforce Structural Floor & Retry/Frustration Auto-Escalation
+	if decision.Cause != "housekeeping" && chosenTier != TierDefault && sig.StructuralFloor != "" {
+		if tierRank(sig.StructuralFloor) > tierRank(chosenTier) {
+			chosenTier = sig.StructuralFloor
+			decision.Tier = chosenTier
+			if sig.IsFrustrationOrRetry {
+				decision.Cause += "+retry_escalated"
+			} else {
+				decision.Cause += "+structural_floor"
+			}
+		} else if sig.IsFrustrationOrRetry && !strings.Contains(decision.Cause, "+retry_escalated") {
+			decision.Cause += "+retry_escalated"
+		}
+	}
+
 	// Automatic long-context tier upgrade: when total conversation tokens exceed
 	// LongContextThreshold, upgrade fast tiers (SIMPLE/MEDIUM) to COMPLEX.
 	if cfg.LongContextThreshold > 0 && estimatedTokens >= cfg.LongContextThreshold &&
@@ -846,7 +900,7 @@ func resolveAutoRouteWithConfig(
 		decision.Cause += "+escalated"
 	}
 
-	// 2. Build priority-ordered candidate list
+	// 2. Build priority-ordered candidate list (with Prompt-Cache Affinity & Context Sweet-Spot Re-ranking)
 	type rawCandidate struct {
 		model      string
 		sourceTier string
@@ -867,7 +921,30 @@ func resolveAutoRouteWithConfig(
 		addRaw(decision.SelectedModel, chosenTier)
 	}
 	for _, t := range orderedCascadeTiers(chosenTier, cfg.CascadeTiers) {
-		for _, m := range cfg.Tiers[t] {
+		tierList := cfg.Tiers[t]
+		// Intra-tier smart ordering:
+		// 1. If prevSessionModel belongs to this tier and conversation is warm (>=4k tokens),
+		//    promote it to the front of this tier to preserve Prompt Cache (KV cache hit).
+		// 2. If a candidate is in the >82% context utilization danger zone while another
+		//    candidate in the same tier has comfortable headroom (<55%), prefer comfortable headroom.
+		if len(tierList) > 1 && estimatedTokens >= 4000 {
+			reordered := make([]string, 0, len(tierList))
+			var dangerZone []string
+			for _, m := range tierList {
+				if hasPrevSession && strings.EqualFold(parseRouterModelSpec(m).BaseModel, parseRouterModelSpec(prevSessionModel).BaseModel) {
+					reordered = append([]string{m}, reordered...)
+					continue
+				}
+				cLim := effectiveModelContextLimit(m, cfg.ModelContextLimits)
+				if cLim > 0 && estimatedTokens <= cLim && float64(estimatedTokens)/float64(cLim) > 0.82 {
+					dangerZone = append(dangerZone, m)
+				} else {
+					reordered = append(reordered, m)
+				}
+			}
+			tierList = append(reordered, dangerZone...)
+		}
+		for _, m := range tierList {
 			addRaw(m, t)
 		}
 	}
@@ -881,6 +958,7 @@ func resolveAutoRouteWithConfig(
 	quotaSkipped := 0
 	for idx, item := range ordered {
 		ctxLimit := effectiveModelContextLimit(item.model, cfg.ModelContextLimits)
+		usableCap := effectiveContextCapacityForRequest(ctxLimit, estimatedTokens)
 		step := routerCandidateStep{
 			Priority:     idx + 1,
 			Model:        item.model,
@@ -902,7 +980,14 @@ func resolveAutoRouteWithConfig(
 			steps = append(steps, step)
 			continue
 		}
-		if ctxLimit > 0 && estimatedTokens > ctxLimit {
+		if modOK, modReason := modelSupportsRequestModalities(item.model, sig); !modOK {
+			step.Status = "skipped"
+			step.Reason = modReason
+			decision.SkippedCandidates++
+			steps = append(steps, step)
+			continue
+		}
+		if usableCap > 0 && estimatedTokens > usableCap {
 			step.Status = "skipped"
 			step.Reason = "context_exceeded"
 			decision.SkippedCandidates++

@@ -1219,6 +1219,15 @@ func resolveUserAutoRouteWithConfig(ctx context.Context, sub string, ucfg UserAu
 	latestUser, stateText := extractClassifierState(cr, 2, 6000)
 	hasToolResult := isToolResultTurn(cr)
 
+	var prevSessionModel, prevSessionTier string
+	var hasPrevSession bool
+	if !dryRun && cr != nil {
+		endpointForKey := nativeEndpoint(format, cr)
+		skey := "user:" + sub + ":" + scopedSessionKey(ak.ID, sessionKeyFromCanon(endpointForKey, headers, cr))
+		prevSessionModel, prevSessionTier, hasPrevSession = lookupAutoRouterSession(skey)
+	}
+	sig := analyzeRequestSignals(cr, latestUser, stateText, prevSessionTier)
+
 	var chosenTier string
 	var cause string
 
@@ -1226,34 +1235,41 @@ func resolveUserAutoRouteWithConfig(ctx context.Context, sub string, ucfg UserAu
 	case isHousekeepingRequest(cr, latestUser):
 		chosenTier = TierSimple
 		cause = "housekeeping"
-	case !dryRun && hasToolResult:
-		endpointForKey := nativeEndpoint(format, cr)
-		skey := "user:" + sub + ":" + scopedSessionKey(ak.ID, sessionKeyFromCanon(endpointForKey, headers, cr))
-		if prevModel, prevTier, ok := lookupAutoRouterSession(skey); ok && prevModel != "" {
-			ctxLimit := effectiveModelContextLimit(prevModel, nil)
-			if estimatedTokens <= 0 || ctxLimit <= 0 || estimatedTokens <= ctxLimit {
-				if target, okTarget, _ := evaluateUserCandidateTarget(sub, ucfg, ak, format, nativeOnly, cr, prevModel, prevTier); okTarget {
-					tPlan := resolveAutoRouterThinking(nil, prevModel, prevTier, prevModel, ucfg.TierThinking[prevTier], "session_tool_followup", cr)
-					decision.Tier = prevTier
-					decision.Cause = "session_tool_followup"
-					decision.SelectedModel = prevModel
-					decision.SelectedThinking = tPlan.EffectiveLabel
-					decision.Steps = []routerCandidateStep{{
-						Priority:     1,
-						Model:        prevModel,
-						SourceTier:   prevTier,
-						Status:       "selected",
-						Thinking:     tPlan.EffectiveLabel,
-						ContextLimit: ctxLimit,
-					}}
-					return decision, []userRouteTarget{target}, nil
-				}
+	case hasPrevSession && prevSessionModel != "" && (hasToolResult || sig.IsFollowUpDirective) && !sig.IsFrustrationOrRetry && (sig.StructuralFloor == "" || tierRank(sig.StructuralFloor) <= tierRank(prevSessionTier)):
+		ctxLimit := effectiveModelContextLimit(prevSessionModel, nil)
+		usableCap := effectiveContextCapacityForRequest(ctxLimit, estimatedTokens)
+		modOK, _ := modelSupportsRequestModalities(prevSessionModel, sig)
+		if modOK && (estimatedTokens <= 0 || usableCap <= 0 || estimatedTokens <= usableCap) {
+			if target, okTarget, _ := evaluateUserCandidateTarget(sub, ucfg, ak, format, nativeOnly, cr, prevSessionModel, prevSessionTier); okTarget {
+				tPlan := resolveAutoRouterThinking(nil, prevSessionModel, prevSessionTier, prevSessionModel, ucfg.TierThinking[prevSessionTier], "session_tool_followup", cr)
+				decision.Tier = prevSessionTier
+				decision.Cause = "session_tool_followup"
+				decision.SelectedModel = prevSessionModel
+				decision.SelectedThinking = tPlan.EffectiveLabel
+				decision.Steps = []routerCandidateStep{{
+					Priority:     1,
+					Model:        prevSessionModel,
+					SourceTier:   prevSessionTier,
+					Status:       "selected",
+					Thinking:     tPlan.EffectiveLabel,
+					ContextLimit: ctxLimit,
+				}}
+				return decision, []userRouteTarget{target}, nil
 			}
 		}
 	}
 
+	canShortCircuit := estimatedTokens <= 2000 &&
+		(cr == nil || len(cr.Messages) <= 4) &&
+		!hasToolResult &&
+		!sig.HasCodeInHistory &&
+		!sig.HasErrorOrStackTrace &&
+		!sig.IsFrustrationOrRetry &&
+		!sig.HasVision &&
+		sig.StructuralFloor == ""
+
 	if chosenTier == "" {
-		if shouldShortCircuitSimple(latestUser, ucfg.SkipShortChars) && estimatedTokens <= 2000 && (cr == nil || len(cr.Messages) <= 4) && !hasToolResult {
+		if canShortCircuit && shouldShortCircuitSimple(latestUser, ucfg.SkipShortChars) {
 			chosenTier = TierSimple
 			cause = "short_circuit"
 		} else if ucfg.ClassifierSource == "heuristic" || ucfg.ClassifierSource == "" {
@@ -1264,7 +1280,7 @@ func resolveUserAutoRouteWithConfig(ctx context.Context, sub string, ucfg UserAu
 			decision.ClassifierModel = "heuristic"
 			decision.HeuristicScore = &score
 		} else {
-			clfRes, clfErr := classifyForUserAutoRouter(ctx, ak, sub, ucfg, stateText, dryRun)
+			clfRes, clfErr := classifyForUserAutoRouter(ctx, ak, sub, ucfg, sig.EnrichedState, dryRun)
 			if clfErr == nil && clfRes != nil {
 				chosenTier = clfRes.Tier
 				cause = clfRes.Provider
@@ -1293,6 +1309,18 @@ func resolveUserAutoRouteWithConfig(ctx context.Context, sub string, ucfg UserAu
 
 	if chosenTier == "" {
 		chosenTier = TierComplex
+	}
+	if cause != "housekeeping" && chosenTier != TierDefault && sig.StructuralFloor != "" {
+		if tierRank(sig.StructuralFloor) > tierRank(chosenTier) {
+			chosenTier = sig.StructuralFloor
+			if sig.IsFrustrationOrRetry {
+				cause += "+retry_escalated"
+			} else {
+				cause += "+structural_floor"
+			}
+		} else if sig.IsFrustrationOrRetry && !strings.Contains(cause, "+retry_escalated") {
+			cause += "+retry_escalated"
+		}
 	}
 	if ucfg.LongContextThreshold > 0 && estimatedTokens >= ucfg.LongContextThreshold && cause != "housekeeping" {
 		if chosenTier == TierSimple || chosenTier == TierMedium {

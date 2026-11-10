@@ -1602,3 +1602,146 @@ func TestAutoContextLimitDiscoveryCatalogProbingAndErrorSelfLearning(t *testing.
 		t.Fatalf("expected learned max_output 2048 (source=learned), got %d (source=%q)", outLim, outSrc)
 	}
 }
+
+func TestSmartRouterV2MultiSignalRatchetModalityAndCompression(t *testing.T) {
+	setupAutoRouterTestDB(t)
+
+	up := &Upstream{
+		Name:     "All-In-One-Upstream",
+		Type:     "openai",
+		BaseURL:  "http://127.0.0.1:9999",
+		APIKey:   "sk-test",
+		Models:   "qwen-turbo,deepseek-reasoner,gpt-4o,claude-sonnet-4-5,gemini-2.5-flash",
+		Priority: 1,
+		Weight:   1,
+		Enabled:  true,
+	}
+	if err := dbInsertUpstream(up); err != nil {
+		t.Fatalf("dbInsertUpstream: %v", err)
+	}
+
+	cfg := defaultAutoRouterConfig()
+	cfg.Enabled = true
+	cfg.Mode = "live"
+	cfg.Classifier = "heuristic"
+	cfg.SessionMode = "session_lock"
+	cfg.Tiers = map[string][]string{
+		TierSimple:    {"qwen-turbo"},
+		TierMedium:    {"gemini-2.5-flash"},
+		TierComplex:   {"deepseek-reasoner", "gpt-4o", "claude-sonnet-4-5"},
+		TierReasoning: {"deepseek-reasoner", "claude-sonnet-4-5"},
+	}
+	cfg.DefaultModel = "gpt-4o"
+	if err := saveAutoRouterConfig(cfg); err != nil {
+		t.Fatalf("saveAutoRouterConfig: %v", err)
+	}
+
+	ak := ApiKey{
+		ID:      1,
+		Name:    "v2-test-key",
+		Models:  "auto,qwen-turbo,deepseek-reasoner,gpt-4o,claude-sonnet-4-5,gemini-2.5-flash",
+		Enabled: true,
+	}
+
+	// 1. Short follow-up ("改一下") in a coding conversation must NOT short-circuit to SIMPLE
+	crFollowUp := &canonReq{
+		Model: "auto",
+		Messages: []canonMsg{
+			{Role: "user", Text: "请帮我写一个 Go 并发 Worker Pool"},
+			{Role: "assistant", Text: "好的，代码如下：\n```go\nfunc worker() {}\n```"},
+			{Role: "user", Text: "改一下"},
+		},
+	}
+	decFollow, candsFollow, err := resolveAutoRouteWithConfig(context.Background(), cfg, ak, FormatOpenAIChat, false, http.Header{}, crFollowUp, false)
+	if err != nil {
+		t.Fatalf("resolveAutoRoute(follow-up): %v", err)
+	}
+	if decFollow.Tier != TierComplex && decFollow.Tier != TierReasoning {
+		t.Fatalf("expected short coding follow-up '改一下' to route to COMPLEX/REASONING via structural floor, got %s (cause=%s)", decFollow.Tier, decFollow.Cause)
+	}
+	if len(candsFollow) == 0 || candsFollow[0] == "qwen-turbo" {
+		t.Fatalf("expected coding follow-up NOT to pick SIMPLE model qwen-turbo, got %v", candsFollow)
+	}
+
+	// 2. Session Ratchet Up: session starts with SIMPLE ("你好"), then Turn 2 asks a COMPLEX question
+	hdr := http.Header{}
+	hdr.Set("X-Session-Id", "sess-ratchet-1")
+	crTurn1 := &canonReq{
+		Model:     "auto",
+		SessionID: "sess-ratchet-1",
+		Messages:  []canonMsg{{Role: "user", Text: "你好"}},
+	}
+	dec1, _, _ := resolveAutoRouteWithConfig(context.Background(), cfg, ak, FormatOpenAIChat, false, hdr, crTurn1, false)
+	if dec1.Tier != TierSimple {
+		t.Fatalf("expected Turn 1 greeting to be SIMPLE, got %s", dec1.Tier)
+	}
+	skey := scopedSessionKey(ak.ID, sessionKeyFromCanon("/v1/chat/completions", hdr, crTurn1))
+	rememberAutoRouterSessionFull(skey, "qwen-turbo", TierSimple, up.ID, "qwen-turbo")
+
+	crTurn2 := &canonReq{
+		Model:     "auto",
+		SessionID: "sess-ratchet-1",
+		Messages: []canonMsg{
+			{Role: "user", Text: "你好"},
+			{Role: "assistant", Text: "你好！请问有什么可以帮您？"},
+			{Role: "user", Text: "还是报错 panic: deadlock，请帮我重构分布式并发状态机并修复内存泄漏\n```go\nfunc run() {}\n```"},
+		},
+	}
+	dec2, _, _ := resolveAutoRouteWithConfig(context.Background(), cfg, ak, FormatOpenAIChat, false, hdr, crTurn2, false)
+	if dec2.Tier == TierSimple {
+		t.Fatalf("expected Session Ratchet to unlock SIMPLE session and upgrade to COMPLEX/REASONING on Turn 2, got %s (cause=%s)", dec2.Tier, dec2.Cause)
+	}
+	if !strings.Contains(dec2.Cause, "retry_escalated") && dec2.SelectedThinking != "high" && dec2.SelectedThinking != "xhigh" {
+		t.Fatalf("expected frustration/retry turn to trigger retry_escalated and deep thinking, got cause=%q thinking=%q", dec2.Cause, dec2.SelectedThinking)
+	}
+
+	// 3. Modality Capability Filter: request with image skips text-only deepseek-reasoner and selects gpt-4o
+	crVision := &canonReq{
+		Model: "auto",
+		Messages: []canonMsg{
+			{
+				Role: "user",
+				Text: "请分析这张架构图中的分布式死锁问题并重构代码",
+				Parts: []canonPart{
+					{Kind: "text", Text: "请分析这张架构图中的分布式死锁问题并重构代码"},
+					{Kind: "image", URL: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="},
+				},
+			},
+		},
+	}
+	decVision, candsVision, err := resolveAutoRouteWithConfig(context.Background(), cfg, ak, FormatOpenAIChat, false, http.Header{}, crVision, false)
+	if err != nil {
+		t.Fatalf("resolveAutoRoute(vision): %v", err)
+	}
+	if len(candsVision) == 0 || candsVision[0] != "gpt-4o" {
+		t.Fatalf("expected vision request in COMPLEX tier to skip text-only deepseek-reasoner and select gpt-4o, got candidates=%v steps=%+v", candsVision, decVision.Steps)
+	}
+
+	// 4. Loss-Minimizing Middle-Out Context Compression
+	bloatedToolOutput := strings.Repeat("log line: compile check ok\n", 800) // ~21,600 chars
+	crBloated := &canonReq{
+		Model:  "auto",
+		System: "You are a coding assistant.",
+		Messages: []canonMsg{
+			{Role: "user", Text: "Initial goal: fix the authentication middleware."},
+			{Role: "assistant", Calls: []canonCall{{ID: "call_1", Name: "run_test", Arguments: "{}"}}},
+			{Role: "tool", ToolID: "call_1", ToolName: "run_test", Text: bloatedToolOutput},
+			{Role: "assistant", Text: "I see the test output."},
+			{Role: "user", Text: "Now check the token validator."},
+			{Role: "assistant", Text: "Checking validator."},
+			{Role: "user", Text: "Apply the final fix."},
+		},
+	}
+	beforeTok := estimateRequestContextTokens(crBloated)
+	compressed := compressCanonReqToFitContext(crBloated, 4096)
+	afterTok := estimateRequestContextTokens(crBloated)
+	if !compressed || afterTok >= beforeTok || afterTok > 4096 {
+		t.Fatalf("expected compressCanonReqToFitContext to shrink tokens below 4096, got compressed=%v before=%d after=%d", compressed, beforeTok, afterTok)
+	}
+	if crBloated.Messages[0].Text != "Initial goal: fix the authentication middleware." {
+		t.Fatalf("expected initial user goal message[0] to be preserved after compression")
+	}
+	if crBloated.Messages[len(crBloated.Messages)-1].Text != "Apply the final fix." {
+		t.Fatalf("expected latest user message to be preserved after compression")
+	}
+}
