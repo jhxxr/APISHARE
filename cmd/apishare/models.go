@@ -37,8 +37,8 @@ func upstreamModelCacheKey(u *Upstream) modelCacheKey {
 	if selected, err := u.probeAPIKey(""); err == nil {
 		u = selected
 	}
-	var p *OutboundProxy
-	if u.ProxyID != 0 {
+	p := u.customProxy
+	if p == nil && u.ProxyID != 0 {
 		p, _ = dbGetOutboundProxy(u.ProxyID)
 	}
 	return upstreamModelCacheKeyForProxy(u, p)
@@ -97,6 +97,9 @@ func fetchCachedModelCatalog(up *Upstream, proxyConfig *OutboundProxy, efforts m
 		return nil, ctx.Err()
 	}
 	client, err := clientForProxyConfig(modelsFetchClient, proxyConfig)
+	if err == nil && up.ID < 0 {
+		client, err = publicUserHTTPClient(client, up.customProxy != nil)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +112,7 @@ func probeConfiguredModels(ctx context.Context, up *Upstream) ([]string, error) 
 		return nil, err
 	}
 	up = selected
-	client, err := clientForUpstream(modelsFetchClient, up.ProxyID)
+	client, err := up.httpClient(modelsFetchClient)
 	if err != nil {
 		return nil, err
 	}
@@ -339,8 +342,8 @@ func cachedUpstreamModels(ctx context.Context, u *Upstream) ([]string, error) {
 		return nil, err
 	}
 	u = selected
-	var proxyConfig *OutboundProxy
-	if u.ProxyID != 0 {
+	proxyConfig := u.customProxy
+	if proxyConfig == nil && u.ProxyID != 0 {
 		var err error
 		proxyConfig, err = dbGetOutboundProxy(u.ProxyID)
 		if err != nil {
@@ -499,6 +502,13 @@ enqueue:
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
+	if rcfg := getAutoRouterConfig(); rcfg.Enabled && rcfg.Mode != "off" {
+		vm := strings.TrimSpace(rcfg.VirtualModel)
+		if vm != "" && !seen[vm] {
+			seen[vm] = true
+			data = append(data, catalogModel{ID: vm, Owner: "apishare"})
+		}
+	}
 	if len(data) == 0 && failed {
 		return nil, fmt.Errorf("unable to fetch models from configured upstreams")
 	}
@@ -531,12 +541,19 @@ func modelsHandler(c *gin.Context) {
 			return
 		}
 	}
+	ak := c.MustGet("apiKey").(ApiKey)
 	models, err := availableModels(c.Request.Context())
 	if err != nil {
-		modelError(c, 502, "unable to load available models; check upstream connections")
-		return
+		extra := appendUserCatalogModels(ak, nil)
+		if len(extra) == 0 {
+			modelError(c, 502, "unable to load available models; check upstream connections")
+			return
+		}
+		models = extra
+	} else {
+		models = ak.filterModels(models)
+		models = appendUserCatalogModels(ak, models)
 	}
-	models = c.MustGet("apiKey").(ApiKey).filterModels(models)
 	start, end, more := 0, len(models), false
 	if claude {
 		if after != "" || before != "" {
@@ -583,7 +600,16 @@ func modelsHandler(c *gin.Context) {
 func modelHandler(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	ak := c.MustGet("apiKey").(ApiKey)
-	if !ak.allowsModel(c.Param("model")) {
+	target := c.Param("model")
+	if isUserAutoRouterModel(ak, target) {
+		c.JSON(200, modelView(catalogModel{ID: target, Owner: "user-router"}, isClaudeModelRequest(c)))
+		return
+	}
+	if userServesModel(ak, target) {
+		c.JSON(200, modelView(catalogModel{ID: target, Owner: "user-byok"}, isClaudeModelRequest(c)))
+		return
+	}
+	if !ak.allowsModel(target) {
 		modelError(c, http.StatusNotFound, "model not found")
 		return
 	}

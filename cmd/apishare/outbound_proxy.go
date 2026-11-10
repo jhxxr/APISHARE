@@ -146,6 +146,7 @@ func closeProxyTransport(id int64) {
 	proxyTransports.Lock()
 	if entry, ok := proxyTransports.m[id]; ok {
 		entry.transport.CloseIdleConnections()
+		closePublicUserTransports(entry.transport)
 		delete(proxyTransports.m, id)
 	}
 	proxyTransports.Unlock()
@@ -173,6 +174,29 @@ func clientForUpstream(base *http.Client, proxyID int64) (*http.Client, error) {
 	return clientForProxyConfig(base, p)
 }
 
+func (u *Upstream) httpClient(base *http.Client) (*http.Client, error) {
+	var client *http.Client
+	var err error
+	if u != nil && u.customProxy != nil {
+		client, err = clientForProxyConfig(base, u.customProxy)
+	} else if u == nil {
+		return base, nil
+	} else {
+		client, err = clientForUpstream(base, u.ProxyID)
+	}
+	if err == nil && u.ID < 0 {
+		return publicUserHTTPClient(client, u.customProxy != nil)
+	}
+	return client, err
+}
+
+func (u *Upstream) hasProxy() bool {
+	if u == nil {
+		return false
+	}
+	return u.ProxyID != 0 || u.customProxy != nil
+}
+
 func clientForProxyConfig(base *http.Client, p *OutboundProxy) (*http.Client, error) {
 	if p == nil {
 		return base, nil
@@ -192,6 +216,7 @@ func clientForProxyConfig(base *http.Client, p *OutboundProxy) (*http.Client, er
 	if !exists || entry.fingerprint != fingerprint {
 		if exists {
 			entry.transport.CloseIdleConnections()
+			closePublicUserTransports(entry.transport)
 		}
 		transport := upstreamHTTPClient.Transport.(*http.Transport).Clone()
 		endpoint, _ := url.Parse(p.URL)
@@ -545,6 +570,7 @@ func registerOutboundProxyRoutes(auth *gin.RouterGroup) {
 			return
 		}
 		closeProxyTransport(id)
+		invalidateUserRouterCache("")
 		// Keep the embedded core's egress in step with the saved record. A failed
 		// apply restores the previous row so the database never claims a proxy the
 		// core is not using; the admin can retry after fixing the new settings.
@@ -597,6 +623,11 @@ func registerOutboundProxyRoutes(auth *gin.RouterGroup) {
 			c.JSON(500, gin.H{"error": "删除代理失败"})
 			return
 		}
+		if s := getSettings(); s.XAuthUserDefaultProxyID == id {
+			s.XAuthUserDefaultProxyID = 0
+			_ = persistSettings(s)
+		}
+		invalidateUserRouterCache("")
 		closeProxyTransport(id)
 		c.JSON(200, gin.H{"ok": true})
 	})

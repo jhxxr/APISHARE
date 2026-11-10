@@ -112,6 +112,35 @@ type relayTask struct {
 	openCodeSession           string // Reused across retries, tiers, and protocol conversions.
 	openCodeRequest           string
 	openCodeReasoningRepaired bool
+	router                    *routerDecisionDetails
+	byokUsed                  bool
+}
+
+func pickTargetUpstream(userSub string, target userRouteTarget, format clientFormat, model string, skey string, tried map[int64]bool, triedKeys map[string]bool, nativeOnly bool, cr *canonReq) (*Upstream, error) {
+	if target.PreferBYOK {
+		if target.AllowBYOK && userSub != "" {
+			if up, err := pickUserUpstream(userSub, format, model, tried, nativeOnly, cr); err == nil && up != nil {
+				return up, nil
+			} else if !target.AllowSite {
+				return nil, err
+			}
+		}
+		if target.AllowSite {
+			return pickSessionUpstream(format, model, skey, tried, triedKeys, nativeOnly, cr)
+		}
+		return nil, fmt.Errorf("no personal BYOK upstream available for model %q", model)
+	}
+	if target.AllowSite {
+		if up, err := pickSessionUpstream(format, model, skey, tried, triedKeys, nativeOnly, cr); err == nil && up != nil {
+			return up, nil
+		} else if !target.AllowBYOK || userSub == "" {
+			return nil, err
+		}
+	}
+	if target.AllowBYOK && userSub != "" {
+		return pickUserUpstream(userSub, format, model, tried, nativeOnly, cr)
+	}
+	return nil, fmt.Errorf("no available upstream for model %q", model)
 }
 
 // relayHandler 返回转发处理器（一种客户端格式一个实例）。
@@ -141,98 +170,220 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			return
 		}
 		requestClientFor(c).model = cr.Model
-		// Enforce permissions before affinity, routing, retries or billing.
-		if !ak.allowsModel(cr.Model) {
-			writeFormatError(c, format, http.StatusForbidden, "model is not allowed for this API key")
-			return
-		}
-		if ak.quotaExhausted(cr.Model) {
-			writeFormatError(c, format, http.StatusPaymentRequired, "quota exhausted for model "+cr.Model)
-			return
-		}
 		if format == FormatGemini {
 			_, method, _ := parseGeminiAction(c.Param("action"))
 			cr.Stream = method == "streamGenerateContent"
 		}
 
-		endpoint := nativeEndpoint(format, cr)
-		if nativeOnly {
-			endpoint = c.Request.URL.Path
-		}
-		task := &relayTask{
-			client:     requestClientFor(c),
-			format:     format,
-			endpoint:   endpoint,
-			body:       body,
-			canon:      cr,
-			model:      cr.Model,
-			stream:     cr.Stream,
-			nativeOnly: nativeOnly,
-			apiKeyID:   ak.ID,
+		requestedModel := cr.Model
+		var targets []userRouteTarget
+		var routerDecision *routerDecisionDetails
+		var routerDefaultModel string
+		var rSessionKey string
+		userSub := userSubForKey(ak)
+
+		switch {
+		case !nativeOnly && isAutoRouterModel(cr.Model):
+			// Enforce permissions before affinity, routing, retries or billing.
+			if !ak.allowsModel(cr.Model) {
+				writeFormatError(c, format, http.StatusForbidden, "model is not allowed for this API key")
+				return
+			}
+			if ak.quotaExhausted(cr.Model) {
+				writeFormatError(c, format, http.StatusPaymentRequired, "quota exhausted for model "+cr.Model)
+				return
+			}
+			rcfg := getAutoRouterConfig()
+			routerDefaultModel = rcfg.DefaultModel
+			endpointForKey := nativeEndpoint(format, cr)
+			rSessionKey = scopedSessionKey(ak.ID, sessionKeyFromCanon(endpointForKey, c.Request.Header, cr))
+			dec, cands, quotaErr := resolveAutoRoute(c.Request.Context(), ak, format, nativeOnly, c.Request.Header, cr)
+			if quotaErr != nil {
+				status := http.StatusPaymentRequired
+				if errors.Is(quotaErr, errModelNotAllowed) {
+					status = http.StatusForbidden
+				}
+				writeFormatError(c, format, status, quotaErr.Error())
+				return
+			}
+			for _, cm := range cands {
+				targets = append(targets, userRouteTarget{Model: cm, AllowSite: true})
+			}
+			if len(targets) == 0 {
+				targets = []userRouteTarget{{Model: cr.Model, AllowSite: true}}
+			}
+			routerDecision = dec
+			applyAutoRouterHeaders(c, rcfg, routerDecision)
+
+		case !nativeOnly && isUserAutoRouterModel(ak, cr.Model):
+			ucfg := getUserAutoRouterConfig(userSub)
+			routerDefaultModel = ucfg.DefaultModel
+			endpointForKey := nativeEndpoint(format, cr)
+			rSessionKey = "user:" + userSub + ":" + scopedSessionKey(ak.ID, sessionKeyFromCanon(endpointForKey, c.Request.Header, cr))
+			dec, uTargets, quotaErr := resolveUserAutoRoute(c.Request.Context(), ak, format, nativeOnly, c.Request.Header, cr, false)
+			if quotaErr != nil {
+				writeFormatError(c, format, http.StatusPaymentRequired, quotaErr.Error())
+				return
+			}
+			targets = uTargets
+			if len(targets) == 0 {
+				targets = []userRouteTarget{{Model: cr.Model, PreferBYOK: true, AllowBYOK: true}}
+			}
+			routerDecision = dec
+			c.Header("X-APISHARE-Router-Tier", routerDecision.Tier)
+			c.Header("X-APISHARE-Router-Cause", routerDecision.Cause)
+			if routerDecision.SelectedModel != "" {
+				c.Header("X-APISHARE-Router-Model", routerDecision.SelectedModel)
+			}
+			if routerDecision.DegradedToDefault {
+				c.Header("X-APISHARE-Router-Degraded", "default")
+			}
+			if len(routerDecision.FailedModels) > 0 {
+				c.Header("X-APISHARE-Router-Failed-Models", strings.Join(routerDecision.FailedModels, ","))
+			}
+
+		default:
+			dTargets, dErr := buildDirectModelTargets(ak, format, nativeOnly, cr, cr.Model)
+			if errors.Is(dErr, errModelNotAllowed) {
+				writeFormatError(c, format, http.StatusForbidden, "model is not allowed for this API key")
+				return
+			}
+			var qErr *modelQuotaExhaustedError
+			if errors.As(dErr, &qErr) {
+				writeFormatError(c, format, http.StatusPaymentRequired, qErr.Error())
+				return
+			}
+			targets = dTargets
 		}
 
 		// OpenAI chat 流式注入 include_usage，尽量拿到真实用量计费
+		wantUsageChunk := false
 		if format == FormatOpenAIChat && cr.Stream {
-			task.wantUsageChunk = hasIncludeUsage(body)
+			wantUsageChunk = hasIncludeUsage(body)
 			body = injectStreamUsage(body)
-			task.body = body
 		}
-
-		// Routing affinity is also scoped by gateway key: identical opening
-		// messages from different users must not share an upstream, its key,
-		// or its proxy egress.
-		skey := scopedSessionKey(ak.ID, sessionKeyFromCanon(endpoint, c.Request.Header, cr))
+		baseBody := body
 
 		s := getSettings()
-		tried := map[int64]bool{}
-		triedKeys := map[string]bool{}
 		attempts := 1 + s.Retry
 		var info relayInfo
 		var attemptErr error
-		var conversionErr error
-		upstreamAttempted := false
+		var task *relayTask
 		wrote := false
 
-		for i := 0; i < attempts; i++ {
-			if err := c.Request.Context().Err(); err != nil {
-				attemptErr = err
-				break
-			}
-			up, err := pickSessionUpstream(format, cr.Model, skey, tried, triedKeys, task.nativeOnly, cr)
-			if err != nil {
-				if attemptErr != nil && upstreamAttempted {
-					attemptErr = fmt.Errorf("%w; failover unavailable: %v", attemptErr, err)
-				} else if conversionErr != nil && !upstreamAttempted {
-					attemptErr = conversionErr
-				} else {
+		for candIdx, target := range targets {
+			candModel := target.Model
+			if candIdx > 0 {
+				if err := c.Request.Context().Err(); err != nil {
 					attemptErr = err
+					break
 				}
-				break // Finalize once so unavailable models also contribute a failed request.
+				if routerDecision != nil && !routerDecision.Shadow {
+					routerDecision.SelectedModel = candModel
+					if !c.Writer.Written() && getAutoRouterConfig().ResponseHeaders {
+						c.Header("X-APISHARE-Router-Model", candModel)
+					}
+				}
 			}
 
-			previousInfo, previousErr := info, attemptErr
-			info, wrote, attemptErr = doRelay(c, up, task)
-			var conversion *protocolConversionError
-			if errors.As(attemptErr, &conversion) {
-				tried[up.ID] = true
-				conversionErr = attemptErr
-				if upstreamAttempted {
-					// A later local capability rejection must not replace the
-					// actual upstream failure, its usage or the last attempted ID.
-					info, attemptErr = previousInfo, previousErr
-				}
-				// A local conversion rejection made no upstream request. Try other
-				// eligible protocols without spending a network retry or breaking affinity.
-				i--
-				continue
+			cr.Model = candModel
+			requestClientFor(c).model = candModel
+			endpoint := nativeEndpoint(format, cr)
+			if nativeOnly {
+				endpoint = c.Request.URL.Path
 			}
-			upstreamAttempted = true
-			if wrote || errors.Is(attemptErr, errDownstreamWrite) {
+			candBody := baseBody
+			if format != FormatGemini && candModel != requestedModel {
+				candBody = replaceModelInBody(baseBody, candModel)
+			}
+			task = &relayTask{
+				client:         requestClientFor(c),
+				format:         format,
+				endpoint:       endpoint,
+				body:           candBody,
+				canon:          cr,
+				model:          candModel,
+				stream:         cr.Stream,
+				nativeOnly:     nativeOnly,
+				apiKeyID:       ak.ID,
+				wantUsageChunk: wantUsageChunk,
+				router:         routerDecision,
+			}
+
+			// Routing affinity is also scoped by gateway key: identical opening
+			// messages from different users must not share an upstream, its key,
+			// or its proxy egress.
+			skey := scopedSessionKey(ak.ID, sessionKeyFromCanon(endpoint, c.Request.Header, cr))
+
+			tried := map[int64]bool{}
+			triedKeys := map[string]bool{}
+			var conversionErr error
+			upstreamAttempted := false
+
+			for i := 0; i < attempts; i++ {
+				if err := c.Request.Context().Err(); err != nil {
+					attemptErr = err
+					break
+				}
+				up, err := pickTargetUpstream(userSub, target, format, cr.Model, skey, tried, triedKeys, task.nativeOnly, cr)
+				if err != nil {
+					if attemptErr != nil && upstreamAttempted {
+						attemptErr = fmt.Errorf("%w; failover unavailable: %v", attemptErr, err)
+					} else if conversionErr != nil && !upstreamAttempted {
+						attemptErr = conversionErr
+					} else {
+						attemptErr = err
+					}
+					break // Finalize once so unavailable models also contribute a failed request.
+				}
+				task.byokUsed = up.ID < 0
+
+				previousInfo, previousErr := info, attemptErr
+				info, wrote, attemptErr = doRelay(c, up, task)
+				var conversion *protocolConversionError
+				if errors.As(attemptErr, &conversion) {
+					tried[up.ID] = true
+					conversionErr = attemptErr
+					if upstreamAttempted {
+						// A later local capability rejection must not replace the
+						// actual upstream failure, its usage or the last attempted ID.
+						info, attemptErr = previousInfo, previousErr
+					}
+					// A local conversion rejection made no upstream request. Try other
+					// eligible protocols without spending a network retry or breaking affinity.
+					i--
+					continue
+				}
+				upstreamAttempted = true
+				if wrote || errors.Is(attemptErr, errDownstreamWrite) {
+					break
+				}
+				if attemptErr != nil {
+					log.Printf("[failover] key=%s model=%s upstream=%s attempt=%d err=%v",
+						ak.Name, cr.Model, up.Name, i+1, attemptErr)
+				}
+			}
+
+			if wrote || errors.Is(attemptErr, errDownstreamWrite) || c.Request.Context().Err() != nil {
+				if routerDecision != nil && info.Status >= 200 && info.Status < 300 {
+					rememberAutoRouterSession(rSessionKey, candModel, routerDecision.Tier)
+				}
 				break
 			}
-			if attemptErr != nil {
-				log.Printf("[failover] key=%s model=%s upstream=%s attempt=%d err=%v",
-					ak.Name, cr.Model, up.Name, i+1, attemptErr)
+			if candIdx+1 < len(targets) && routerDecision != nil {
+				nextModel := targets[candIdx+1].Model
+				routerDecision.markRuntimeFailover(candModel, attemptErr, nextModel, routerDefaultModel)
+				if !c.Writer.Written() {
+					c.Header("X-APISHARE-Router-Model", nextModel)
+					if routerDecision.DegradedToDefault {
+						c.Header("X-APISHARE-Router-Degraded", "default")
+					}
+					if len(routerDecision.FailedModels) > 0 {
+						c.Header("X-APISHARE-Router-Failed-Models", strings.Join(routerDecision.FailedModels, ","))
+					}
+				}
+				log.Printf("[auto-router] key=%s tier=%s candidate %s failed (%v), failing over to %s",
+					ak.Name, routerDecision.Tier, candModel, attemptErr, nextModel)
 			}
 		}
 
@@ -312,8 +463,21 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 		cost := costForUsage(counts, price)
 		_, independent := ak.ModelQuotas[task.model]
 		quotaPool := "shared"
-		if independent {
+		if task.byokUsed {
+			info.UpstreamID = 0
+			if info.UpstreamName != "" && !strings.HasPrefix(info.UpstreamName, "User BYOK · ") {
+				info.UpstreamName = "User BYOK · " + info.UpstreamName
+			}
+			quotaPool = "byok"
+			priceSource = "byok"
+			cost = billingCost{}
+		} else if independent {
 			quotaPool = "independent"
+		} else if task.router != nil && task.router.RequestedModel != "" {
+			if _, autoIndep := ak.ModelQuotas[task.router.RequestedModel]; autoIndep {
+				independent = true
+				quotaPool = "independent:router"
+			}
 		}
 		logStatus := info.Status
 		logError := ""
@@ -331,9 +495,11 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 			PromptTokens: counts.inputTotal(), CompletionTokens: counts.outputTotal(),
 			CostUSD: cost.Total, Status: logStatus, LatencyMS: info.LatencyMS, Error: logError,
 			FirstTokenMS: info.FirstTokenMS, DurationMS: info.DurationMS,
-			Billing: &billingDetails{Source: usage.Source, Reported: reported, Usage: counts, Cost: cost, Price: price, PriceSource: priceSource, PricingModel: pricingModel, UpstreamModel: info.UpstreamModel, QuotaPool: quotaPool},
+			Billing: &billingDetails{Source: usage.Source, Reported: reported, Usage: counts, Cost: cost, Price: price, PriceSource: priceSource, PricingModel: pricingModel, UpstreamModel: info.UpstreamModel, QuotaPool: quotaPool, Router: task.router},
 		}
-		if err := dbRecordBilledCall(entry, independent); err != nil {
+		if task.byokUsed {
+			dbInsertLog(entry)
+		} else if err := dbRecordBilledCall(entry, independent); err != nil {
 			log.Printf("[billing] key_id=%d model=%s: receipt and debit rolled back: %v", ak.ID, task.model, err)
 		}
 		if lastErr != nil {
@@ -353,6 +519,20 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 
 func insertFailureLog(ak ApiKey, info relayInfo, task *relayTask, status int, errMsg string) {
 	task.markClientRecorded()
+	if task.byokUsed {
+		info.UpstreamID = 0
+		if info.UpstreamName != "" && !strings.HasPrefix(info.UpstreamName, "User BYOK · ") {
+			info.UpstreamName = "User BYOK · " + info.UpstreamName
+		}
+	}
+	var billing *billingDetails
+	if task.router != nil || task.byokUsed {
+		qp := ""
+		if task.byokUsed {
+			qp = "byok"
+		}
+		billing = &billingDetails{Source: task.format, QuotaPool: qp, Router: task.router}
+	}
 	dbInsertLog(&CallLog{
 		Client:  task.clientIdentity(),
 		TraceID: task.traceID,
@@ -360,6 +540,7 @@ func insertFailureLog(ak ApiKey, info relayInfo, task *relayTask, status int, er
 		UpstreamID: info.UpstreamID, UpstreamName: info.UpstreamName,
 		Model: task.model, Endpoint: string(task.format),
 		Status: status, LatencyMS: info.LatencyMS, FirstTokenMS: info.FirstTokenMS, DurationMS: info.DurationMS, Error: errMsg,
+		Billing: billing,
 	})
 }
 
@@ -524,7 +705,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	if fingerprint {
 		client, err = clientForOpenCodeFree(upstreamHTTPClient, up.ProxyID)
 	} else {
-		client, err = clientForUpstream(upstreamHTTPClient, up.ProxyID)
+		client, err = up.httpClient(upstreamHTTPClient)
 	}
 	if err != nil {
 		if up.selectedKeyID != "" {
@@ -559,7 +740,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	}
 	info.LatencyMS = time.Since(start).Milliseconds()
 	if err != nil {
-		if up.ProxyID != 0 && !errors.Is(err, errDownstreamWrite) && c.Request.Context().Err() == nil {
+		if up.hasProxy() && !errors.Is(err, errDownstreamWrite) && c.Request.Context().Err() == nil {
 			// Transport errors may contain proxy URLs or credentials.
 			return info, false, fmt.Errorf("通过代理连接上游失败，请检查代理地址、认证和网络")
 		}

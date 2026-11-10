@@ -749,13 +749,17 @@ func registerXAuthPublicRoutes(r *gin.Engine, publicSub fs.FS) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "无法读取调用记录"})
 			return
 		}
-		// Redact internal upstream details from user-facing logs.
+		// Redact internal upstream details from user-facing logs, while keeping user BYOK labels visible.
 		for i := range result.Items {
 			result.Items[i].UpstreamID = 0
-			result.Items[i].UpstreamName = ""
+			if !strings.HasPrefix(result.Items[i].UpstreamName, "User BYOK · ") {
+				result.Items[i].UpstreamName = ""
+			}
 		}
 		c.JSON(http.StatusOK, result)
 	})
+
+	registerUserRouterRoutes(userAPI)
 }
 
 type userDailyPoint struct {
@@ -768,16 +772,16 @@ type userDailyPoint struct {
 }
 
 type userModelUsage struct {
-	Model            string  `json:"model"`
-	Family           string  `json:"family"`
-	Calls            int64   `json:"calls"`
-	Successes        int64   `json:"successes"`
-	PromptTokens     int64   `json:"prompt_tokens"`
-	CompletionTokens int64   `json:"completion_tokens"`
-	CostUSD          float64 `json:"cost_usd"`
-	LastCall         string  `json:"last_call"`
-	Bound            bool    `json:"bound"`
-	QuotaMode        string  `json:"quota_mode,omitempty"`
+	Model            string        `json:"model"`
+	Family           string        `json:"family"`
+	Calls            int64         `json:"calls"`
+	Successes        int64         `json:"successes"`
+	PromptTokens     int64         `json:"prompt_tokens"`
+	CompletionTokens int64         `json:"completion_tokens"`
+	CostUSD          float64       `json:"cost_usd"`
+	LastCall         string        `json:"last_call"`
+	Bound            bool          `json:"bound"`
+	QuotaMode        string        `json:"quota_mode,omitempty"`
 	Pool             *KeyQuotaPool `json:"pool,omitempty"`
 }
 
@@ -799,8 +803,8 @@ type userDashboardResponse struct {
 		ModelQuotas   map[string]ModelQuota `json:"model_quotas"`
 		CreatedAt     string                `json:"created_at"`
 	} `json:"key"`
-	Overview   *KeyOverview     `json:"overview"`
-	Summary    struct {
+	Overview *KeyOverview `json:"overview"`
+	Summary  struct {
 		Calls            int64   `json:"calls"`
 		Successes        int64   `json:"successes"`
 		PromptTokens     int64   `json:"prompt_tokens"`

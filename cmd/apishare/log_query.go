@@ -150,6 +150,8 @@ func parseLogQuery(values url.Values) (logQuery, error) {
 			add("(CASE WHEN json_valid(billing_json) THEN CAST(json_extract(billing_json,'$.usage.cache_read') AS INTEGER) ELSE 0 END)>0")
 		case "reasoning":
 			add("(CASE WHEN json_valid(billing_json) THEN CAST(json_extract(billing_json,'$.usage.reasoning') AS INTEGER) ELSE 0 END)>0")
+		case "auto_routed":
+			add("(CASE WHEN json_valid(billing_json) THEN COALESCE(json_extract(billing_json,'$.router.requested_model'),'') ELSE '' END)<>''")
 		default:
 			return query, fmt.Errorf("快捷筛选不正确")
 		}

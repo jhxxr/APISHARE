@@ -41,9 +41,10 @@ type billingDetails struct {
 	Cost          billingCost   `json:"cost"`
 	Price         Price         `json:"price"`
 	PriceSource   string        `json:"price_source"`
-	PricingModel  string        `json:"pricing_model,omitempty"`
-	UpstreamModel string        `json:"upstream_model,omitempty"`
-	QuotaPool     string        `json:"quota_pool,omitempty"`
+	PricingModel  string                 `json:"pricing_model,omitempty"`
+	UpstreamModel string                 `json:"upstream_model,omitempty"`
+	QuotaPool     string                 `json:"quota_pool,omitempty"`
+	Router        *routerDecisionDetails `json:"router,omitempty"`
 }
 
 func nonnegativeTokens(value int) int {

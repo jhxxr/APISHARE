@@ -250,8 +250,8 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline
 .row-actions .text-btn:hover { background: var(--panel-soft); color: var(--accent); }
 .key-value { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .key-value code { white-space: nowrap; }
-.key-copy { min-width: 60px; min-height: 44px; padding: 5px 8px; border-radius: 5px; color: var(--text); white-space: nowrap; }
-.key-copy:hover { background: var(--panel-soft); color: var(--accent); }
+.key-copy, .key-refresh { min-width: 60px; min-height: 44px; padding: 5px 8px; border-radius: 5px; color: var(--text); white-space: nowrap; }
+.key-copy:hover, .key-refresh:hover { background: var(--panel-soft); color: var(--accent); }
 .badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px; border: 1px solid transparent; border-radius: 5px; font-size: 10px; line-height: 1.5; white-space: nowrap; }
 .badge::before { content: ""; width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
 .badge.on { background: var(--green-soft); color: var(--green); border-color: #c1e3d2; }
@@ -302,7 +302,7 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline
 .new-key { display: flex; align-items: center; flex-wrap: wrap; gap: 15px; padding: 19px; border: 1px solid #b8dfcb; border-radius: 10px; background: var(--green-soft); }
 .new-key strong { font-size: 12px; font-weight: 500; }
 .new-key p { color: var(--green); font-size: 11px; margin-top: 3px; }
-.new-key code { flex: 1; min-width: 180px; overflow-wrap: anywhere; font: 12px/1.7 var(--mono); }
+.new-key code { flex: 1; min-width: 180px; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.7 var(--mono); }
 .new-key .icon-btn { margin-left: auto; }
 .quota-cell { min-width: 130px; }
 .quota-track { width: 100%; height: 3px; background: #e1e7ef; border-radius: 2px; margin-top: 9px; overflow: hidden; }

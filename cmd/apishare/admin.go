@@ -5,7 +5,9 @@ import (
 	"compress/gzip"
 	"crypto/hmac"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -145,6 +147,7 @@ func registerAdminRoutes(r *gin.Engine) {
 	registerClientStatsRoutes(auth)
 	registerSiteBrandingAdmin(auth)
 	registerXAuthAdminRoutes(auth)
+	registerAutoRouterAdminRoutes(auth)
 
 	// ---------- API Keys ----------
 	auth.GET("/keys/models", func(c *gin.Context) {
@@ -298,6 +301,73 @@ func registerAdminRoutes(r *gin.Engine) {
 			return
 		}
 		c.JSON(200, gin.H{"ok": true})
+	})
+
+	refreshKeyHandler := func(c *gin.Context) {
+		id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+		if err != nil || id <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid key id"})
+			return
+		}
+		ak, err := dbRefreshKey(id)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				c.JSON(http.StatusNotFound, gin.H{"error": "key not found"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, ak)
+	}
+	auth.POST("/keys/:id/refresh", refreshKeyHandler)
+	auth.POST("/keys/:id/regenerate", refreshKeyHandler)
+	auth.POST("/keys/:id/rotate", refreshKeyHandler)
+
+	auth.POST("/keys/batch-refresh", func(c *gin.Context) {
+		var req struct {
+			KeyIDs []int64 `json:"key_ids"`
+		}
+		if c.BindJSON(&req) != nil {
+			return
+		}
+		seen := make(map[int64]struct{}, len(req.KeyIDs))
+		ids := make([]int64, 0, len(req.KeyIDs))
+		for _, id := range req.KeyIDs {
+			if id <= 0 {
+				continue
+			}
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			ids = append(ids, id)
+		}
+		if len(ids) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请选择至少一个密钥"})
+			return
+		}
+		refreshed := make([]*ApiKey, 0, len(ids))
+		for _, id := range ids {
+			ak, err := dbRefreshKey(id)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					continue
+				}
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			refreshed = append(refreshed, ak)
+		}
+		if len(refreshed) == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "未找到可刷新的密钥"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"ok":              true,
+			"refreshed_count": len(refreshed),
+			"keys":            refreshed,
+		})
 	})
 
 	// ---------- Upstreams ----------
@@ -987,21 +1057,22 @@ func registerAdminRoutes(r *gin.Engine) {
 			"xauth_default_quota_usd":    s.XAuthDefaultQuotaUSD,
 			"xauth_default_qps":          s.XAuthDefaultQPS,
 			"xauth_default_concurrency":  s.XAuthDefaultConcurrency,
-			"xauth_default_models":       s.XAuthDefaultModels,
-			"xauth_default_model_quotas": s.XAuthDefaultModelQuotas,
+			"xauth_default_models":        s.XAuthDefaultModels,
+			"xauth_default_model_quotas":  s.XAuthDefaultModelQuotas,
+			"xauth_user_default_proxy_id": s.XAuthUserDefaultProxyID,
 		})
 	})
 
 	auth.PUT("/settings", func(c *gin.Context) {
 		var req struct {
-			AffinityTTLMin     *int              `json:"affinity_ttl_min"`
-			Retry              *int              `json:"retry"`
-			InjectStreamUsage  *bool             `json:"inject_stream_usage"`
-			LogRetentionDays   *int              `json:"log_retention_days"`
-			Pricing            *map[string]Price `json:"pricing"`
-			NewPassword        *string           `json:"new_password"`
-			AutoPricingEnabled *bool             `json:"auto_pricing_enabled"`
-			AutoPricingURL     *string           `json:"auto_pricing_url"`
+			AffinityTTLMin          *int                   `json:"affinity_ttl_min"`
+			Retry                   *int                   `json:"retry"`
+			InjectStreamUsage       *bool                  `json:"inject_stream_usage"`
+			LogRetentionDays        *int                   `json:"log_retention_days"`
+			Pricing                 *map[string]Price      `json:"pricing"`
+			NewPassword             *string                `json:"new_password"`
+			AutoPricingEnabled      *bool                  `json:"auto_pricing_enabled"`
+			AutoPricingURL          *string                `json:"auto_pricing_url"`
 			SiteTitle               *string                `json:"site_title"`
 			XAuthEnabled            *bool                  `json:"xauth_enabled"`
 			XAuthIssuer             *string                `json:"xauth_issuer"`
@@ -1013,6 +1084,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			XAuthDefaultConcurrency *int                   `json:"xauth_default_concurrency"`
 			XAuthDefaultModels      *string                `json:"xauth_default_models"`
 			XAuthDefaultModelQuotas *map[string]ModelQuota `json:"xauth_default_model_quotas"`
+			XAuthUserDefaultProxyID *int64                 `json:"xauth_user_default_proxy_id"`
 		}
 		if c.BindJSON(&req) != nil {
 			return
@@ -1086,6 +1158,20 @@ func registerAdminRoutes(r *gin.Engine) {
 			s.XAuthDefaultModelQuotas = buildXAuthDefaultModelQuotas(s.XAuthDefaultModels, *req.XAuthDefaultModelQuotas)
 		} else if req.XAuthDefaultModels != nil {
 			s.XAuthDefaultModelQuotas = buildXAuthDefaultModelQuotas(s.XAuthDefaultModels, s.XAuthDefaultModelQuotas)
+		}
+		if req.XAuthUserDefaultProxyID != nil {
+			pid := *req.XAuthUserDefaultProxyID
+			if pid < 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "请选择有效的默认代理"})
+				return
+			}
+			if pid != 0 && pid != s.XAuthUserDefaultProxyID {
+				if err := validateUpstreamProxy(pid); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "用户自带模型默认代理无效：" + err.Error()})
+					return
+				}
+			}
+			s.XAuthUserDefaultProxyID = pid
 		}
 		retentionChanged := false
 		if req.AffinityTTLMin != nil && *req.AffinityTTLMin > 0 {

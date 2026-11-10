@@ -74,7 +74,8 @@ func TestRelayHealthCooldownAndRecovery(t *testing.T) {
 
 func TestRelayHealthIgnoresClientErrorsAndCancellation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	const id = int64(-71)
+	// Negative IDs are reserved for user-owned BYOK channels.
+	const id = int64(1<<60 + 71)
 	defer healthMarkSuccess(id)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
@@ -128,7 +129,7 @@ func (w *failedStreamResponse) Write([]byte) (int, error) {
 
 func TestDownstreamWriteFailureDoesNotCoolUpstream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	const id = int64(-73)
+	const id = int64(1<<60 + 73)
 	defer healthMarkSuccess(id)
 	for _, native := range []bool{true, false} {
 		healthMarkSuccess(id)

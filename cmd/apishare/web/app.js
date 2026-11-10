@@ -40,9 +40,9 @@ function editorOpenAIProtocol() {
   if (isOpenCodeType($("editType").value)) return $("editOpenCodeProtocol").value || "auto";
   return { "openai-chat": "chat", "openai-responses": "responses" }[$("editType").value] || "auto";
 }
-const tabNames = { dashboard: "仪表盘", keys: "API 密钥", upstreams: "上游服务", models: "模型总览", proxies: "代理配置", logs: "调用日志", announcements: "公告管理", settings: "工作空间设置", deployment: "部署配置" };
+const tabNames = { dashboard: "仪表盘", keys: "API 密钥", upstreams: "上游服务", router: "智能路由", models: "模型总览", proxies: "代理配置", logs: "调用日志", announcements: "公告管理", settings: "工作空间设置", deployment: "部署配置" };
 const siteTitle = () => document.documentElement.dataset.siteTitle || "API Share";
-const tabIcons = { dashboard: "grid", keys: "key", upstreams: "layers", models: "spark", proxies: "link", logs: "activity", announcements: "megaphone", settings: "sliders", deployment: "shield" };
+const tabIcons = { dashboard: "grid", keys: "key", upstreams: "layers", router: "spark", models: "spark", proxies: "link", logs: "activity", announcements: "megaphone", settings: "sliders", deployment: "shield" };
 document.body.classList.toggle("sidebar-collapsed", localStorage.getItem("apishare_sidebar_collapsed") === "true");
 document.querySelectorAll(".tab").forEach((button) => {
   button.title = tabNames[button.dataset.tab];
@@ -151,7 +151,19 @@ function copyKey(id) {
   if (!key?.key) { toast("密钥不存在，请刷新列表后重试", "error"); return; }
   return copyText(key.key, "完整密钥已复制，请妥善保存");
 }
-function dismissNewKey() { $("newKeyShow").classList.add("hidden"); $("newKeyValue").textContent = ""; }
+function showNewKeyBanner(keyValue, title = "新密钥已生成", desc = "请立即复制并保存这份完整密钥。") {
+  if ($("newKeyTitle")) $("newKeyTitle").textContent = title;
+  if ($("newKeyDesc")) $("newKeyDesc").textContent = desc;
+  $("newKeyValue").textContent = keyValue;
+  $("newKeyShow").classList.remove("hidden");
+  $("newKeyShow").scrollIntoView({ block: "nearest", behavior: motionBehavior() });
+}
+function dismissNewKey() {
+  $("newKeyShow").classList.add("hidden");
+  $("newKeyValue").textContent = "";
+  if ($("newKeyTitle")) $("newKeyTitle").textContent = "新密钥已生成";
+  if ($("newKeyDesc")) $("newKeyDesc").textContent = "请立即复制并保存这份完整密钥。";
+}
 
 /* Authentication and navigation */
 function showLogin() {
@@ -186,6 +198,7 @@ function showApp(session = {}) {
   switchTab(validTab(location.hash.slice(1)) ? location.hash.slice(1) : "dashboard", false);
   if (activeTab !== "keys") loadKeys(true);
   if (activeTab !== "upstreams") loadUpstreams(true);
+  if (activeTab !== "router" && typeof loadAutoRouterBadgeQuietly === "function") loadAutoRouterBadgeQuietly();
 }
 async function doLogin(event) {
   event.preventDefault();
@@ -271,6 +284,7 @@ async function loadCurrentTab() {
   if (activeTab === "dashboard") return Promise.all([loadStats(), loadRecent(), loadClientStats()]);
   if (activeTab === "keys") return loadKeys();
   if (activeTab === "upstreams") return Promise.all([loadUpstreams(), editorIsOpen() && coreUI.poolID ? loadCLIProxy() : Promise.resolve()]);
+  if (activeTab === "router") return loadAutoRouter();
   if (activeTab === "models") return loadModelOverview();
   if (activeTab === "proxies") return loadProxies();
   if (activeTab === "logs") return loadLogs(logsPage);
@@ -618,11 +632,11 @@ function renderKeys() {
     const masked = key.key.length > 16 ? key.key.slice(0, 8) + "••••" + key.key.slice(-4) : "••••••••";
     const modelIDs = parseAllowlist(key.models);
     const modelSummary = '<small class="key-model-summary" title="' + esc(modelIDs.join(", ")) + '">可用模型：' + (modelIDs.length ? modelIDs.length + " 个" : "未绑定，无法调用") + '</small>';
-    const keyCell = '<div class="key-value"><code>' + esc(masked) + '</code><button type="button" class="text-btn key-copy" onclick="copyKey(' + key.id + ')" aria-label="复制 ' + esc(key.name) + ' 的完整密钥" title="复制完整密钥">' + icon("copy") + '<span>复制</span></button></div>';
+    const keyCell = '<div class="key-value"><code>' + esc(masked) + '</code><button type="button" class="text-btn key-copy" onclick="copyKey(' + key.id + ')" aria-label="复制 ' + esc(key.name) + ' 的完整密钥" title="复制完整密钥">' + icon("copy") + '<span>复制</span></button><button type="button" class="text-btn key-refresh" onclick="refreshKey(' + key.id + ', this)" aria-label="刷新 ' + esc(key.name) + ' 的密钥" title="刷新生成新密钥（旧密钥立即失效）">' + icon("refresh") + '<span>刷新</span></button></div>';
     const selectCell = '<td class="upstream-select-cell"><input type="checkbox" data-key-select="' + key.id + '" ' + (selectedKeyIDs.has(key.id) ? "checked" : "") + ' aria-label="选择密钥 ' + esc(key.name) + '" onchange="toggleKeySelection(' + key.id + ', this.checked)"></td>';
     const xauthBadge = key.xauth_user ? '<span class="key-xauth-badge" title="XAuth 用户 · Sub: ' + esc(key.xauth_user.sub) + (key.xauth_user.last_login_at ? " · 最近登录: " + esc(fmtTime(key.xauth_user.last_login_at)) : "") + '">XAuth · ' + esc(key.xauth_user.email || key.xauth_user.name || key.xauth_user.sub) + '</span>' : "";
     const noteLine = key.note ? '<small class="key-note-line">' + esc(key.note) + '</small>' : "";
-    return '<tr>' + selectCell + '<td class="cell-stack"><div class="key-name-row"><strong>' + esc(key.name) + '</strong>' + xauthBadge + '</div>' + noteLine + '<small>#' + key.id + ' · ' + esc((key.created_at || "").slice(0, 10)) + '</small></td><td>' + keyCell + '</td><td class="key-models-col">' + renderKeyModelsCell(key) + '</td><td class="quota-cell">' + renderKeyQuotaSummary(key) + '</td><td><code>' + key.qps + " / " + key.concurrency + '</code></td><td><span class="badge ' + (key.enabled ? "on" : "off") + '">' + (key.enabled ? "启用" : "停用") + '</span></td><td><div class="row-actions"><button class="text-btn" onclick="openKeyModels(' + key.id + ')" aria-label="设置 ' + esc(key.name) + ' 的模型与限制">限制与模型</button><button class="text-btn" onclick="toggleKey(' + key.id + ", " + !key.enabled + ', this)" aria-label="' + (key.enabled ? "停用 " : "启用 ") + esc(key.name) + '">' + (key.enabled ? "停用" : "启用") + '</button><button class="icon-btn danger" onclick="deleteKey(' + key.id + ')" aria-label="删除 ' + esc(key.name) + '" title="删除密钥">' + icon("trash") + '</button></div></td></tr>';
+    return '<tr>' + selectCell + '<td class="cell-stack"><div class="key-name-row"><strong>' + esc(key.name) + '</strong>' + xauthBadge + '</div>' + noteLine + '<small>#' + key.id + ' · ' + esc((key.created_at || "").slice(0, 10)) + '</small></td><td>' + keyCell + '</td><td class="key-models-col">' + renderKeyModelsCell(key) + '</td><td class="quota-cell">' + renderKeyQuotaSummary(key) + '</td><td><code>' + key.qps + " / " + key.concurrency + '</code></td><td><span class="badge ' + (key.enabled ? "on" : "off") + '">' + (key.enabled ? "启用" : "停用") + '</span></td><td><div class="row-actions"><button class="text-btn" onclick="openKeyModels(' + key.id + ')" aria-label="设置 ' + esc(key.name) + ' 的模型与限制">限制与模型</button><button class="text-btn" onclick="refreshKey(' + key.id + ', this)" aria-label="刷新 ' + esc(key.name) + ' 的密钥" title="重新生成密钥以防泄漏">刷新密钥</button><button class="text-btn" onclick="toggleKey(' + key.id + ", " + !key.enabled + ', this)" aria-label="' + (key.enabled ? "停用 " : "启用 ") + esc(key.name) + '">' + (key.enabled ? "停用" : "启用") + '</button><button class="icon-btn danger" onclick="deleteKey(' + key.id + ')" aria-label="删除 ' + esc(key.name) + '" title="删除密钥">' + icon("trash") + '</button></div></td></tr>';
   }).join("") || emptyRow(8, query ? "没有匹配的密钥" : "创建你的第一个 API 密钥", query ? "试试其他名称或筛选条件。" : "为成员分配独立的访问权限和调用额度。", query ? "" : "toggleKeyComposer(true)", "创建密钥", "key");
   if (typeof syncKeySelectionUI === "function") syncKeySelectionUI();
   labelTableCells("keysTable");
@@ -636,12 +650,61 @@ async function createKey(event) {
   setBusy(button, true, "正在生成…");
   try {
     const key = await api("api/keys", { method: "POST", body: JSON.stringify({ name, ...keyQuotaPayload("key"), qps: Number($("keyQps").value) || 3, concurrency: Number($("keyConc").value) || 5, models: parseAllowlist($("keyModels").value).join(",") }) });
-    $("newKeyValue").textContent = key.key;
-    $("newKeyShow").classList.remove("hidden");
+    showNewKeyBanner(key.key, "新密钥已生成", "请立即复制并保存这份完整密钥。");
     form.reset(); resetKeyModelPicker("key"); toggleKeyComposer(false);
     await loadKeys(); toast("密钥已创建");
   } catch (error) { reportError(error); } finally { setBusy(button, false); }
   return false;
+}
+async function refreshKey(id, button) {
+  const key = keysCache.find((item) => item.id === id);
+  const label = key ? "“" + key.name + "”" : "该密钥";
+  if (!await askAction({
+    title: "刷新 API 密钥？",
+    description: "刷新后将为" + label + "生成新的 sk- 密钥，原密钥及已登录的查询会话会立即失效；绑定的可用模型、额度、已用额度与调用记录保持不变。",
+    confirm: "刷新密钥",
+    danger: true,
+  })) return;
+  if (button) setBusy(button, true, "刷新中…");
+  try {
+    const updated = await api("api/keys/" + id + "/refresh", { method: "POST" });
+    showNewKeyBanner(updated.key, (updated.name ? "“" + updated.name + "”的密钥已刷新" : "密钥已刷新"), "旧密钥已立即失效，请复制并分发新的完整密钥。");
+    await loadKeys();
+    toast("密钥已刷新，旧密钥已失效");
+  } catch (error) { reportError(error, "密钥刷新失败"); } finally { if (button) setBusy(button, false); }
+}
+async function refreshKeyFromDialog() {
+  const id = typeof editingKeyModelsID === "number" ? editingKeyModelsID : null;
+  if (!id) return;
+  closeKeyModels();
+  await refreshKey(id);
+}
+async function batchRefreshSelectedKeys(button) {
+  const ids = Array.from(selectedKeyIDs || []).filter((id) => keysCache.some((item) => item.id === id));
+  if (!ids.length) { toast("请先勾选要刷新的密钥", "error"); return; }
+  if (!await askAction({
+    title: "批量刷新 " + ids.length + " 个 API 密钥？",
+    description: "所选的 " + ids.length + " 个密钥将全部重新生成，原有密钥会立即失效；各自的可用模型、额度和用量保持不变。",
+    confirm: "批量刷新",
+    danger: true,
+  })) return;
+  if (button) setBusy(button, true, "批量刷新中…");
+  try {
+    const result = await api("api/keys/batch-refresh", { method: "POST", body: JSON.stringify({ key_ids: ids }) });
+    const refreshed = Array.isArray(result?.keys) ? result.keys : [];
+    if (refreshed.length === 1) {
+      const updated = refreshed[0];
+      showNewKeyBanner(updated.key, (updated.name ? "“" + updated.name + "”的密钥已刷新" : "密钥已刷新"), "旧密钥已立即失效，请复制并分发新的完整密钥。");
+    } else if (refreshed.length > 1) {
+      showNewKeyBanner(
+        refreshed.map((item) => (item.name || "#" + item.id) + ": " + item.key).join("\n"),
+        "已批量刷新 " + refreshed.length + " 个密钥",
+        "旧密钥已全部失效，可在下方复制或在列表中逐个复制新密钥。"
+      );
+    }
+    await loadKeys();
+    toast("已刷新 " + (result?.refreshed_count || refreshed.length) + " 个密钥");
+  } catch (error) { reportError(error, "批量刷新失败"); } finally { if (button) setBusy(button, false); }
 }
 async function toggleKey(id, enabled, button) {
   setBusy(button, true, "更新中");
@@ -1259,6 +1322,7 @@ async function resetSiteIcon() {
 }
 async function loadSettings() {
   try {
+    if (!proxiesCache.length && typeof loadProxies === "function") await loadProxies(true);
     const settings = await api("api/settings");
     $("setTtl").value = settings.affinity_ttl_min; $("setRetry").value = settings.retry;
     $("setInject").checked = !!settings.inject_stream_usage;
@@ -1280,6 +1344,11 @@ async function loadSettings() {
       $("xauthRedirectURI").value = settings.xauth_redirect_uri || (location.origin + "/api/auth/callback");
       $("setXAuthQps").value = settings.xauth_default_qps ?? 3;
       $("setXAuthConc").value = settings.xauth_default_concurrency ?? 5;
+      if (typeof renderXAuthDefaultProxyOptions === "function") {
+        renderXAuthDefaultProxyOptions(settings.xauth_user_default_proxy_id ?? 0);
+      } else if ($("setXAuthUserDefaultProxy")) {
+        $("setXAuthUserDefaultProxy").value = String(settings.xauth_user_default_proxy_id ?? 0);
+      }
       $("xauthDefaultModels").value = settings.xauth_default_models || "";
       resetKeyModelPicker("xauthDefault", {
         quota_usd: settings.xauth_default_quota_usd ?? 5,
@@ -1345,7 +1414,7 @@ async function saveSettings(event) {
   const button = event.currentTarget.querySelector('[type="submit"]');
   setBusy(button, true, "正在保存…");
   try {
-    await api("api/settings", { method: "PUT", body: JSON.stringify({ affinity_ttl_min: Number($("setTtl").value), retry: Number($("setRetry").value), inject_stream_usage: $("setInject").checked, log_retention_days: Number($("setLogRetention").value), auto_pricing_enabled: $("setAutoPricing").checked, auto_pricing_url: $("setPricingURL").value.trim(), site_title: siteTitleValue, pricing, xauth_enabled: $("setXAuthEnabled")?.checked ?? false, xauth_issuer: ($("setXAuthIssuer")?.value || "").trim(), xauth_client_id: ($("setXAuthClientID")?.value || "").trim(), xauth_client_secret: ($("setXAuthClientSecret")?.value || "").trim(), xauth_clear_secret: $("setXAuthClearSecret")?.checked ?? false, xauth_default_qps: Number($("setXAuthQps")?.value) || 3, xauth_default_concurrency: Number($("setXAuthConc")?.value) || 5, xauth_default_models: parseAllowlist($("xauthDefaultModels")?.value || "").join(","), ...Object.fromEntries(Object.entries({ xauth_default_quota_usd: xauthQuota.quota_usd, xauth_default_model_quotas: xauthQuota.model_quotas })) }) });
+    await api("api/settings", { method: "PUT", body: JSON.stringify({ affinity_ttl_min: Number($("setTtl").value), retry: Number($("setRetry").value), inject_stream_usage: $("setInject").checked, log_retention_days: Number($("setLogRetention").value), auto_pricing_enabled: $("setAutoPricing").checked, auto_pricing_url: $("setPricingURL").value.trim(), site_title: siteTitleValue, pricing, xauth_enabled: $("setXAuthEnabled")?.checked ?? false, xauth_issuer: ($("setXAuthIssuer")?.value || "").trim(), xauth_client_id: ($("setXAuthClientID")?.value || "").trim(), xauth_client_secret: ($("setXAuthClientSecret")?.value || "").trim(), xauth_clear_secret: $("setXAuthClearSecret")?.checked ?? false, xauth_default_qps: Number($("setXAuthQps")?.value) || 3, xauth_default_concurrency: Number($("setXAuthConc")?.value) || 5, xauth_user_default_proxy_id: Number($("setXAuthUserDefaultProxy")?.value || 0), xauth_default_models: parseAllowlist($("xauthDefaultModels")?.value || "").join(","), ...Object.fromEntries(Object.entries({ xauth_default_quota_usd: xauthQuota.quota_usd, xauth_default_model_quotas: xauthQuota.model_quotas })) }) });
     await loadSettings(); toast("工作空间设置已保存");
   } catch (error) { reportError(error, "保存失败"); } finally { setBusy(button, false); }
   return false;

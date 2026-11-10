@@ -57,7 +57,11 @@ func dbRecordBilledCall(entry *CallLog, independent bool) error {
 	}
 	defer tx.Rollback()
 	if entry.CostUSD > 0 {
-		if err := dbChargeKeyTx(tx, entry.KeyID, entry.Model, entry.CostUSD, independent); err != nil {
+		chargeModel := entry.Model
+		if independent && entry.Billing != nil && entry.Billing.Router != nil && entry.Billing.QuotaPool == "independent:router" && entry.Billing.Router.RequestedModel != "" {
+			chargeModel = entry.Billing.Router.RequestedModel
+		}
+		if err := dbChargeKeyTx(tx, entry.KeyID, chargeModel, entry.CostUSD, independent); err != nil {
 			return err
 		}
 	}

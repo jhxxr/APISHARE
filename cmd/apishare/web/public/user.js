@@ -14,7 +14,16 @@
     logQuery: "",
     logStatus: "",
     toastTimer: 0,
+    routerView: null,
+    routerTiers: { SIMPLE: [], MEDIUM: [], COMPLEX: [], REASONING: [] },
   };
+
+  const USER_TIER_META = [
+    { id: "SIMPLE", title: "SIMPLE · 快档（简单问答/翻译）" },
+    { id: "MEDIUM", title: "MEDIUM · 中等（日常写作/短代码）" },
+    { id: "COMPLEX", title: "COMPLEX · 强档（多文件重构/调试）" },
+    { id: "REASONING", title: "REASONING · 推理档（证明/深度规划）" },
+  ];
 
   const numFmt = new Intl.NumberFormat("zh-CN");
   const compactFmt = new Intl.NumberFormat("zh-CN", { notation: "compact", maximumFractionDigits: 1 });
@@ -437,6 +446,30 @@
     }
   }
 
+  function renderUserLogRouterMeta(row) {
+    const r = row?.billing?.router;
+    if (!r || !r.requested_model) return "";
+    const failedList = Array.isArray(r.failed_models) && r.failed_models.length
+      ? r.failed_models
+      : Array.isArray(r.fallbacks_tried) ? r.fallbacks_tried : [];
+    const degradedDefault = Boolean(r.degraded_to_default) || r.selected_source_tier === "DEFAULT";
+    const tierName = r.tier || "AUTO";
+    const routePill = `<span class="user-log-route-pill" title="请求模型 ${esc(r.requested_model)} → 判定档位 ${esc(tierName)} (${esc(r.cause || "")})">${esc(r.requested_model)} → ${esc(tierName)}</span>`;
+
+    if (degradedDefault) {
+      const failedText = failedList.length ? `原 ${tierName} 档模型异常 (${failedList.join(", ")})，` : `原 ${tierName} 档无可用模型，`;
+      const tip = `${failedText}已自动降级路由至最终后备模型 ${row.model || ""}`;
+      return `<div class="user-log-route-wrap">${routePill}<span class="user-log-fallback-badge danger" title="${esc(tip)}">⚠️ 档位模型异常 · 已降级至后备模型</span></div>`
+        + (failedList.length ? `<div class="user-log-failed-note" title="${esc(tip)}">异常模型: <code>${esc(failedList.join(", "))}</code></div>` : "");
+    }
+    if (failedList.length > 0) {
+      const tip = `首选模型异常 (${failedList.join(", ")})，已自动故障切换至备选模型 ${row.model || ""}`;
+      return `<div class="user-log-route-wrap">${routePill}<span class="user-log-fallback-badge warn" title="${esc(tip)}">⚠️ 候选故障切换</span></div>`
+        + `<div class="user-log-failed-note" title="${esc(tip)}">已跳过异常模型: <code>${esc(failedList.join(", "))}</code></div>`;
+    }
+    return `<div class="user-log-route-wrap">${routePill}</div>`;
+  }
+
   async function loadUserLogs() {
     const tbody = $("#userLogsBody");
     if (!tbody) return;
@@ -481,9 +514,10 @@
         const latency = row.latency_ms ? `${ (row.latency_ms / 1000).toFixed(2) }s` : "—";
         const ttft = row.first_token_ms ? `首字 ${(row.first_token_ms / 1000).toFixed(2)}s` : "";
         const errNote = !ok && row.error ? `<div class="muted" style="font-size:11px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(row.error)}">${esc(row.error)}</div>` : "";
+        const routerMeta = renderUserLogRouterMeta(row);
         return `<tr>
           <td><code>${esc(fmtBeijingTime(row.created_at))}</code></td>
-          <td>${modelLabelHTML(row.model)}</td>
+          <td>${modelLabelHTML(row.model)}${routerMeta}</td>
           <td><code>${esc(row.endpoint || "/v1/chat/completions")}</code></td>
           <td><code>${fmtInt(row.prompt_tokens)}</code> / <code>${fmtInt(row.completion_tokens)}</code></td>
           <td><code>${esc(latency)}</code>${ttft ? `<div class="muted" style="font-size:11px">${esc(ttft)}</div>` : ""}</td>
@@ -534,6 +568,666 @@
     }
   }
 
+  // ---------- BYOK & Personal Auto Router ----------
+
+  async function loadUserRouterAndByok() {
+    try {
+      const res = await fetch("/api/user/auto-router", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      applyUserRouterView(data);
+    } catch {
+      // ignore background error
+    }
+  }
+
+  function applyUserRouterView(data) {
+    state.routerView = data;
+    const tiers = data.tiers || {};
+    state.routerTiers = {
+      SIMPLE: Array.isArray(tiers.SIMPLE) ? [...tiers.SIMPLE] : [],
+      MEDIUM: Array.isArray(tiers.MEDIUM) ? [...tiers.MEDIUM] : [],
+      COMPLEX: Array.isArray(tiers.COMPLEX) ? [...tiers.COMPLEX] : [],
+      REASONING: Array.isArray(tiers.REASONING) ? [...tiers.REASONING] : [],
+    };
+    renderUserByokList();
+    renderUserRouterPanel();
+  }
+
+  function renderUserByokList() {
+    const host = $("#userByokList");
+    const countEl = $("#userByokCount");
+    const items = Array.isArray(state.routerView?.upstreams) ? state.routerView.upstreams : [];
+    if (countEl) countEl.textContent = String(items.length);
+    if (!host) return;
+
+    if (!items.length) {
+      host.innerHTML = `<div class="empty-cell">尚未添加个人渠道，点击右上角「+ 添加渠道」接入自带 API Key（调用自带渠道不消耗站点额度）。</div>`;
+      return;
+    }
+
+    host.innerHTML = items.map((u) => {
+      const statusBadge = !u.enabled
+        ? `<span class="status-pill off">已停用</span>`
+        : u.healthy
+        ? `<span class="status-pill on">健康</span>`
+        : `<span class="status-pill off">冷却中</span>`;
+      let proxyLabel = "系统默认";
+      if (u.proxy_mode === "custom") {
+        proxyLabel = `自定义代理 (${u.proxy_url || "已配置"})`;
+      }
+      const modelsHTML = (Array.isArray(u.models) ? u.models : []).slice(0, 8).map((m) => `<span class="byok-model-chip">${esc(m)}</span>`).join("");
+      const moreCount = Math.max(0, (u.models?.length || 0) - 8);
+      return `<div class="byok-item" data-byok-id="${u.id}">
+        <div class="byok-item-top">
+          <div class="byok-item-title">
+            <span class="byok-type-badge">${esc(u.type || "openai")}</span>
+            <span>${esc(u.name)}</span>
+            ${statusBadge}
+          </div>
+          <div class="byok-item-actions">
+            <button type="button" class="btn ghost mini" data-action="toggle-byok" data-id="${u.id}">${u.enabled ? "停用" : "启用"}</button>
+            <button type="button" class="btn ghost mini" data-action="edit-byok" data-id="${u.id}">编辑</button>
+            <button type="button" class="btn ghost mini danger-text" data-action="delete-byok" data-id="${u.id}">删除</button>
+          </div>
+        </div>
+        <div class="byok-item-meta">
+          <span>地址: <code>${esc(u.base_url)}</code></span>
+          <span>密钥: <code>${esc(u.key_masked || "sk-***")}</code></span>
+          <span>代理: <code>${esc(proxyLabel)}</code></span>
+          <span>优先级: <strong>${esc(u.priority)}</strong> · 权重: <strong>${esc(u.weight)}</strong></span>
+        </div>
+        <div class="byok-models-wrap">
+          ${modelsHTML}
+          ${moreCount > 0 ? `<span class="byok-model-chip">+${moreCount} 个模型</span>` : ""}
+        </div>
+      </div>`;
+    }).join("");
+
+    $$("[data-action='toggle-byok']", host).forEach((btn) => {
+      btn.addEventListener("click", () => toggleByokUpstream(Number(btn.dataset.id)));
+    });
+    $$("[data-action='edit-byok']", host).forEach((btn) => {
+      btn.addEventListener("click", () => openByokModal(Number(btn.dataset.id)));
+    });
+    $$("[data-action='delete-byok']", host).forEach((btn) => {
+      btn.addEventListener("click", () => deleteByokUpstream(Number(btn.dataset.id)));
+    });
+  }
+
+  function openByokModal(editId = 0) {
+    const dlg = $("#userUpstreamDialog");
+    if (!dlg) return;
+    const items = Array.isArray(state.routerView?.upstreams) ? state.routerView.upstreams : [];
+    const target = editId > 0 ? items.find((x) => x.id === editId) : null;
+
+    if ($("#userUpstreamDialogTitle")) {
+      $("#userUpstreamDialogTitle").textContent = target ? `编辑个人渠道 · ${target.name}` : "添加个人自带渠道 (BYOK)";
+    }
+    if ($("#byokEditId")) $("#byokEditId").value = target ? String(target.id) : "0";
+    if ($("#byokName")) $("#byokName").value = target ? target.name : "";
+    if ($("#byokType")) $("#byokType").value = target ? target.type : "openai";
+    if ($("#byokBaseURL")) $("#byokBaseURL").value = target ? target.base_url : "";
+    if ($("#byokApiKey")) $("#byokApiKey").value = "";
+    if ($("#byokKeyHint")) {
+      $("#byokKeyHint").textContent = target
+        ? `已保存密钥 (${target.key_masked || "sk-***"})；留空则保留原密钥`
+        : "填写该渠道的 API 密钥（仅加密/掩码存储）";
+    }
+    if ($("#byokModels")) $("#byokModels").value = target ? (target.models || []).join(", ") : "";
+    if ($("#byokPriority")) $("#byokPriority").value = target ? String(target.priority) : "10";
+    if ($("#byokWeight")) $("#byokWeight").value = target ? String(target.weight) : "1";
+    if ($("#byokModelMap")) {
+      $("#byokModelMap").value = target && target.model_map && target.model_map !== "{}" ? target.model_map : "";
+    }
+    if ($("#byokProxyMode")) $("#byokProxyMode").value = target?.proxy_mode === "custom" ? "custom" : "default";
+    if ($("#byokProxyURL")) $("#byokProxyURL").value = target?.proxy_url || "";
+    if ($("#byokProxyUsername")) $("#byokProxyUsername").value = target?.proxy_username || "";
+    if ($("#byokProxyPassword")) $("#byokProxyPassword").value = "";
+    if ($("#byokClearProxyPassword")) $("#byokClearProxyPassword").checked = false;
+    if ($("#byokClearProxyPassRow")) {
+      $("#byokClearProxyPassRow").classList.toggle("hidden", !target?.proxy_password_saved);
+    }
+    if ($("#byokProxyPassHint")) {
+      $("#byokProxyPassHint").textContent = target?.proxy_password_saved
+        ? "已保存代理密码；留空则保留原密码"
+        : "";
+    }
+    if ($("#byokProxyDefaultHint")) {
+      $("#byokProxyDefaultHint").textContent = "「系统默认」自动跟随管理员设置的默认出口（直连或站点绑定代理）；若选择「自定义代理」，则由服务器直接连接你提供的代理，不会再经过管理员配置的代理。";
+    }
+    syncByokProxyModeVisibility();
+    if ($("#byokEnabled")) $("#byokEnabled").checked = target ? Boolean(target.enabled) : true;
+    $("#byokProbeResult")?.classList.add("hidden");
+    dlg.showModal();
+  }
+
+  function syncByokProxyModeVisibility() {
+    const mode = $("#byokProxyMode")?.value || "default";
+    $("#byokCustomProxyWrap")?.classList.toggle("hidden", mode !== "custom");
+  }
+
+  async function probeByokModels() {
+    const btn = $("#probeByokBtn");
+    const note = $("#byokProbeResult");
+    const editId = Number($("#byokEditId")?.value || 0);
+    const type = $("#byokType")?.value || "openai";
+    const base_url = ($("#byokBaseURL")?.value || "").trim();
+    const api_key = ($("#byokApiKey")?.value || "").trim();
+    const proxy_mode = $("#byokProxyMode")?.value || "default";
+    const proxy_url = ($("#byokProxyURL")?.value || "").trim();
+    const proxy_username = ($("#byokProxyUsername")?.value || "").trim();
+    const proxy_password = $("#byokProxyPassword")?.value || "";
+
+    if (!base_url) {
+      toast("请先填写渠道 Base URL");
+      return;
+    }
+    if (btn) btn.disabled = true;
+    if (note) {
+      note.textContent = "正在连接渠道探测模型列表…";
+      note.classList.remove("hidden");
+    }
+    try {
+      const res = await fetch("/api/user/upstreams/probe", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-APIShare-Request": "user-console",
+        },
+        body: JSON.stringify({ id: editId, type, base_url, api_key, proxy_mode, proxy_url, proxy_username, proxy_password }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        if (note) note.textContent = `探测失败: ${data.error || "连接异常"}`;
+        return;
+      }
+      const models = Array.isArray(data.models) ? data.models : [];
+      if (note) note.textContent = `连接成功 (${data.latency_ms || 0} ms) · 共发现 ${models.length} 个模型，已填入下方列表`;
+      if (models.length && $("#byokModels")) {
+        $("#byokModels").value = models.join(", ");
+      }
+    } catch {
+      if (note) note.textContent = "网络异常，探测失败";
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function saveByokUpstream(e) {
+    if (e) e.preventDefault();
+    const editId = Number($("#byokEditId")?.value || 0);
+    const payload = {
+      name: ($("#byokName")?.value || "").trim(),
+      type: $("#byokType")?.value || "openai",
+      base_url: ($("#byokBaseURL")?.value || "").trim(),
+      api_key: ($("#byokApiKey")?.value || "").trim(),
+      models: ($("#byokModels")?.value || "").trim(),
+      priority: Number($("#byokPriority")?.value || 10),
+      weight: Number($("#byokWeight")?.value || 1),
+      model_map: ($("#byokModelMap")?.value || "").trim(),
+      proxy_mode: $("#byokProxyMode")?.value || "default",
+      proxy_url: ($("#byokProxyURL")?.value || "").trim(),
+      proxy_username: ($("#byokProxyUsername")?.value || "").trim(),
+      proxy_password: $("#byokProxyPassword")?.value || "",
+      clear_proxy_password: Boolean($("#byokClearProxyPassword")?.checked),
+      enabled: Boolean($("#byokEnabled")?.checked),
+    };
+    const btn = $("#saveByokBtn");
+    if (btn) btn.disabled = true;
+    try {
+      const url = editId > 0 ? `/api/user/upstreams/${editId}` : "/api/user/upstreams";
+      const method = editId > 0 ? "PUT" : "POST";
+      const res = await fetch(url, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          "X-APIShare-Request": "user-console",
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast(data.error || "保存个人渠道失败");
+        return;
+      }
+      $("#userUpstreamDialog")?.close();
+      await loadUserRouterAndByok();
+      toast(editId > 0 ? "个人渠道已更新" : "个人渠道已添加");
+    } catch {
+      toast("网络异常，保存渠道失败");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function toggleByokUpstream(id) {
+    const items = Array.isArray(state.routerView?.upstreams) ? state.routerView.upstreams : [];
+    const target = items.find((x) => x.id === id);
+    if (!target) return;
+    try {
+      const res = await fetch(`/api/user/upstreams/${id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "X-APIShare-Request": "user-console",
+        },
+        body: JSON.stringify({ enabled: !target.enabled }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast(data.error || "更新状态失败");
+        return;
+      }
+      await loadUserRouterAndByok();
+      toast(!target.enabled ? "已启用渠道" : "已停用渠道");
+    } catch {
+      toast("网络异常，操作失败");
+    }
+  }
+
+  async function deleteByokUpstream(id) {
+    const items = Array.isArray(state.routerView?.upstreams) ? state.routerView.upstreams : [];
+    const target = items.find((x) => x.id === id);
+    if (!target) return;
+    if (!window.confirm(`确认删除个人渠道「${target.name}」吗？`)) return;
+    try {
+      const res = await fetch(`/api/user/upstreams/${id}`, {
+        method: "DELETE",
+        headers: { "X-APIShare-Request": "user-console" },
+      });
+      if (!res.ok) {
+        toast("删除个人渠道失败");
+        return;
+      }
+      await loadUserRouterAndByok();
+      toast("个人渠道已删除");
+    } catch {
+      toast("网络异常，删除失败");
+    }
+  }
+
+  function renderUserRouterPanel() {
+    const v = state.routerView;
+    if (!v) return;
+
+    const badge = $("#userRouterStatusBadge");
+    if (badge) {
+      if (!v.allow_user_auto_router) {
+        badge.textContent = "站点已禁用";
+        badge.className = "status-pill off";
+      } else if (v.enabled) {
+        badge.textContent = `运行中 · ${v.virtual_model || "my-auto"}`;
+        badge.className = "status-pill on";
+      } else {
+        badge.textContent = "未启用";
+        badge.className = "status-pill off";
+      }
+    }
+
+    if ($("#userRouterEnabled")) $("#userRouterEnabled").checked = Boolean(v.enabled);
+    if ($("#userRouterVirtualModel")) $("#userRouterVirtualModel").value = v.virtual_model || "my-auto";
+    if ($("#siteVirtualModelCode")) $("#siteVirtualModelCode").textContent = v.site_virtual_model || "auto";
+    if ($("#userRouterChannelPref")) $("#userRouterChannelPref").value = v.channel_preference || "personal_first";
+    if ($("#userRouterDefaultModel")) $("#userRouterDefaultModel").value = v.default_model || "";
+
+    // Populate shared classifier models dropdown
+    const sharedSelect = $("#userSharedClassifierModel");
+    const sharedList = Array.isArray(v.shared_classifier_models) ? v.shared_classifier_models : [];
+    if (sharedSelect) {
+      if (!sharedList.length) {
+        sharedSelect.innerHTML = `<option value="">（站点暂未开放共享决策模型，请选择本地打分或自带渠道）</option>`;
+      } else {
+        sharedSelect.innerHTML = sharedList.map((item) => `<option value="${esc(item.id)}">${esc(item.label)}</option>`).join("");
+        if (v.shared_classifier_model) sharedSelect.value = v.shared_classifier_model;
+      }
+    }
+
+    // Populate user BYOK upstreams select for classifier
+    const upSelect = $("#userClassifierUpstreamSelect");
+    const ups = Array.isArray(v.upstreams) ? v.upstreams : [];
+    if (upSelect) {
+      upSelect.innerHTML = `<option value="0">自动选择包含该模型的自带渠道</option>`
+        + ups.map((u) => `<option value="${u.id}">${esc(u.name)} (${esc(u.type)})</option>`).join("");
+      upSelect.value = String(v.user_classifier_upstream || 0);
+    }
+
+    if ($("#userClassifierSource")) $("#userClassifierSource").value = v.classifier_source || "heuristic";
+    if ($("#userUpstreamClassifierModel")) $("#userUpstreamClassifierModel").value = v.user_classifier_model || "";
+    if ($("#userExternalClassifierProvider")) $("#userExternalClassifierProvider").value = v.user_classifier_provider || "cloudflare";
+    if ($("#userExternalClassifierModel")) $("#userExternalClassifierModel").value = v.user_classifier_model || "";
+    if ($("#userExternalCfAccount")) $("#userExternalCfAccount").value = v.user_cloudflare_account_id || "";
+    if ($("#userExternalEndpoint")) $("#userExternalEndpoint").value = v.user_classifier_endpoint || "";
+    if ($("#userExternalApiKey")) $("#userExternalApiKey").value = "";
+    if ($("#userExternalKeyHint")) {
+      $("#userExternalKeyHint").textContent = v.user_classifier_api_key_saved
+        ? `已保存外部决策密钥 (${v.user_classifier_api_key_masked || "***"})；留空保留原密钥`
+        : "仅用于你的私人路由分档请求";
+    }
+
+    // Populate datalists
+    const personalModels = Array.isArray(v.personal_models) ? v.personal_models : [];
+    const siteModels = Array.isArray(v.site_models) ? v.site_models : [];
+    const allModels = Array.from(new Set([...personalModels, ...siteModels]));
+    if ($("#userPersonalModelsList")) {
+      $("#userPersonalModelsList").innerHTML = personalModels.map((m) => `<option value="${esc(m)}"></option>`).join("");
+    }
+    if ($("#userAllCandidateModelsList")) {
+      $("#userAllCandidateModelsList").innerHTML = allModels.map((m) => `<option value="${esc(m)}"></option>`).join("");
+    }
+
+    syncUserClassifierVisibility();
+    renderUserTiersEditor();
+  }
+
+  function syncUserClassifierVisibility() {
+    const src = $("#userClassifierSource")?.value || "heuristic";
+    $("#userSharedClassifierWrap")?.classList.toggle("hidden", src !== "gateway_shared");
+    $("#userUpstreamClassifierWrap")?.classList.toggle("hidden", src !== "user_upstream");
+    $("#userExternalClassifierWrap")?.classList.toggle("hidden", src !== "user_external");
+    const extProvider = $("#userExternalClassifierProvider")?.value || "cloudflare";
+    $("#userExternalCfAccountField")?.classList.toggle("hidden", extProvider !== "cloudflare");
+  }
+
+  function sourceBadgeForCandidate(model) {
+    const v = state.routerView;
+    const st = v?.candidate_status?.[model];
+    const personalSet = new Set(v?.personal_models || []);
+    const siteSet = new Set(v?.site_models || []);
+    const inByok = st ? st.in_byok : personalSet.has(model);
+    const inSite = st ? st.in_site : siteSet.has(model);
+
+    if (inByok && inSite) {
+      return `<span class="user-source-pill both" title="同时存在于你的自带渠道与站点授权模型">自带+站点双备</span>`;
+    }
+    if (inByok) {
+      return `<span class="user-source-pill byok" title="来自你的自带渠道，调用不扣站点额度">我的渠道 · 免额度</span>`;
+    }
+    if (inSite) {
+      if (st?.site_exhausted) {
+        return `<span class="user-source-pill warn" title="站点该模型额度已耗尽(402)，路由时将自动跳过">站点 · 402耗尽</span>`;
+      }
+      return `<span class="user-source-pill site" title="来自站点公共渠道，按密钥额度计费">站点模型</span>`;
+    }
+    return `<span class="user-source-pill warn" title="当前未在自带渠道或密钥授权模型中找到">未绑定来源</span>`;
+  }
+
+  function renderUserTiersEditor() {
+    const host = $("#userTiersEditor");
+    if (!host) return;
+    const personalModels = Array.isArray(state.routerView?.personal_models) ? state.routerView.personal_models : [];
+    const siteModels = Array.isArray(state.routerView?.site_models) ? state.routerView.site_models : [];
+
+    host.innerHTML = USER_TIER_META.map(({ id, title }) => {
+      const list = state.routerTiers[id] || [];
+      const rowsHTML = list.length
+        ? list.map((m, idx) => `<div class="user-cand-row">
+            <div class="user-cand-left">
+              <span class="user-cand-rank">#${idx + 1}</span>
+              <span class="user-cand-name" title="${esc(m)}">${esc(m)}</span>
+              ${sourceBadgeForCandidate(m)}
+            </div>
+            <div class="user-cand-btns">
+              <button type="button" data-tier-move="${id}" data-idx="${idx}" data-dir="-1" ${idx === 0 ? "disabled" : ""} title="上移优先级">↑</button>
+              <button type="button" data-tier-move="${id}" data-idx="${idx}" data-dir="1" ${idx === list.length - 1 ? "disabled" : ""} title="下移优先级">↓</button>
+              <button type="button" data-tier-del="${id}" data-idx="${idx}" title="移除">×</button>
+            </div>
+          </div>`).join("")
+        : `<div class="muted" style="font-size:11px;padding:6px 2px">暂无候选模型，命中本档时将顺延下一档或默认模型</div>`;
+
+      const unusedPersonal = personalModels.filter((m) => !list.includes(m));
+      const unusedSite = siteModels.filter((m) => !list.includes(m));
+      let optGroups = `<option value="">+ 选择自带模型或站点模型加入本档…</option>`;
+      if (unusedPersonal.length) {
+        optGroups += `<optgroup label="我的自带渠道模型 (免站点额度)">`
+          + unusedPersonal.map((m) => `<option value="${esc(m)}">[我的渠道] ${esc(m)}</option>`).join("")
+          + `</optgroup>`;
+      }
+      if (unusedSite.length) {
+        optGroups += `<optgroup label="站点已授权模型">`
+          + unusedSite.map((m) => `<option value="${esc(m)}">[站点模型] ${esc(m)}</option>`).join("")
+          + `</optgroup>`;
+      }
+
+      return `<div class="user-tier-card" data-user-tier="${id}">
+        <div class="user-tier-head">
+          <span class="user-tier-badge ${id}">${esc(title)}</span>
+          <small class="muted">${list.length} 个候选</small>
+        </div>
+        <div class="user-cand-list">${rowsHTML}</div>
+        <div class="user-tier-add">
+          <select data-tier-select="${id}" aria-label="向 ${id} 添加候选模型">${optGroups}</select>
+          <input type="text" data-tier-input="${id}" list="userAllCandidateModelsList" placeholder="或手动输入模型名回车…">
+          <button type="button" class="btn ghost mini" data-tier-add-btn="${id}">添加</button>
+        </div>
+      </div>`;
+    }).join("");
+
+    $$("[data-tier-move]", host).forEach((btn) => {
+      btn.addEventListener("click", () => {
+        moveUserTierModel(btn.dataset.tierMove, Number(btn.dataset.idx), Number(btn.dataset.dir));
+      });
+    });
+    $$("[data-tier-del]", host).forEach((btn) => {
+      btn.addEventListener("click", () => {
+        removeUserTierModel(btn.dataset.tierDel, Number(btn.dataset.idx));
+      });
+    });
+    $$("[data-tier-select]", host).forEach((sel) => {
+      sel.addEventListener("change", () => {
+        if (sel.value) {
+          addUserTierModel(sel.dataset.tierSelect, sel.value);
+          sel.value = "";
+        }
+      });
+    });
+    $$("[data-tier-input]", host).forEach((inp) => {
+      inp.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (inp.value.trim()) {
+            addUserTierModel(inp.dataset.tierInput, inp.value.trim());
+            inp.value = "";
+          }
+        }
+      });
+    });
+    $$("[data-tier-add-btn]", host).forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const t = btn.dataset.tierAddBtn;
+        const inp = $(`[data-tier-input='${t}']`, host);
+        if (inp && inp.value.trim()) {
+          addUserTierModel(t, inp.value.trim());
+          inp.value = "";
+        }
+      });
+    });
+  }
+
+  function addUserTierModel(tier, rawModel) {
+    const vm = ($("#userRouterVirtualModel")?.value || "my-auto").trim();
+    const siteVM = state.routerView?.site_virtual_model || "auto";
+    const list = state.routerTiers[tier] || [];
+    const parts = String(rawModel || "").split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean);
+    parts.forEach((m) => {
+      if (m.toLowerCase() === vm.toLowerCase() || m.toLowerCase() === siteVM.toLowerCase()) {
+        toast(`候选模型不能包含路由虚拟模型 (${m})`);
+        return;
+      }
+      if (!list.includes(m)) list.push(m);
+    });
+    state.routerTiers[tier] = list;
+    renderUserTiersEditor();
+  }
+
+  function moveUserTierModel(tier, idx, dir) {
+    const list = state.routerTiers[tier] || [];
+    const target = idx + dir;
+    if (target < 0 || target >= list.length) return;
+    const tmp = list[idx];
+    list[idx] = list[target];
+    list[target] = tmp;
+    renderUserTiersEditor();
+  }
+
+  function removeUserTierModel(tier, idx) {
+    const list = state.routerTiers[tier] || [];
+    list.splice(idx, 1);
+    renderUserTiersEditor();
+  }
+
+  function autoFillUserTiers() {
+    const personalModels = Array.isArray(state.routerView?.personal_models) ? state.routerView.personal_models : [];
+    const siteModels = Array.isArray(state.routerView?.site_models) ? state.routerView.site_models : [];
+    const pool = Array.from(new Set([...personalModels, ...siteModels]));
+    if (!pool.length) {
+      toast("请先添加个人自带渠道或联系管理员绑定站点模型");
+      return;
+    }
+    const fast = pool.filter((m) => /flash|mini|haiku|lite|turbo|instant|nano/i.test(m));
+    const reason = pool.filter((m) => /reasoner|r1|o1|o3|o4|thinking|grok-4|opus/i.test(m));
+    const strong = pool.filter((m) => !fast.includes(m));
+
+    state.routerTiers.SIMPLE = (fast.length ? fast : pool).slice(0, 3);
+    state.routerTiers.MEDIUM = (fast.length ? [...fast, ...strong] : pool).slice(0, 3);
+    state.routerTiers.COMPLEX = (strong.length ? strong : pool).slice(0, 3);
+    state.routerTiers.REASONING = (reason.length ? reason : (strong.length ? strong : pool)).slice(0, 2);
+    if ($("#userRouterDefaultModel") && !$("#userRouterDefaultModel").value.trim()) {
+      $("#userRouterDefaultModel").value = state.routerTiers.COMPLEX[0] || pool[0] || "";
+    }
+    renderUserTiersEditor();
+    toast("已按模型特征自动排布四档候选，请点击「保存路由策略」生效");
+  }
+
+  function collectUserRouterPayload() {
+    const src = $("#userClassifierSource")?.value || "heuristic";
+    const classifierModel = src === "user_upstream"
+      ? ($("#userUpstreamClassifierModel")?.value || "").trim()
+      : ($("#userExternalClassifierModel")?.value || "").trim();
+
+    return {
+      enabled: Boolean($("#userRouterEnabled")?.checked),
+      virtual_model: ($("#userRouterVirtualModel")?.value || "my-auto").trim(),
+      channel_preference: $("#userRouterChannelPref")?.value || "personal_first",
+      default_model: ($("#userRouterDefaultModel")?.value || "").trim(),
+      classifier_source: src,
+      shared_classifier_model: $("#userSharedClassifierModel")?.value || "",
+      user_classifier_upstream: Number($("#userClassifierUpstreamSelect")?.value || 0),
+      user_classifier_provider: $("#userExternalClassifierProvider")?.value || "cloudflare",
+      user_classifier_model: classifierModel,
+      user_cloudflare_account_id: ($("#userExternalCfAccount")?.value || "").trim(),
+      user_classifier_endpoint: ($("#userExternalEndpoint")?.value || "").trim(),
+      user_classifier_api_key: ($("#userExternalApiKey")?.value || "").trim(),
+      tiers: state.routerTiers,
+    };
+  }
+
+  async function saveUserRouter() {
+    const btn = $("#saveUserRouterBtn");
+    const payload = collectUserRouterPayload();
+    const siteVM = state.routerView?.site_virtual_model || "auto";
+    if (payload.virtual_model.toLowerCase() === siteVM.toLowerCase() || payload.virtual_model.toLowerCase() === "auto") {
+      toast(`私人路由模型名不能与站点公共模型 (${siteVM}) 同名，请修改为其它名称`);
+      return;
+    }
+    if (btn) btn.disabled = true;
+    try {
+      const res = await fetch("/api/user/auto-router", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "X-APIShare-Request": "user-console",
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast(data.error || "保存私人路由策略失败");
+        return;
+      }
+      applyUserRouterView(data);
+      toast(`私人智能路由 (${data.virtual_model}) 已保存生效`);
+    } catch {
+      toast("网络异常，保存私人路由策略失败");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function runUserDryRun() {
+    const prompt = ($("#userDryRunPrompt")?.value || "").trim();
+    const out = $("#userDryRunResult");
+    const btn = $("#userDryRunBtn");
+    if (!prompt) {
+      toast("请输入要测试的提问内容");
+      return;
+    }
+    if (btn) btn.disabled = true;
+    if (out) {
+      out.textContent = "正在试算分档与选模链路…";
+      out.classList.remove("hidden");
+    }
+    try {
+      const override = collectUserRouterPayload();
+      const res = await fetch("/api/user/auto-router/dry-run", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-APIShare-Request": "user-console",
+        },
+        body: JSON.stringify({ prompt, override }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (out) out.textContent = `试算失败: ${data.error || "参数错误"}`;
+        return;
+      }
+      const dec = data.decision || {};
+      const steps = Array.isArray(dec.steps) ? dec.steps : [];
+      const stepsHTML = steps.length
+        ? steps.map((s) => {
+            const stText = s.status === "selected"
+              ? `<strong style="color:var(--green)">✓ 选中 #${s.priority} (${esc(s.upstream_name || "")})</strong>`
+              : s.status === "standby"
+              ? `<span class="muted">顺位备选 #${s.priority} (${esc(s.upstream_name || "")})</span>`
+              : `<span style="color:var(--red)">跳过 #${s.priority} (${esc(s.reason || "不可用")})</span>`;
+            return `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px dashed var(--border)">
+              <span><code>[${esc(s.source_tier)}]</code> <strong>${esc(s.model)}</strong></span>
+              ${stText}
+            </div>`;
+          }).join("")
+        : `<div class="muted">当前档位未找到可用候选模型${data.quota_error ? ` (${esc(data.quota_error)})` : ""}</div>`;
+
+      if (out) {
+        out.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+          <div>
+            <span>判定档位: <span class="user-tier-badge ${esc(dec.tier || "DEFAULT")}">${esc(dec.tier || "DEFAULT")}</span></span>
+            <span style="margin-left:8px">最终命中模型: <strong><code>${esc(dec.selected_model || "无可用模型")}</code></strong></span>
+          </div>
+          <span class="muted">分类器: <code>${esc(dec.cause || "heuristic")}</code></span>
+        </div>
+        <div>${stepsHTML}</div>`;
+      }
+    } catch {
+      if (out) out.textContent = "网络异常，试算失败";
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function copyUserRouterCommand() {
+    const vm = ($("#userRouterVirtualModel")?.value || state.routerView?.virtual_model || "my-auto").trim();
+    const keyText = state.dash?.key?.key || "sk-YOUR_API_KEY";
+    const origin = window.location.origin;
+    const cmd = [
+      `curl ${origin}/v1/chat/completions \\`,
+      `  -H "Authorization: Bearer ${keyText}" \\`,
+      `  -H "Content-Type: application/json" \\`,
+      `  -d '{"model":"${vm}","messages":[{"role":"user","content":"Hello!"}]}'`,
+    ].join("\n");
+    copyText(cmd, `已复制私人路由模型 (${vm}) 调用示例`);
+  }
+
   function bindEvents() {
     $("#toggleKeyBtn")?.addEventListener("click", () => {
       state.keyVisible = !state.keyVisible;
@@ -581,11 +1275,35 @@
 
     $("#refreshBtn")?.addEventListener("click", async () => {
       const ok = await loadDashboard();
-      if (ok) await loadUserLogs();
+      if (ok) {
+        await Promise.all([loadUserLogs(), loadUserRouterAndByok()]);
+      }
       toast("控制台数据已刷新");
     });
 
     $("#logoutBtn")?.addEventListener("click", logoutUser);
+
+    // BYOK & Personal Router events
+    $("#addByokBtn")?.addEventListener("click", () => openByokModal(0));
+    $("#closeUserUpstreamDialog")?.addEventListener("click", () => $("#userUpstreamDialog")?.close());
+    $("#cancelByokBtn")?.addEventListener("click", () => $("#userUpstreamDialog")?.close());
+    $("#byokProxyMode")?.addEventListener("change", syncByokProxyModeVisibility);
+    $("#probeByokBtn")?.addEventListener("click", probeByokModels);
+    $("#userUpstreamForm")?.addEventListener("submit", saveByokUpstream);
+    $("#userClassifierSource")?.addEventListener("change", syncUserClassifierVisibility);
+    $("#userExternalClassifierProvider")?.addEventListener("change", syncUserClassifierVisibility);
+    $("#autoFillUserTiersBtn")?.addEventListener("click", autoFillUserTiers);
+    $("#saveUserRouterBtn")?.addEventListener("click", saveUserRouter);
+    $("#copyUserRouterCmdBtn")?.addEventListener("click", copyUserRouterCommand);
+    $("#userDryRunBtn")?.addEventListener("click", runUserDryRun);
+    $$("[data-user-sample]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if ($("#userDryRunPrompt")) {
+          $("#userDryRunPrompt").value = btn.dataset.userSample || "";
+          runUserDryRun();
+        }
+      });
+    });
 
     let searchTimer = 0;
     $("#userLogSearch")?.addEventListener("input", (e) => {
@@ -619,7 +1337,7 @@
     loadBranding();
     const ok = await loadDashboard();
     if (ok) {
-      await loadUserLogs();
+      await Promise.all([loadUserLogs(), loadUserRouterAndByok()]);
     }
   }
 

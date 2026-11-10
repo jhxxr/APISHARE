@@ -36,6 +36,22 @@ function renderProxyOptions(selected = Number($("editProxy").value || 0)) {
   if (selected && !proxiesCache.some((item) => item.id === selected)) field.add(new Option("代理 #" + selected + "（不可用）", String(selected)));
   field.value = String(selected);
   updateProxyHint();
+  renderXAuthDefaultProxyOptions();
+}
+function renderXAuthDefaultProxyOptions(selected) {
+  const field = $("setXAuthUserDefaultProxy");
+  if (!field) return;
+  const current = selected !== undefined ? Number(selected || 0) : Number(field.value || 0);
+  field.replaceChildren(new Option("不设置默认代理（默认直接走服务器网络）", "0"));
+  proxiesCache.forEach((proxy) => {
+    const option = new Option(proxyName(proxy) + " · " + proxy.url.split(":")[0].toUpperCase() + (proxy.enabled ? "" : "（已停用）"), String(proxy.id));
+    option.disabled = !proxy.enabled;
+    field.add(option);
+  });
+  if (current && !proxiesCache.some((item) => item.id === current)) {
+    field.add(new Option("代理 #" + current + "（不可用）", String(current)));
+  }
+  field.value = String(current);
 }
 function updateProxyHint() {
   const id = Number($("editProxy").value), proxy = proxiesCache.find((item) => item.id === id);

@@ -1,0 +1,794 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+)
+
+func setupAutoRouterTestDB(t *testing.T) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	if err := openDB(filepath.Join(t.TempDir(), "auto_router_test.db")); err != nil {
+		t.Fatalf("openDB: %v", err)
+	}
+	t.Cleanup(func() {
+		if db != nil {
+			_ = db.Close()
+		}
+	})
+	if err := loadSettingsCache(); err != nil {
+		t.Fatalf("loadSettingsCache: %v", err)
+	}
+	if err := loadAutoRouterCache(); err != nil {
+		t.Fatalf("loadAutoRouterCache: %v", err)
+	}
+	if err := bootstrapAdmin(); err != nil {
+		t.Fatalf("bootstrapAdmin: %v", err)
+	}
+	resetAutoRouterBreaker()
+}
+
+func TestAutoRouterHeuristicAndShortCircuit(t *testing.T) {
+	setupAutoRouterTestDB(t)
+
+	// 1. Short simple question -> short-circuit SIMPLE
+	crSimple := &canonReq{
+		Model: "auto",
+		Messages: []canonMsg{
+			{Role: "user", Text: "把 hello world 翻译成中文"},
+		},
+	}
+	lastSimple, _ := extractClassifierState(crSimple, 2, 6000)
+	if !shouldShortCircuitSimple(lastSimple, 60) {
+		t.Fatalf("expected short prompt to short-circuit to SIMPLE")
+	}
+
+	// 2. Code snippet with fence -> at least MEDIUM, not short-circuited
+	crCode := &canonReq{
+		Model: "auto",
+		Messages: []canonMsg{
+			{Role: "user", Text: "帮我看看这段代码：\n```go\nfunc add(a, b int) int { return a + b }\n```"},
+		},
+	}
+	lastCode, stateCode := extractClassifierState(crCode, 2, 6000)
+	if shouldShortCircuitSimple(lastCode, 60) {
+		t.Fatalf("expected fenced code prompt NOT to short-circuit to SIMPLE")
+	}
+	tierCode, _ := classifyHeuristic(lastCode, stateCode, crCode)
+	if tierCode == TierSimple {
+		t.Fatalf("expected code prompt heuristic tier >= MEDIUM, got %s", tierCode)
+	}
+
+	// 3. Multi-file architecture refactor -> COMPLEX
+	crComplex := &canonReq{
+		Model: "auto",
+		Messages: []canonMsg{
+			{Role: "user", Text: "请帮我重构一个跨多文件的微服务架构，排查 deadlock 并发死锁与 race condition 根因，并给出完整工程迁移方案。\n```go\npackage main\n```"},
+		},
+	}
+	lastComplex, stateComplex := extractClassifierState(crComplex, 2, 6000)
+	tierComplex, _ := classifyHeuristic(lastComplex, stateComplex, crComplex)
+	if tierComplex != TierComplex && tierComplex != TierReasoning {
+		t.Fatalf("expected COMPLEX or REASONING for multi-file refactor, got %s", tierComplex)
+	}
+
+	// 4. Mathematical proof / derivation -> REASONING
+	crReason := &canonReq{
+		Model: "auto",
+		Messages: []canonMsg{
+			{Role: "user", Text: "请用数学归纳法严格证明该定理（theorem proof step by step derivation），并分析动态规划状态转移方程的时间复杂度下界。"},
+		},
+	}
+	lastReason, stateReason := extractClassifierState(crReason, 2, 6000)
+	tierReason, _ := classifyHeuristic(lastReason, stateReason, crReason)
+	if tierReason != TierReasoning {
+		t.Fatalf("expected REASONING for mathematical proof, got %s", tierReason)
+	}
+
+	// 5. Housekeeping detection
+	crHouse := &canonReq{
+		Model:  "auto",
+		System: "Generate a concise 3-5 word title for this conversation.",
+		Messages: []canonMsg{
+			{Role: "user", Text: "Here is a long conversation transcript..."},
+		},
+	}
+	lastHouse, _ := extractClassifierState(crHouse, 2, 6000)
+	if !isHousekeepingRequest(crHouse, lastHouse) {
+		t.Fatalf("expected title generation prompt to be detected as housekeeping")
+	}
+}
+
+func TestAutoRouterMultiClassifierProtocolsAndLowConfidence(t *testing.T) {
+	setupAutoRouterTestDB(t)
+
+	var receivedBody map[string]any
+	clefServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(data, &receivedBody)
+		w.Header().Set("Content-Type", "application/json")
+		// Return Cloudflare Workers AI / SystemOne wrapped response with probabilities
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"result": map[string]any{
+				"answers": map[string]any{
+					"tier": map[string]any{
+						"choice": "COMPLEX",
+						"probabilities": map[string]float64{
+							"SIMPLE":    0.05,
+							"MEDIUM":    0.12,
+							"COMPLEX":   0.76,
+							"REASONING": 0.07,
+						},
+					},
+				},
+			},
+		})
+	}))
+	defer clefServer.Close()
+
+	cfg := defaultAutoRouterConfig()
+	cfg.Enabled = true
+	cfg.Mode = "live"
+	cfg.Classifier = "systemone"
+	cfg.ClassifierModel = "clef-flash"
+	cfg.EndpointURL = clefServer.URL
+	cfg.MinConfidence = 0.55
+
+	res, err := classifyWithDecisionModel(context.Background(), cfg, "请写一段多文件架构分析与调试方案", true)
+	if err != nil {
+		t.Fatalf("classifyWithDecisionModel error: %v", err)
+	}
+	// Highest tier >= 0.55 is COMPLEX (0.76 >= 0.55, whereas REASONING is 0.12 < 0.55)
+	if res.Tier != TierComplex {
+		t.Fatalf("expected TierComplex from probability vector, got %s (probs=%v)", res.Tier, res.Probabilities)
+	}
+	if receivedBody["state"] == nil || receivedBody["questions"] == nil {
+		t.Fatalf("expected SystemOne/Clef format with state and questions, got %v", receivedBody)
+	}
+
+	// Test low-confidence upgrade: when all probabilities are < 0.55 and argmax is SIMPLE
+	lowConfResp := []byte(`{"probabilities":{"SIMPLE":0.42,"MEDIUM":0.38,"COMPLEX":0.30,"REASONING":0.10}}`)
+	parsedLow, err := parseDecisionClassifierResponse(lowConfResp, 0.55)
+	if err != nil {
+		t.Fatalf("parseDecisionClassifierResponse failed: %v", err)
+	}
+	if parsedLow.Tier != TierComplex || !parsedLow.UpgradedLowConfidence {
+		t.Fatalf("expected low-confidence fast tier to upgrade to COMPLEX, got tier=%s upgraded=%v", parsedLow.Tier, parsedLow.UpgradedLowConfidence)
+	}
+}
+
+func TestAutoRouterPriorityCandidatesSkipQuotaAndFailover(t *testing.T) {
+	setupAutoRouterTestDB(t)
+
+	var dsFlashCalls, glmFlashCalls, grokCalls int32
+
+	// Upstream 1: serves deepseek-v4.1-flash and glm-5.3-flash, but deepseek-v4.1-flash returns 502!
+	fastUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var payload map[string]any
+		_ = json.Unmarshal(body, &payload)
+		model, _ := payload["model"].(string)
+		switch model {
+		case "deepseek-v4.1-flash":
+			atomic.AddInt32(&dsFlashCalls, 1)
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"error":{"message":"upstream 502"}}`))
+		case "glm-5.3-flash":
+			atomic.AddInt32(&glmFlashCalls, 1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"chatcmpl-glm","object":"chat.completion","model":"glm-5.3-flash","choices":[{"index":0,"message":{"role":"assistant","content":"reply from glm-5.3-flash"},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":8,"total_tokens":20}}`))
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer fastUpstream.Close()
+
+	// Upstream 2: serves grok-4.7
+	strongUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&grokCalls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-grok","object":"chat.completion","model":"grok-4.7","choices":[{"index":0,"message":{"role":"assistant","content":"reply from grok-4.7"},"finish_reason":"stop"}],"usage":{"prompt_tokens":15,"completion_tokens":10,"total_tokens":25}}`))
+	}))
+	defer strongUpstream.Close()
+
+	if err := dbInsertUpstream(&Upstream{
+		Name:           "fast-pool",
+		Type:           "openai",
+		OpenAIProtocol: "chat",
+		BaseURL:        fastUpstream.URL,
+		APIKey:         "sk-fast",
+		Models:         "deepseek-v4.1-flash,glm-5.3-flash,mimo-v2.6-flash",
+		Priority:       0,
+		Weight:         1,
+		Enabled:        true,
+	}); err != nil {
+		t.Fatalf("dbInsertUpstream fast: %v", err)
+	}
+	if err := dbInsertUpstream(&Upstream{
+		Name:           "strong-pool",
+		Type:           "openai",
+		OpenAIProtocol: "chat",
+		BaseURL:        strongUpstream.URL,
+		APIKey:         "sk-strong",
+		Models:         "grok-4.7",
+		Priority:       0,
+		Weight:         1,
+		Enabled:        true,
+	}); err != nil {
+		t.Fatalf("dbInsertUpstream strong: %v", err)
+	}
+	invalidateRoutingSnapshot()
+
+	cfg := defaultAutoRouterConfig()
+	cfg.Enabled = true
+	cfg.Mode = "live"
+	cfg.Classifier = "heuristic"
+	cfg.SkipShortChars = 60
+	cfg.Tiers[TierSimple] = []string{"mimo-v2.6-flash", "deepseek-v4.1-flash", "glm-5.3-flash"}
+	cfg.DefaultModel = "grok-4.7"
+	if err := saveAutoRouterConfig(cfg); err != nil {
+		t.Fatalf("saveAutoRouterConfig: %v", err)
+	}
+
+	// Create API Key with "auto" and "mimo-v2.6-flash", where mimo-v2.6-flash has exhausted its independent quota (402)!
+	rawKey := "sk-router-test-key-001"
+	ak := &ApiKey{
+		Name:        "router-user",
+		Key:         rawKey,
+		QPS:         50,
+		Concurrency: 10,
+		Models:      "auto,mimo-v2.6-flash",
+		QuotaUSD:    10.0,
+		Enabled:     true,
+		ModelQuotas: map[string]ModelQuota{
+			"mimo-v2.6-flash": {QuotaUSD: 1.0},
+		},
+	}
+	if err := dbInsertKey(ak); err != nil {
+		t.Fatalf("dbInsertKey: %v", err)
+	}
+	keyID := ak.ID
+	// Exhaust mimo-v2.6-flash independent quota (used 1.5 >= quota 1.0)
+	if err := dbChargeKey(keyID, "mimo-v2.6-flash", 1.5, true); err != nil {
+		t.Fatalf("dbChargeKey: %v", err)
+	}
+
+	router := newRouter()
+
+	// 1. Check GET /v1/models includes "auto"
+	reqModels := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	reqModels.Header.Set("Authorization", "Bearer "+rawKey)
+	wModels := httptest.NewRecorder()
+	router.ServeHTTP(wModels, reqModels)
+	if wModels.Code != http.StatusOK || !strings.Contains(wModels.Body.String(), `"id":"auto"`) {
+		t.Fatalf("expected /v1/models to expose virtual model auto, status=%d body=%s", wModels.Code, wModels.Body.String())
+	}
+
+	// 2. Send POST /v1/chat/completions with model="auto"
+	// Priority #1 (mimo-v2.6-flash) should be skipped at selection time due to 402 quota exhausted.
+	// Priority #2 (deepseek-v4.1-flash) should be attempted first, fail with 502, and failover to Priority #3 (glm-5.3-flash) which succeeds!
+	reqBody := `{"model":"auto","messages":[{"role":"user","content":"你好，帮我翻译 hello"}]}`
+	reqChat := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
+	reqChat.Header.Set("Authorization", "Bearer "+rawKey)
+	reqChat.Header.Set("Content-Type", "application/json")
+	wChat := httptest.NewRecorder()
+	router.ServeHTTP(wChat, reqChat)
+
+	if wChat.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK after priority failover, got %d: %s", wChat.Code, wChat.Body.String())
+	}
+	if gotTier := wChat.Header().Get("X-APISHARE-Router-Tier"); gotTier != TierSimple {
+		t.Fatalf("expected X-APISHARE-Router-Tier=SIMPLE, got %q", gotTier)
+	}
+	if gotModel := wChat.Header().Get("X-APISHARE-Router-Model"); gotModel != "glm-5.3-flash" {
+		t.Fatalf("expected X-APISHARE-Router-Model=glm-5.3-flash after failover, got %q", gotModel)
+	}
+	if atomic.LoadInt32(&dsFlashCalls) == 0 || atomic.LoadInt32(&glmFlashCalls) != 1 {
+		t.Fatalf("expected deepseek-v4.1-flash to be tried and failover to glm-5.3-flash, ds=%d glm=%d", dsFlashCalls, glmFlashCalls)
+	}
+
+	// 3. Verify call_logs recorded real model "glm-5.3-flash" and billing_json.router metadata
+	var loggedModel, billingJSON string
+	if err := db.QueryRow(`SELECT model, billing_json FROM call_logs ORDER BY id DESC LIMIT 1`).Scan(&loggedModel, &billingJSON); err != nil {
+		t.Fatalf("query call_logs: %v", err)
+	}
+	if loggedModel != "glm-5.3-flash" {
+		t.Fatalf("expected call_logs.model to be glm-5.3-flash, got %q", loggedModel)
+	}
+	if !strings.Contains(billingJSON, `"requested_model":"auto"`) || !strings.Contains(billingJSON, `"deepseek-v4.1-flash"`) {
+		t.Fatalf("expected billing_json to contain router metadata and fallbacks_tried, got %s", billingJSON)
+	}
+
+	// 3b. Verify final backup model (DefaultModel = "grok-4.7") when ALL models in the matched tier (SIMPLE) are down:
+	// Set SIMPLE to only ["mimo-v2.6-flash" (402 exhausted), "deepseek-v4.1-flash" (returns 502)] with CascadeTiers=false.
+	cfg.Tiers[TierSimple] = []string{"mimo-v2.6-flash", "deepseek-v4.1-flash"}
+	cfg.CascadeTiers = false
+	cfg.DefaultModel = "grok-4.7"
+	if err := saveAutoRouterConfig(cfg); err != nil {
+		t.Fatalf("saveAutoRouterConfig for final backup test: %v", err)
+	}
+	reqAllDown := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"auto","messages":[{"role":"user","content":"再帮我翻译一句 world"}]}`))
+	reqAllDown.Header.Set("Authorization", "Bearer "+rawKey)
+	reqAllDown.Header.Set("Content-Type", "application/json")
+	wAllDown := httptest.NewRecorder()
+	router.ServeHTTP(wAllDown, reqAllDown)
+	if wAllDown.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK after falling back to DefaultModel grok-4.7, got %d: %s", wAllDown.Code, wAllDown.Body.String())
+	}
+	if wAllDown.Header().Get("X-APISHARE-Router-Model") != "grok-4.7" || wAllDown.Header().Get("X-APISHARE-Router-Degraded") != "default" {
+		t.Fatalf("expected final fallback to grok-4.7 with X-APISHARE-Router-Degraded=default, got model=%q degraded=%q",
+			wAllDown.Header().Get("X-APISHARE-Router-Model"), wAllDown.Header().Get("X-APISHARE-Router-Degraded"))
+	}
+	var fallbackModel, fallbackBilling string
+	if err := db.QueryRow(`SELECT model, billing_json FROM call_logs ORDER BY id DESC LIMIT 1`).Scan(&fallbackModel, &fallbackBilling); err != nil {
+		t.Fatalf("query fallback call_log: %v", err)
+	}
+	if fallbackModel != "grok-4.7" ||
+		!strings.Contains(fallbackBilling, `"degraded_to_default":true`) ||
+		!strings.Contains(fallbackBilling, `"selected_source_tier":"DEFAULT"`) ||
+		!strings.Contains(fallbackBilling, `"mimo-v2.6-flash"`) ||
+		!strings.Contains(fallbackBilling, `"deepseek-v4.1-flash"`) {
+		t.Fatalf("expected call_log to record degraded_to_default=true, selected_source_tier=DEFAULT, and failed_models, got model=%q billing=%s",
+			fallbackModel, fallbackBilling)
+	}
+	// Restore SIMPLE tier for subsequent subtests
+	cfg.Tiers[TierSimple] = []string{"mimo-v2.6-flash", "deepseek-v4.1-flash", "glm-5.3-flash"}
+	cfg.CascadeTiers = true
+
+	// 4. Test Shadow mode: classifies as SIMPLE (glm-5.3-flash/deepseek-v4.1-flash), but actually forwards to default_model (grok-4.7)
+	cfg.Mode = "shadow"
+	if err := saveAutoRouterConfig(cfg); err != nil {
+		t.Fatalf("saveAutoRouterConfig shadow: %v", err)
+	}
+	reqShadow := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
+	reqShadow.Header.Set("Authorization", "Bearer "+rawKey)
+	reqShadow.Header.Set("Content-Type", "application/json")
+	wShadow := httptest.NewRecorder()
+	router.ServeHTTP(wShadow, reqShadow)
+
+	if wShadow.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK in shadow mode, got %d: %s", wShadow.Code, wShadow.Body.String())
+	}
+	if wShadow.Header().Get("X-APISHARE-Router-Shadow") != "1" {
+		t.Fatalf("expected X-APISHARE-Router-Shadow=1 header in shadow mode")
+	}
+	if wShadow.Header().Get("X-APISHARE-Router-Model") != "grok-4.7" {
+		t.Fatalf("expected actual model in shadow mode to be grok-4.7, got %q", wShadow.Header().Get("X-APISHARE-Router-Model"))
+	}
+	if wShadow.Header().Get("X-APISHARE-Router-Shadow-Model") != "deepseek-v4.1-flash" {
+		t.Fatalf("expected shadow would-be model to be deepseek-v4.1-flash (since mimo-v2.6-flash is 402 exhausted), got %q", wShadow.Header().Get("X-APISHARE-Router-Shadow-Model"))
+	}
+
+	// 5. Test Admin API endpoints (/api/auto-router/config, /api/auto-router/dry-run, /api/auto-router/stats)
+	adminToken := makeAdminToken()
+
+	reqDry := httptest.NewRequest(http.MethodPost, "/admin/api/auto-router/dry-run", bytes.NewBufferString(`{"prompt":"请用数学归纳法证明定理","key_id":1}`))
+	reqDry.Header.Set("Authorization", "Bearer "+adminToken)
+	reqDry.Header.Set("Content-Type", "application/json")
+	wDry := httptest.NewRecorder()
+	router.ServeHTTP(wDry, reqDry)
+	if wDry.Code != http.StatusOK || !strings.Contains(wDry.Body.String(), `"REASONING"`) {
+		t.Fatalf("expected dry-run to return 200 and REASONING, got %d: %s", wDry.Code, wDry.Body.String())
+	}
+
+	reqStats := httptest.NewRequest(http.MethodGet, "/admin/api/auto-router/stats?period=24h", nil)
+	reqStats.Header.Set("Authorization", "Bearer "+adminToken)
+	wStats := httptest.NewRecorder()
+	router.ServeHTTP(wStats, reqStats)
+	if wStats.Code != http.StatusOK || !strings.Contains(wStats.Body.String(), `"total_calls":3`) || !strings.Contains(wStats.Body.String(), `"fallback_calls":1`) {
+		t.Fatalf("expected stats to report 3 routed calls and 1 fallback call, got %d: %s", wStats.Code, wStats.Body.String())
+	}
+}
+
+func TestXAuthUserBYOKAndPersonalAutoRouter(t *testing.T) {
+	setupAutoRouterTestDB(t)
+	resetAutoRouterBreaker()
+
+	// 1. Mock Gateway Upstream (serves "site-pro-exhausted", "site-fast-ok", and shared classifier "qwen-classifier-shared")
+	var gwClassifierCalls, gwFastCalls, userByokCalls int32
+	gwSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req map[string]any
+		_ = json.Unmarshal(body, &req)
+		model, _ := req["model"].(string)
+		w.Header().Set("Content-Type", "application/json")
+		if model == "qwen-classifier-shared" {
+			atomic.AddInt32(&gwClassifierCalls, 1)
+			_, _ = w.Write([]byte(`{"id":"clf-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"COMPLEX"}}],"usage":{"prompt_tokens":20,"completion_tokens":1}}`))
+			return
+		}
+		if model == "site-fast-ok" {
+			atomic.AddInt32(&gwFastCalls, 1)
+		}
+		_, _ = w.Write([]byte(`{"id":"gw-1","object":"chat.completion","model":"` + model + `","choices":[{"index":0,"message":{"role":"assistant","content":"from gateway ` + model + `"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`))
+	}))
+	defer gwSrv.Close()
+
+	// 2. Mock User BYOK Upstream (serves "my-byok-sonnet" and "my-byok-flash")
+	userByokSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"my-byok-sonnet"},{"id":"my-byok-flash"}]}`))
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		var req map[string]any
+		_ = json.Unmarshal(body, &req)
+		model, _ := req["model"].(string)
+		atomic.AddInt32(&userByokCalls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"byok-1","object":"chat.completion","model":"` + model + `","choices":[{"index":0,"message":{"role":"assistant","content":"from user byok ` + model + `"},"finish_reason":"stop"}],"usage":{"prompt_tokens":15,"completion_tokens":8}}`))
+	}))
+	defer userByokSrv.Close()
+
+	if err := dbInsertUpstream(&Upstream{
+		Name:     "gw-main",
+		Type:     "openai",
+		BaseURL:  gwSrv.URL,
+		APIKey:   "sk-gw",
+		Models:   "site-pro-exhausted,site-fast-ok,qwen-classifier-shared",
+		ModelMap: "{}",
+		Priority: 0,
+		Weight:   10,
+		Enabled:  true,
+	}); err != nil {
+		t.Fatalf("dbInsertUpstream: %v", err)
+	}
+	invalidateRoutingSnapshot()
+
+	// Configure site auto-router:
+	// - VirtualModel = "auto"
+	// - ShareSiteClassifierWithUsers = false (site-exclusive classifier stays private!)
+	// - SharedClassifierModels = ["qwen-classifier-shared"] (explicitly shared gateway upstream model)
+	siteCfg := defaultAutoRouterConfig()
+	siteCfg.Enabled = true
+	siteCfg.Mode = "live"
+	siteCfg.VirtualModel = "auto"
+	siteCfg.AllowUserAutoRouter = true
+	siteCfg.ShareSiteClassifierWithUsers = false
+	siteCfg.SharedClassifierModels = []string{"qwen-classifier-shared"}
+	if err := saveAutoRouterConfig(siteCfg); err != nil {
+		t.Fatalf("saveAutoRouterConfig: %v", err)
+	}
+
+	// 3. Provision XAuth user & session
+	rawKey := "sk-xauth-user-001"
+	ak := &ApiKey{
+		Name:        "Alice (XAuth)",
+		Key:         rawKey,
+		QPS:         20,
+		Concurrency: 5,
+		QuotaUSD:    5.0,
+		Models:      "auto,site-pro-exhausted,site-fast-ok,qwen-classifier-shared",
+		Enabled:     true,
+		ModelQuotas: map[string]ModelQuota{
+			"site-pro-exhausted": {QuotaUSD: 1.0},
+		},
+	}
+	if err := dbInsertKey(ak); err != nil {
+		t.Fatalf("dbInsertKey: %v", err)
+	}
+	// Exhaust site-pro-exhausted (402)
+	if err := dbChargeKey(ak.ID, "site-pro-exhausted", 1.2, true); err != nil {
+		t.Fatalf("dbChargeKey: %v", err)
+	}
+	sub := "xauth-sub-alice-01"
+	if _, err := db.Exec(`INSERT INTO xauth_users(sub,email,name,key_id,gift_claimed,created_at,last_login_at) VALUES(?,?,?,?,1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
+		sub, "alice@example.com", "Alice", ak.ID); err != nil {
+		t.Fatalf("insert xauth_users: %v", err)
+	}
+	sessToken, err := createXAuthUserSession(sub, ak.ID, "")
+	if err != nil {
+		t.Fatalf("createXAuthUserSession: %v", err)
+	}
+
+	router := newRouter()
+	userReq := func(method, path, body string) *httptest.ResponseRecorder {
+		var r *http.Request
+		if body != "" {
+			r = httptest.NewRequest(method, path, strings.NewReader(body))
+			r.Header.Set("Content-Type", "application/json")
+		} else {
+			r = httptest.NewRequest(method, path, nil)
+		}
+		r.AddCookie(&http.Cookie{Name: xauthUserSessionCookie, Value: sessToken})
+		r.Header.Set(xauthUserRequestHeader, "user-console")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, r)
+		return w
+	}
+
+	// 4. SSRF protection check: when allowLoopbackUserUpstreamForTest is false, loopback URL is rejected
+	allowLoopbackUserUpstreamForTest = false
+	wSSRF := userReq(http.MethodPost, "/api/user/upstreams", `{"name":"bad-local","type":"openai","base_url":"http://127.0.0.1:9999","api_key":"sk-1","models":"m1"}`)
+	if wSSRF.Code != http.StatusBadRequest {
+		t.Fatalf("expected SSRF check to reject loopback URL with 400, got %d: %s", wSSRF.Code, wSSRF.Body.String())
+	}
+
+	// Enable test loopback hook so we can point BYOK upstream to userByokSrv
+	allowLoopbackUserUpstreamForTest = true
+	defer func() { allowLoopbackUserUpstreamForTest = false }()
+
+	// 5. Add user BYOK channel via /api/user/upstreams
+	wAddUp := userReq(http.MethodPost, "/api/user/upstreams", fmt.Sprintf(
+		`{"name":"My Private Sonnet","type":"openai","base_url":%q,"api_key":"sk-user-byok","models":"my-byok-sonnet,my-byok-flash","priority":20,"weight":1,"enabled":true}`,
+		userByokSrv.URL,
+	))
+	if wAddUp.Code != http.StatusOK {
+		t.Fatalf("expected POST /api/user/upstreams 200, got %d: %s", wAddUp.Code, wAddUp.Body.String())
+	}
+
+	// 6. Verify virtual_model collision with site "auto" is rejected
+	wCollide := userReq(http.MethodPut, "/api/user/auto-router", `{"enabled":true,"virtual_model":"auto","default_model":"my-byok-sonnet"}`)
+	if wCollide.Code != http.StatusBadRequest || !strings.Contains(wCollide.Body.String(), "不能与站点公共路由模型") {
+		t.Fatalf("expected virtual_model=auto collision to be rejected, got %d: %s", wCollide.Code, wCollide.Body.String())
+	}
+
+	// 7. Verify site-exclusive classifier is protected (user cannot use "__site_default__" or unlisted model when ShareSiteClassifierWithUsers=false)
+	wExclusive := userReq(http.MethodPut, "/api/user/auto-router",
+		`{"enabled":true,"virtual_model":"smart-code","classifier_source":"gateway_shared","shared_classifier_model":"__site_default__","default_model":"my-byok-sonnet"}`)
+	if wExclusive.Code != http.StatusBadRequest {
+		t.Fatalf("expected site-exclusive classifier to be rejected for user router, got %d: %s", wExclusive.Code, wExclusive.Body.String())
+	}
+
+	// 8. Save valid personal auto-router:
+	// - virtual_model: "smart-code" (renamed by user!)
+	// - classifier_source: "gateway_shared" with "qwen-classifier-shared" (allowed in SharedClassifierModels)
+	// - channel_preference: "gateway_first"
+	// - COMPLEX candidates: #1 "site-pro-exhausted" (site model, 402 exhausted) -> #2 "my-byok-sonnet" (user's BYOK model!)
+	wSaveRouter := userReq(http.MethodPut, "/api/user/auto-router", `{
+		"enabled": true,
+		"virtual_model": "smart-code",
+		"channel_preference": "gateway_first",
+		"classifier_source": "gateway_shared",
+		"shared_classifier_model": "qwen-classifier-shared",
+		"skip_short_chars": 10,
+		"default_model": "my-byok-sonnet",
+		"tiers": {
+			"SIMPLE": ["site-fast-ok"],
+			"MEDIUM": ["my-byok-flash"],
+			"COMPLEX": ["site-pro-exhausted", "my-byok-sonnet"],
+			"REASONING": ["my-byok-sonnet"]
+		}
+	}`)
+	if wSaveRouter.Code != http.StatusOK {
+		t.Fatalf("expected saving personal router to succeed, got %d: %s", wSaveRouter.Code, wSaveRouter.Body.String())
+	}
+
+	// 9. Verify GET /v1/models exposes both "auto" (site), "smart-code" (user-router), and "my-byok-sonnet" (user-byok)
+	reqModels := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	reqModels.Header.Set("Authorization", "Bearer "+rawKey)
+	wModels := httptest.NewRecorder()
+	router.ServeHTTP(wModels, reqModels)
+	if wModels.Code != http.StatusOK ||
+		!strings.Contains(wModels.Body.String(), `"id":"smart-code"`) ||
+		!strings.Contains(wModels.Body.String(), `"id":"my-byok-sonnet"`) {
+		t.Fatalf("expected /v1/models to include smart-code and my-byok-sonnet, got: %s", wModels.Body.String())
+	}
+
+	// 10. Invoke POST /v1/chat/completions with model="smart-code"
+	// - Gateway shared classifier ("qwen-classifier-shared") returns COMPLEX
+	// - Candidate #1 ("site-pro-exhausted") is skipped because site quota is 402 exhausted
+	// - Candidate #2 ("my-byok-sonnet") is selected and routed to userByokSrv!
+	// - Answer call uses user BYOK channel so it does NOT debit site quota!
+	keyBefore, _ := dbGetKeyByID(ak.ID)
+	chatPayload := `{"model":"smart-code","messages":[{"role":"user","content":"请帮我设计一个完整的跨多文件微服务架构并实现连接池与退避重试"}]}`
+	reqChat := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(chatPayload))
+	reqChat.Header.Set("Authorization", "Bearer "+rawKey)
+	reqChat.Header.Set("Content-Type", "application/json")
+	wChat := httptest.NewRecorder()
+	router.ServeHTTP(wChat, reqChat)
+
+	if wChat.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK from personal router model smart-code, got %d: %s", wChat.Code, wChat.Body.String())
+	}
+	if gotTier := wChat.Header().Get("X-APISHARE-Router-Tier"); gotTier != TierComplex {
+		t.Fatalf("expected X-APISHARE-Router-Tier=COMPLEX, got %q", gotTier)
+	}
+	if gotModel := wChat.Header().Get("X-APISHARE-Router-Model"); gotModel != "my-byok-sonnet" {
+		t.Fatalf("expected X-APISHARE-Router-Model=my-byok-sonnet, got %q", gotModel)
+	}
+	if atomic.LoadInt32(&gwClassifierCalls) != 1 || atomic.LoadInt32(&userByokCalls) != 1 {
+		t.Fatalf("expected 1 gateway classifier call and 1 user BYOK answer call, got clf=%d byok=%d", gwClassifierCalls, userByokCalls)
+	}
+
+	// Verify the answer call log has quota_pool="byok" and cost_usd=0
+	var ansModel, ansUpName, ansBilling string
+	var ansCost float64
+	if err := db.QueryRow(`SELECT model, upstream_name, cost_usd, billing_json FROM call_logs WHERE endpoint<>'router-classifier' ORDER BY id DESC LIMIT 1`).
+		Scan(&ansModel, &ansUpName, &ansCost, &ansBilling); err != nil {
+		t.Fatalf("query answer call_log: %v", err)
+	}
+	if ansModel != "my-byok-sonnet" || ansCost != 0 || !strings.Contains(ansBilling, `"quota_pool":"byok"`) || !strings.HasPrefix(ansUpName, "User BYOK · ") {
+		t.Fatalf("expected BYOK call log with cost=0 and quota_pool=byok, got model=%q up=%q cost=%v billing=%s", ansModel, ansUpName, ansCost, ansBilling)
+	}
+	_ = keyBefore
+}
+
+func TestXAuthUserBYOKDefaultAndCustomProxy(t *testing.T) {
+	setupAutoRouterTestDB(t)
+	allowLoopbackUserUpstreamForTest = true
+	defer func() { allowLoopbackUserUpstreamForTest = false }()
+
+	var siteProxyHits, userCustomProxyHits, directUpstreamHits int32
+
+	// Direct upstream server (used when proxy_mode="direct" or default proxy is 0)
+	directUpSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&directUpstreamHits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/models" {
+			_, _ = w.Write([]byte(`{"data":[{"id":"byok-proxied-model"}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-direct","object":"chat.completion","model":"byok-proxied-model","choices":[{"index":0,"message":{"role":"assistant","content":"direct-ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8}}`))
+	}))
+	defer directUpSrv.Close()
+
+	// Admin bound HTTP proxy server
+	siteProxySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&siteProxyHits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/v1/models") {
+			_, _ = w.Write([]byte(`{"data":[{"id":"byok-proxied-model"}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-siteproxy","object":"chat.completion","model":"byok-proxied-model","choices":[{"index":0,"message":{"role":"assistant","content":"via-site-default-proxy"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8}}`))
+	}))
+	defer siteProxySrv.Close()
+
+	// User custom HTTP proxy server
+	userProxySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&userCustomProxyHits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/v1/models") {
+			_, _ = w.Write([]byte(`{"data":[{"id":"byok-proxied-model"},{"id":"byok-custom-2"}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-userproxy","object":"chat.completion","model":"byok-proxied-model","choices":[{"index":0,"message":{"role":"assistant","content":"via-user-custom-proxy"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8}}`))
+	}))
+	defer userProxySrv.Close()
+
+	// Create XAuth user & API key
+	rawKey := "sk-xauth-bob-proxy-test"
+	ak := &ApiKey{
+		Name:        "XAuth · bob",
+		Key:         rawKey,
+		QuotaUSD:    5.0,
+		QPS:         20,
+		Concurrency: 5,
+		Enabled:     true,
+		Models:      "auto",
+	}
+	if err := dbInsertKey(ak); err != nil {
+		t.Fatalf("dbInsertKey: %v", err)
+	}
+	sub := "xauth-sub-bob-proxy"
+	if _, err := db.Exec(`INSERT INTO xauth_users(sub,email,name,key_id,gift_claimed,created_at,last_login_at) VALUES(?,?,?,?,1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
+		sub, "bob@example.com", "Bob", ak.ID); err != nil {
+		t.Fatalf("insert xauth_users: %v", err)
+	}
+	sessToken, err := createXAuthUserSession(sub, ak.ID, "")
+	if err != nil {
+		t.Fatalf("createXAuthUserSession: %v", err)
+	}
+
+	if err := settingsSet("session_secret", "test-admin-secret-proxy"); err != nil {
+		t.Fatalf("settingsSet: %v", err)
+	}
+	router := newRouter()
+
+	userReq := func(method, path, body string) *httptest.ResponseRecorder {
+		var r *http.Request
+		if body != "" {
+			r = httptest.NewRequest(method, path, strings.NewReader(body))
+			r.Header.Set("Content-Type", "application/json")
+		} else {
+			r = httptest.NewRequest(method, path, nil)
+		}
+		r.AddCookie(&http.Cookie{Name: xauthUserSessionCookie, Value: sessToken})
+		r.Header.Set(xauthUserRequestHeader, "user-console")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, r)
+		return w
+	}
+
+	adminReq := func(method, path, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, adminPath+"/api/"+path, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Authorization", "Bearer "+makeAdminToken())
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, r)
+		return w
+	}
+
+	// 1. Add user BYOK channel with proxy_mode="default" when admin default proxy is 0 (walks server direct)
+	wAdd := userReq(http.MethodPost, "/api/user/upstreams", fmt.Sprintf(
+		`{"name":"Bob Channel","type":"openai","base_url":%q,"api_key":"sk-bob","models":"byok-proxied-model","proxy_mode":"default"}`,
+		directUpSrv.URL,
+	))
+	if wAdd.Code != http.StatusOK {
+		t.Fatalf("expected 200 adding BYOK channel, got %d: %s", wAdd.Code, wAdd.Body.String())
+	}
+	var addResp struct {
+		ID int64 `json:"id"`
+	}
+	_ = json.Unmarshal(wAdd.Body.Bytes(), &addResp)
+
+	chatCall := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"byok-proxied-model","messages":[{"role":"user","content":"ping"}]}`))
+		req.Header.Set("Authorization", "Bearer "+rawKey)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w
+	}
+
+	if w := chatCall(); w.Code != http.StatusOK || atomic.LoadInt32(&directUpstreamHits) != 1 || atomic.LoadInt32(&siteProxyHits) != 0 {
+		t.Fatalf("expected direct server call when xauth_user_default_proxy_id=0, code=%d direct=%d siteProxy=%d",
+			w.Code, directUpstreamHits, siteProxyHits)
+	}
+
+	// 2. Admin adds a bound proxy and sets xauth_user_default_proxy_id in settings
+	savedSiteProxy := testSavedProxy(t, siteProxySrv.URL, "", "")
+	wSet := adminReq(http.MethodPut, "settings", fmt.Sprintf(`{"xauth_user_default_proxy_id":%d}`, savedSiteProxy.ID))
+	if wSet.Code != http.StatusOK {
+		t.Fatalf("expected PUT /api/settings 200, got %d: %s", wSet.Code, wSet.Body.String())
+	}
+	if getSettings().XAuthUserDefaultProxyID != savedSiteProxy.ID {
+		t.Fatalf("expected XAuthUserDefaultProxyID=%d, got %d", savedSiteProxy.ID, getSettings().XAuthUserDefaultProxyID)
+	}
+
+	// Now user's channel (proxy_mode="default") should route through savedSiteProxy!
+	// Note: HTTP proxy in Go net/http is used for non-loopback or HTTP URLs via Transport.Proxy.
+	wUpdateHost := userReq(http.MethodPut, fmt.Sprintf("/api/user/upstreams/%d", addResp.ID),
+		`{"base_url":"http://1.1.1.1","proxy_mode":"default"}`)
+	if wUpdateHost.Code != http.StatusOK {
+		t.Fatalf("expected 200 updating base_url, got %d: %s", wUpdateHost.Code, wUpdateHost.Body.String())
+	}
+	if w := chatCall(); w.Code != http.StatusOK || atomic.LoadInt32(&siteProxyHits) != 1 || !strings.Contains(w.Body.String(), "via-site-default-proxy") {
+		t.Fatalf("expected BYOK channel with proxy_mode=default to use admin default proxy, code=%d siteProxyHits=%d body=%s",
+			w.Code, siteProxyHits, w.Body.String())
+	}
+
+	// 3. Verify user cannot choose proxy_mode="direct" on their own
+	wRejectDirect := userReq(http.MethodPut, fmt.Sprintf("/api/user/upstreams/%d", addResp.ID),
+		`{"proxy_mode":"direct"}`)
+	if wRejectDirect.Code != http.StatusBadRequest {
+		t.Fatalf("expected proxy_mode=direct to be rejected with 400, got %d: %s", wRejectDirect.Code, wRejectDirect.Body.String())
+	}
+
+	// 4. User switches channel to proxy_mode="custom" with their own proxy URL
+	// Even though admin default proxy (savedSiteProxy) is configured, the server connects directly
+	// to the user's proxy without going through savedSiteProxy (siteProxyHits stays 1).
+	wProbeCustom := userReq(http.MethodPost, "/api/user/upstreams/probe", fmt.Sprintf(
+		`{"id":%d,"type":"openai","base_url":"http://1.1.1.1","proxy_mode":"custom","proxy_url":%q}`,
+		addResp.ID, userProxySrv.URL,
+	))
+	if wProbeCustom.Code != http.StatusOK || !strings.Contains(wProbeCustom.Body.String(), `"byok-custom-2"`) || atomic.LoadInt32(&userCustomProxyHits) != 1 || atomic.LoadInt32(&siteProxyHits) != 1 {
+		t.Fatalf("expected probe via custom proxy to hit userProxySrv directly (not siteProxySrv), code=%d userHits=%d siteHits=%d body=%s",
+			wProbeCustom.Code, userCustomProxyHits, siteProxyHits, wProbeCustom.Body.String())
+	}
+
+	wSaveCustom := userReq(http.MethodPut, fmt.Sprintf("/api/user/upstreams/%d", addResp.ID), fmt.Sprintf(
+		`{"proxy_mode":"custom","proxy_url":%q}`, userProxySrv.URL,
+	))
+	if wSaveCustom.Code != http.StatusOK {
+		t.Fatalf("expected 200 saving custom proxy on BYOK channel, got %d: %s", wSaveCustom.Code, wSaveCustom.Body.String())
+	}
+	if w := chatCall(); w.Code != http.StatusOK || atomic.LoadInt32(&userCustomProxyHits) != 2 || atomic.LoadInt32(&siteProxyHits) != 1 || !strings.Contains(w.Body.String(), "via-user-custom-proxy") {
+		t.Fatalf("expected BYOK channel with proxy_mode=custom to use user custom proxy directly without site proxy, code=%d userProxyHits=%d siteProxyHits=%d body=%s",
+			w.Code, userCustomProxyHits, siteProxyHits, w.Body.String())
+	}
+}

@@ -54,9 +54,9 @@ func audioPermission(ak ApiKey, model string) (int, string) {
 	return 0, ""
 }
 
-func refreshAudioPermission(keyID int64, model string) (ApiKey, error) {
+func refreshAudioPermission(keyID int64, credential, model string) (ApiKey, error) {
 	ak, err := dbGetKeyByID(keyID)
-	if err != nil {
+	if err != nil || (credential != "" && ak.Key != credential) {
 		return ApiKey{}, errors.New("API key is no longer available")
 	}
 	if _, msg := audioPermission(*ak, model); msg != "" {
@@ -247,7 +247,7 @@ func bridgeRealtime(ctx context.Context, c *gin.Context, ak ApiKey, task *relayT
 				}
 				_ = json.Unmarshal(body, &event)
 				if err == nil && (event.Type == "response.create" || event.Type == "session.update" || event.Type == "input_audio_buffer.commit") {
-					_, err = refreshAudioPermission(ak.ID, task.model)
+					_, err = refreshAudioPermission(ak.ID, ak.Key, task.model)
 				}
 				if err != nil {
 					errorBody, _ := json.Marshal(map[string]any{"type": "error", "error": map[string]any{"type": "invalid_request_error", "message": err.Error()}})
@@ -288,7 +288,7 @@ func bridgeRealtime(ctx context.Context, c *gin.Context, ak ApiKey, task *relayT
 					// Bill terminal provider usage before delivering it, even when the
 					// client has already disconnected. Never estimate audio as text.
 					finalizeCall(c, ak, task, turn, true, nil, 0)
-					_, permissionErr = refreshAudioPermission(ak.ID, task.model)
+					_, permissionErr = refreshAudioPermission(ak.ID, ak.Key, task.model)
 				}
 			}
 			if err == nil {

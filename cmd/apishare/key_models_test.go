@@ -243,3 +243,117 @@ func TestKeyModelsRelayCannotBypassPermissions(t *testing.T) {
 		t.Fatal("revoked model reached upstream")
 	}
 }
+
+func TestAdminRefreshKeyAndBatchRefresh(t *testing.T) {
+	r := keyViewTestRouter(t)
+	if err := settingsSet("session_secret", "refresh-key-test-secret"); err != nil {
+		t.Fatal(err)
+	}
+	v1 := r.Group("/v1", keyAuth(), keyRateLimit())
+	v1.GET("/models", modelsHandler)
+	tok := makeAdminToken()
+
+	ak1 := &ApiKey{
+		Name:          "team-alpha",
+		Key:           "sk-old-leaked-alpha-key",
+		QuotaUSD:      25,
+		UsedUSD:       3.5,
+		SharedUsedUSD: 1.5,
+		QPS:           5,
+		Concurrency:   8,
+		Enabled:       true,
+		Note:          "rotated on leak",
+		Models:        "gpt-4o,claude-sonnet-4-5",
+		ModelQuotas: map[string]ModelQuota{
+			"gpt-4o": {QuotaUSD: 10, UsedUSD: 2},
+		},
+	}
+	if err := dbInsertKey(ak1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE api_keys SET used_usd=?, shared_used_usd=? WHERE id=?`, ak1.UsedUSD, ak1.SharedUsedUSD, ak1.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE api_key_model_quotas SET used_usd=? WHERE key_id=? AND model=?`, 2.0, ak1.ID, "gpt-4o"); err != nil {
+		t.Fatal(err)
+	}
+
+	ak2 := &ApiKey{
+		Name:        "team-beta",
+		Key:         "sk-old-leaked-beta-key",
+		QuotaUSD:    10,
+		QPS:         3,
+		Concurrency: 5,
+		Enabled:     false,
+		Models:      "gpt-4o",
+	}
+	if err := dbInsertKey(ak2); err != nil {
+		t.Fatal(err)
+	}
+
+	u := &Upstream{Type: "openai", BaseURL: "https://api.example.com", APIKey: "fixture", Models: "gpt-4o,claude-sonnet-4-5", Enabled: true, Weight: 1}
+	if err := dbInsertUpstream(u); err != nil {
+		t.Fatal(err)
+	}
+
+	// Log into public key viewer with ak1's old key before refresh.
+	cookie, _ := keyViewLogin(t, r, ak1.Key, nil)
+	keysPath := currentAdminPath() + "/api/keys"
+
+	// Refresh ak1 via admin endpoint.
+	w := deploymentRequest(r, "POST", fmt.Sprintf("%s/%d/refresh", keysPath, ak1.ID), tok, "")
+	resp := deploymentJSON(t, w, http.StatusOK)
+	newKey1, _ := resp["key"].(string)
+	if !strings.HasPrefix(newKey1, "sk-") || newKey1 == ak1.Key {
+		t.Fatalf("expected newly generated sk- key, got %q", newKey1)
+	}
+	if resp["name"] != "team-alpha" || resp["note"] != "rotated on leak" || resp["models"] != "gpt-4o,claude-sonnet-4-5" {
+		t.Fatalf("metadata not preserved after refresh: %#v", resp)
+	}
+
+	stored1, err := dbGetKeyByID(ak1.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored1.Key != newKey1 || stored1.UsedUSD != 3.5 || stored1.SharedUsedUSD != 1.5 || stored1.QuotaUSD != 25 {
+		t.Fatalf("quota/usage not preserved after refresh: %+v", stored1)
+	}
+	if mq, ok := stored1.ModelQuotas["gpt-4o"]; !ok || mq.QuotaUSD != 10 || mq.UsedUSD != 2 {
+		t.Fatalf("model quota/usage not preserved after refresh: %+v", stored1.ModelQuotas)
+	}
+
+	// Old key is immediately rejected on /v1/models; new key succeeds.
+	deploymentJSON(t, deploymentRequest(r, "GET", "/v1/models", ak1.Key, ""), http.StatusUnauthorized)
+	deploymentJSON(t, deploymentRequest(r, "GET", "/v1/models", newKey1, ""), http.StatusOK)
+
+	// Existing public key-view session for ak1 is invalidated.
+	viewW := keyViewRequest(r, "GET", "/api/key/overview", "", cookie)
+	if viewW.Code != http.StatusUnauthorized {
+		t.Fatalf("expected old key view session to be invalidated (401), got %d", viewW.Code)
+	}
+
+	// Batch refresh ak1 and ak2 (including disabled key ak2).
+	batchBody := fmt.Sprintf(`{"key_ids":[%d,%d,%d]}`, ak1.ID, ak2.ID, ak1.ID)
+	batchW := deploymentRequest(r, "POST", keysPath+"/batch-refresh", tok, batchBody)
+	batchResp := deploymentJSON(t, batchW, http.StatusOK)
+	if batchResp["refreshed_count"] != float64(2) {
+		t.Fatalf("expected refreshed_count=2, got %#v", batchResp)
+	}
+
+	stored1AfterBatch, err := dbGetKeyByID(ak1.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored2AfterBatch, err := dbGetKeyByID(ak2.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored1AfterBatch.Key == newKey1 || !strings.HasPrefix(stored1AfterBatch.Key, "sk-") {
+		t.Fatalf("ak1 was not rotated by batch-refresh: %q", stored1AfterBatch.Key)
+	}
+	if stored2AfterBatch.Key == ak2.Key || !strings.HasPrefix(stored2AfterBatch.Key, "sk-") || stored2AfterBatch.Enabled {
+		t.Fatalf("ak2 was not properly rotated by batch-refresh: %+v", stored2AfterBatch)
+	}
+	deploymentJSON(t, deploymentRequest(r, "GET", "/v1/models", newKey1, ""), http.StatusUnauthorized)
+	deploymentJSON(t, deploymentRequest(r, "GET", "/v1/models", stored1AfterBatch.Key, ""), http.StatusOK)
+}
