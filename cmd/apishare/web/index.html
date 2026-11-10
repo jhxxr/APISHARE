@@ -500,6 +500,11 @@
                     <small>纯文本短问句直接判 SIMPLE 省去分类请求（0 禁用）。</small>
                   </label>
                   <label class="field">
+                    <span>长上下文升档阈值 (Tokens)</span>
+                    <input id="routerLongContextThreshold" type="number" min="0" max="1000000" step="4000" value="32000" oninput="markRouterDirty(true)">
+                    <small>估算输入超此 Token 数时自动升至 COMPLEX 并过滤小窗口模型（0 禁用）。</small>
+                  </label>
+                  <label class="field">
                     <span>提取上下文轮数</span>
                     <input id="routerContextTurns" type="number" min="1" max="6" step="1" value="2" oninput="markRouterDirty(true)">
                   </label>

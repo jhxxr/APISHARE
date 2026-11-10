@@ -38,6 +38,12 @@ func setupAutoRouterTestDB(t *testing.T) {
 		t.Fatalf("bootstrapAdmin: %v", err)
 	}
 	resetAutoRouterBreaker()
+	probedModelLimits.Lock()
+	probedModelLimits.data = map[string]ModelTokenLimits{}
+	probedModelLimits.Unlock()
+	learnedModelLimits.Lock()
+	learnedModelLimits.data = map[string]ModelTokenLimits{}
+	learnedModelLimits.Unlock()
 }
 
 func TestAutoRouterHeuristicAndShortCircuit(t *testing.T) {
@@ -1177,5 +1183,422 @@ func TestDecisionModelUpstreamAddProbeTestAndClassify(t *testing.T) {
 	}
 	if decResp.Answers["frustration"].Type != "score" || decResp.Answers["frustration"].Score < 0.8 {
 		t.Fatalf("unexpected frustration answer: %+v", decResp.Answers["frustration"])
+	}
+}
+
+func TestAutoRouterContextWindowFilteringAndLongContextUpgrade(t *testing.T) {
+	setupAutoRouterTestDB(t)
+
+	up := &Upstream{
+		Name:     "Multi-Window-Pool",
+		Type:     "openai",
+		BaseURL:  "https://api.example.com/v1",
+		APIKey:   "sk-test",
+		Models:   "deepseek-chat,gpt-4o-mini,gemini-2.5-pro",
+		ModelMap: "{}",
+		Priority: 0,
+		Weight:   1,
+		Enabled:  true,
+	}
+	if err := dbInsertUpstream(up); err != nil {
+		t.Fatalf("dbInsertUpstream: %v", err)
+	}
+	invalidateRoutingSnapshot()
+
+	cfg := defaultAutoRouterConfig()
+	cfg.Enabled = true
+	cfg.Mode = "live"
+	cfg.Classifier = "heuristic"
+	cfg.SkipShortChars = 60
+	cfg.LongContextThreshold = 8000
+	cfg.Tiers = map[string][]string{
+		TierSimple:    {"gpt-4o-mini(none,4k)"},
+		TierMedium:    {"deepseek-chat(low,6k)"},
+		TierComplex:   {"deepseek-chat(medium,6k)", "gemini-2.5-pro(high)"},
+		TierReasoning: {"gemini-2.5-pro(max)"},
+	}
+	cfg.DefaultModel = "gemini-2.5-pro"
+
+	// Build a multi-turn conversation whose recent user turns are simple ("翻译上一段", "继续")
+	// so the classifier alone would pick SIMPLE, while total conversation history exceeds 8,000 tokens.
+	longChunk := strings.Repeat("The quick brown fox jumps over the lazy dog in the sunny afternoon meadow. ", 600)
+	cr := &canonReq{
+		Model: "auto",
+		Messages: []canonMsg{
+			{Role: "user", Text: "Here is chapter one:\n" + longChunk},
+			{Role: "assistant", Text: "Received chapter one:\n" + longChunk},
+			{Role: "user", Text: "把最后一句翻译成中文"},
+			{Role: "assistant", Text: "敏捷的棕色狐狸在阳光明媚的午后草地上跳过懒狗。"},
+			{Role: "user", Text: "继续"},
+		},
+		InputText: "继续",
+	}
+
+	ak := ApiKey{ID: 1, Name: "ctx-user", Enabled: true, QuotaUSD: 100}
+	dec, cands, err := resolveAutoRouteWithConfig(context.Background(), cfg, ak, FormatOpenAIChat, false, http.Header{}, cr, true)
+	if err != nil {
+		t.Fatalf("resolveAutoRouteWithConfig: %v", err)
+	}
+	if dec.EstimatedInputTokens < 8000 {
+		t.Fatalf("expected EstimatedInputTokens >= 8000, got %d", dec.EstimatedInputTokens)
+	}
+	if !dec.ContextUpgraded || dec.Tier != TierComplex || !strings.Contains(dec.Cause, "long_context") {
+		t.Fatalf("expected long context auto-upgrade to COMPLEX, got tier=%s cause=%s upgraded=%v", dec.Tier, dec.Cause, dec.ContextUpgraded)
+	}
+	if len(cands) == 0 || cands[0] != "gemini-2.5-pro(high)" {
+		t.Fatalf("expected small-context candidate deepseek-chat(medium,6k) to be filtered out and gemini-2.5-pro(high) selected, got cands=%v steps=%+v", cands, dec.Steps)
+	}
+	sawContextExceeded := false
+	for _, st := range dec.Steps {
+		if st.Model == "deepseek-chat(medium,6k)" && st.Status == "skipped" && st.Reason == "context_exceeded" {
+			sawContextExceeded = true
+		}
+	}
+	if !sawContextExceeded {
+		t.Fatalf("expected step for deepseek-chat(medium,6k) to be skipped with context_exceeded, got %+v", dec.Steps)
+	}
+}
+
+func TestAutoRouterMaxTokensClampingAndCrossModelHistorySanitization(t *testing.T) {
+	// 1. Native Anthropic request routed from Claude Opus 4.6 history (with thinking + signature + redacted_thinking)
+	// and huge max_tokens=64000 to claude-3-5-sonnet (non-thinking, max output 8192) on a different upstream.
+	upSonnet35 := &Upstream{
+		ID:      10,
+		Name:    "Anthropic-35",
+		Type:    "anthropic",
+		BaseURL: "https://api.anthropic.com",
+	}
+	task := &relayTask{
+		format:            FormatAnthropic,
+		model:             "claude-3-5-sonnet-20241022",
+		candidateRawModel: "claude-3-5-sonnet-20241022",
+		sourceTier:        TierSimple,
+		prevUpstreamID:    99,
+		prevUpstreamModel: "claude-opus-4-6",
+		router:            &routerDecisionDetails{Tier: TierSimple, Cause: "heuristic"},
+	}
+	rawAnthropic := `{
+		"model": "claude-3-5-sonnet-20241022",
+		"max_tokens": 64000,
+		"thinking": {"type": "adaptive"},
+		"output_config": {"effort": "high"},
+		"messages": [
+			{"role": "user", "content": "Hello"},
+			{"role": "assistant", "content": [
+				{"type": "thinking", "thinking": "deep internal reasoning", "signature": "sig_opus_46"},
+				{"type": "redacted_thinking", "data": "enc_blob"},
+				{"type": "text", "text": "Hi there!"}
+			]},
+			{"role": "user", "content": "Follow up"}
+		]
+	}`
+	adapted := adaptAutoRouterNativeBody([]byte(rawAnthropic), FormatAnthropic, upSonnet35, "claude-3-5-sonnet-20241022", task, nil)
+	var gotObj map[string]any
+	if err := json.Unmarshal(adapted, &gotObj); err != nil {
+		t.Fatalf("unmarshal adapted anthropic body: %v", err)
+	}
+	if _, hasThinking := gotObj["thinking"]; hasThinking {
+		t.Fatalf("expected thinking to be stripped for non-thinking claude-3-5-sonnet, got %v", gotObj["thinking"])
+	}
+	if _, hasOutCfg := gotObj["output_config"]; hasOutCfg {
+		t.Fatalf("expected output_config.effort to be stripped for non-thinking claude-3-5-sonnet, got %v", gotObj["output_config"])
+	}
+	if int(gotObj["max_tokens"].(float64)) != 8192 {
+		t.Fatalf("expected max_tokens=64000 to be clamped to 8192 for claude-3-5-sonnet, got %v", gotObj["max_tokens"])
+	}
+	msgs := gotObj["messages"].([]any)
+	asst := msgs[1].(map[string]any)
+	blocks := asst["content"].([]any)
+	for _, rawB := range blocks {
+		bm := rawB.(map[string]any)
+		if bm["type"] == "thinking" || bm["type"] == "redacted_thinking" {
+			t.Fatalf("expected cross-model assistant thinking/redacted_thinking blocks to be sanitized, got %+v", blocks)
+		}
+	}
+
+	// 2. Converted canonReq path: Claude 4.6 adaptive <-> Claude 4.5 fixed budget + Gemini 2.5 thinkingBudget
+	upClaude45 := &Upstream{ID: 11, Name: "Anthropic-45", Type: "anthropic"}
+	task45 := &relayTask{
+		format:            FormatOpenAIChat,
+		model:             "claude-sonnet-4-5",
+		candidateRawModel: "claude-sonnet-4-5(high)",
+		sourceTier:        TierComplex,
+		router:            &routerDecisionDetails{Tier: TierComplex, Cause: "heuristic"},
+	}
+	cr45 := canonReq{
+		Model:        "claude-sonnet-4-5",
+		MaxTokens:    2000,
+		ThinkingMode: "adaptive",
+		Messages:     []canonMsg{{Role: "user", Text: "Design a compiler"}},
+	}
+	adaptAutoRouterCanonReq(&cr45, FormatAnthropic, upClaude45, "claude-sonnet-4-5", task45, []string{"low", "medium", "high"})
+	if cr45.ThinkingMode != "enabled" || cr45.ThinkingBudget == nil || *cr45.ThinkingBudget != 8192 {
+		t.Fatalf("expected claude-sonnet-4-5(high) to adapt to enabled with budget=8192, got mode=%q budget=%v", cr45.ThinkingMode, cr45.ThinkingBudget)
+	}
+	if cr45.MaxTokens <= *cr45.ThinkingBudget {
+		t.Fatalf("expected MaxTokens (%d) to be raised above ThinkingBudget (%d) for Anthropic invariant", cr45.MaxTokens, *cr45.ThinkingBudget)
+	}
+}
+
+func TestAutoRouterThinkingTierAndRuntimeFailover(t *testing.T) {
+	setupAutoRouterTestDB(t)
+
+	var (
+		smallCalls  int
+		largeCalls  int
+		gotLargeReq string
+		mu          sync.Mutex
+	)
+
+	mockSmall := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		smallCalls++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"message":"This model's maximum context length is 32768 tokens. However, your messages resulted in 45000 tokens.","type":"invalid_request_error","code":"context_length_exceeded"}}`))
+	}))
+	defer mockSmall.Close()
+
+	mockLarge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		largeCalls++
+		gotLargeReq = string(b)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-ok","object":"chat.completion","model":"gpt-5.2","choices":[{"index":0,"message":{"role":"assistant","content":"Handled by large context model with high thinking"},"finish_reason":"stop"}],"usage":{"prompt_tokens":120,"completion_tokens":20,"total_tokens":140}}`))
+	}))
+	defer mockLarge.Close()
+
+	upSmall := &Upstream{
+		Name:     "Small-Window-Upstream",
+		Type:     "openai",
+		BaseURL:  mockSmall.URL + "/v1",
+		APIKey:   "sk-small",
+		Models:   "deepseek-chat",
+		ModelMap: "{}",
+		Priority: 0,
+		Weight:   1,
+		Enabled:  true,
+	}
+	upLarge := &Upstream{
+		Name:     "Large-Window-Upstream",
+		Type:     "openai",
+		BaseURL:  mockLarge.URL + "/v1",
+		APIKey:   "sk-large",
+		Models:   "gpt-5.2",
+		ModelMap: "{}",
+		Priority: 0,
+		Weight:   1,
+		Enabled:  true,
+	}
+	if err := dbInsertUpstream(upSmall); err != nil {
+		t.Fatalf("dbInsertUpstream small: %v", err)
+	}
+	if err := dbInsertUpstream(upLarge); err != nil {
+		t.Fatalf("dbInsertUpstream large: %v", err)
+	}
+	invalidateRoutingSnapshot()
+
+	cfg := defaultAutoRouterConfig()
+	cfg.Enabled = true
+	cfg.Mode = "live"
+	cfg.Classifier = "heuristic"
+	cfg.ResponseHeaders = true
+	cfg.Tiers = map[string][]string{
+		TierSimple:    {"deepseek-chat(none)", "gpt-5.2(high)"},
+		TierMedium:    {"deepseek-chat(none)", "gpt-5.2(high)"},
+		TierComplex:   {"deepseek-chat(none)", "gpt-5.2(high)"},
+		TierReasoning: {"gpt-5.2(xhigh)"},
+	}
+	cfg.DefaultModel = "gpt-5.2(high)"
+	if err := saveAutoRouterConfig(cfg); err != nil {
+		t.Fatalf("saveAutoRouterConfig: %v", err)
+	}
+
+	rawKey := "sk-failover-context-key"
+	if err := dbInsertKey(&ApiKey{
+		Name:        "ctx-failover-user",
+		Key:         rawKey,
+		QPS:         50,
+		Concurrency: 10,
+		Models:      "auto,deepseek-chat,gpt-5.2",
+		QuotaUSD:    50,
+		Enabled:     true,
+	}); err != nil {
+		t.Fatalf("dbInsertKey: %v", err)
+	}
+
+	router := newRouter()
+	reqBody := `{"model":"auto","messages":[{"role":"user","content":"Hello"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
+	req.Header.Set("Authorization", "Bearer "+rawKey)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected runtime failover to 200 OK when candidate #1 returns 400 context_length_exceeded, got %d: %s", w.Code, w.Body.String())
+	}
+	mu.Lock()
+	sCalls, lCalls, largePayload := smallCalls, largeCalls, gotLargeReq
+	mu.Unlock()
+	if sCalls != 1 || lCalls != 1 {
+		t.Fatalf("expected 1 call to small candidate and 1 failover call to large candidate, got small=%d large=%d", sCalls, lCalls)
+	}
+	if !strings.Contains(largePayload, `"model":"gpt-5.2"`) || !strings.Contains(largePayload, `"reasoning_effort":"high"`) {
+		t.Fatalf("expected failover candidate gpt-5.2(high) to send clean model=\"gpt-5.2\" and reasoning_effort=\"high\", got %s", largePayload)
+	}
+	if gotModelHdr := w.Header().Get("X-APISHARE-Router-Model"); gotModelHdr != "gpt-5.2(high)" {
+		t.Fatalf("expected X-APISHARE-Router-Model=gpt-5.2(high), got %q", gotModelHdr)
+	}
+	if gotThinkHdr := w.Header().Get("X-APISHARE-Router-Thinking"); gotThinkHdr != "high" {
+		t.Fatalf("expected X-APISHARE-Router-Thinking=high, got %q", gotThinkHdr)
+	}
+	// Verify upSmall was not penalized into cooldown for a model context mismatch
+	if !upSmall.availableForRelay("deepseek-chat") {
+		t.Fatalf("expected upSmall to remain healthy after model-incompatible 400 failover")
+	}
+}
+
+func TestAutoContextLimitDiscoveryCatalogProbingAndErrorSelfLearning(t *testing.T) {
+	setupAutoRouterTestDB(t)
+
+	// Reset dynamic registries and restore on cleanup
+	probedModelLimits.Lock()
+	probedModelLimits.data = map[string]ModelTokenLimits{}
+	probedModelLimits.Unlock()
+	learnedModelLimits.Lock()
+	learnedModelLimits.data = map[string]ModelTokenLimits{}
+	learnedModelLimits.Unlock()
+	autoModelLimits.Lock()
+	autoModelLimits.data = map[string]ModelTokenLimits{}
+	autoModelLimits.Unlock()
+	t.Cleanup(func() {
+		probedModelLimits.Lock()
+		probedModelLimits.data = map[string]ModelTokenLimits{}
+		probedModelLimits.Unlock()
+		learnedModelLimits.Lock()
+		learnedModelLimits.data = map[string]ModelTokenLimits{}
+		learnedModelLimits.Unlock()
+		autoModelLimits.Lock()
+		autoModelLimits.data = map[string]ModelTokenLimits{}
+		autoModelLimits.Unlock()
+	})
+
+	// 1. Layer A: LiteLLM model_prices_and_context_window.json sync
+	mockCatalog := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"openai/custom-catalog-model": {
+				"input_cost_per_token": 0.000001,
+				"output_cost_per_token": 0.000002,
+				"max_input_tokens": 96000,
+				"max_output_tokens": 12288
+			}
+		}`))
+	}))
+	defer mockCatalog.Close()
+
+	s := getSettings()
+	s.AutoPricingEnabled = true
+	s.AutoPricingURL = mockCatalog.URL
+	if err := persistSettings(s); err != nil {
+		t.Fatalf("persistSettings: %v", err)
+	}
+
+	if _, err := refreshAutoPricing(); err != nil {
+		t.Fatalf("refreshAutoPricing failed: %v", err)
+	}
+	ctxLim, ctxSrc := effectiveModelContextLimitWithSource("custom-catalog-model", nil)
+	if ctxLim != 96000 || ctxSrc != "catalog" {
+		t.Fatalf("expected catalog limit 96000 (source=catalog), got %d (source=%q)", ctxLim, ctxSrc)
+	}
+	outLim, outSrc := modelMaxOutputLimitWithSource("custom-catalog-model")
+	if outLim != 12288 || outSrc != "catalog" {
+		t.Fatalf("expected catalog max_output 12288 (source=catalog), got %d (source=%q)", outLim, outSrc)
+	}
+
+	// 2. Layer B: Upstream /v1/models (vLLM/OpenRouter style) and /v1beta/models (Gemini style) probing
+	mockOpenAIModels := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data": [
+				{
+					"id": "custom-catalog-model",
+					"max_model_len": 48000,
+					"max_completion_tokens": 6144
+				},
+				{
+					"id": "openrouter-probed-model",
+					"top_provider": {
+						"context_length": 160000,
+						"max_completion_tokens": 24576
+					}
+				}
+			]
+		}`))
+	}))
+	defer mockOpenAIModels.Close()
+
+	if _, err := probeUpstreamModelsWithClient(context.Background(), "openai", mockOpenAIModels.URL, "sk-test", mockOpenAIModels.Client()); err != nil {
+		t.Fatalf("probeUpstreamModelsWithClient(openai) failed: %v", err)
+	}
+
+	// Probed limit overrides catalog limit!
+	ctxLim, ctxSrc = effectiveModelContextLimitWithSource("custom-catalog-model", nil)
+	if ctxLim != 48000 || ctxSrc != "probed" {
+		t.Fatalf("expected probed limit 48000 (source=probed) to override catalog, got %d (source=%q)", ctxLim, ctxSrc)
+	}
+	outLim, outSrc = modelMaxOutputLimitWithSource("custom-catalog-model")
+	if outLim != 6144 || outSrc != "probed" {
+		t.Fatalf("expected probed max_output 6144 (source=probed), got %d (source=%q)", outLim, outSrc)
+	}
+	ctxLim, ctxSrc = effectiveModelContextLimitWithSource("openrouter-probed-model", nil)
+	if ctxLim != 160000 || ctxSrc != "probed" {
+		t.Fatalf("expected openrouter probed limit 160000 (source=probed), got %d (source=%q)", ctxLim, ctxSrc)
+	}
+
+	mockGeminiModels := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"models": [
+				{
+					"name": "models/gemini-custom-exp",
+					"inputTokenLimit": 524288,
+					"outputTokenLimit": 32768
+				}
+			]
+		}`))
+	}))
+	defer mockGeminiModels.Close()
+
+	if _, err := probeUpstreamModelsWithClient(context.Background(), "gemini", mockGeminiModels.URL, "gm-test", mockGeminiModels.Client()); err != nil {
+		t.Fatalf("probeUpstreamModelsWithClient(gemini) failed: %v", err)
+	}
+	ctxLim, ctxSrc = effectiveModelContextLimitWithSource("gemini-custom-exp", nil)
+	if ctxLim != 524288 || ctxSrc != "probed" {
+		t.Fatalf("expected gemini probed limit 524288 (source=probed), got %d (source=%q)", ctxLim, ctxSrc)
+	}
+
+	// 3. Layer C: Runtime 400 Error Self-Learning
+	learnedCtx, learnedOut := learnModelLimitFromErrorBody(
+		"custom-catalog-model",
+		http.StatusBadRequest,
+		[]byte(`{"error":{"message":"This model's maximum context length is 16384 tokens. Moreover, max_tokens must be less than or equal to 2048."}}`),
+	)
+	if learnedCtx != 16384 || learnedOut != 2048 {
+		t.Fatalf("expected learnedCtx=16384 learnedOut=2048, got ctx=%d out=%d", learnedCtx, learnedOut)
+	}
+	// Learned limit overrides both probed and catalog limits!
+	ctxLim, ctxSrc = effectiveModelContextLimitWithSource("custom-catalog-model", nil)
+	if ctxLim != 16384 || ctxSrc != "learned" {
+		t.Fatalf("expected learned limit 16384 (source=learned) to override probed/catalog, got %d (source=%q)", ctxLim, ctxSrc)
+	}
+	outLim, outSrc = modelMaxOutputLimitWithSource("custom-catalog-model")
+	if outLim != 2048 || outSrc != "learned" {
+		t.Fatalf("expected learned max_output 2048 (source=learned), got %d (source=%q)", outLim, outSrc)
 	}
 }

@@ -64,13 +64,16 @@ type AutoRouterConfig struct {
 	MinConfidence                float64             `json:"min_confidence"`
 	ContextUserTurns             int                 `json:"context_user_turns"`
 	SkipShortChars               int                 `json:"skip_short_chars"`
+	LongContextThreshold         int                 `json:"long_context_threshold"`
 	RouteHousekeeping            bool                `json:"route_housekeeping"`
 	SessionMode                  string              `json:"session_mode"` // "user_turn" | "session_lock" | "every_turn"
 	CascadeTiers                 bool                `json:"cascade_tiers"`
 	AllowUnlistedTargetModels    bool                `json:"allow_unlisted_target_models"`
 	DefaultModel                 string              `json:"default_model"`
 	Tiers                        map[string][]string `json:"tiers"`
+	TierThinking                 map[string]string   `json:"tier_thinking"`
 	TierCriteria                 map[string]string   `json:"tier_criteria"`
+	ModelContextLimits           map[string]int      `json:"model_context_limits,omitempty"`
 	ResponseHeaders              bool                `json:"response_headers"`
 	EscalationKeyword            string              `json:"escalation_keyword"`
 	AllowUserAutoRouter          bool                `json:"allow_user_auto_router"`
@@ -82,6 +85,9 @@ type routerDecisionDetails struct {
 	RequestedModel        string                `json:"requested_model,omitempty"`
 	SelectedModel         string                `json:"selected_model,omitempty"`
 	SelectedSourceTier    string                `json:"selected_source_tier,omitempty"`
+	SelectedThinking      string                `json:"selected_thinking,omitempty"`
+	EstimatedInputTokens  int                   `json:"estimated_input_tokens,omitempty"`
+	ContextUpgraded       bool                  `json:"context_upgraded,omitempty"`
 	DegradedToDefault     bool                  `json:"degraded_to_default,omitempty"`
 	FailedModels          []string              `json:"failed_models,omitempty"`
 	Tier                  string                `json:"tier,omitempty"`
@@ -185,6 +191,8 @@ type routerCandidateStep struct {
 	SourceTier   string `json:"source_tier"`
 	Status       string `json:"status"` // "selected" | "standby" | "skipped" | "failed"
 	Reason       string `json:"reason,omitempty"`
+	Thinking     string `json:"thinking,omitempty"`
+	ContextLimit int    `json:"context_limit,omitempty"`
 	UpstreamID   int64  `json:"upstream_id,omitempty"`
 	UpstreamName string `json:"upstream_name,omitempty"`
 }
@@ -274,13 +282,16 @@ func defaultAutoRouterConfig() AutoRouterConfig {
 		MinConfidence:                0.55,
 		ContextUserTurns:             2,
 		SkipShortChars:               60,
+		LongContextThreshold:         32000,
 		RouteHousekeeping:            true,
 		SessionMode:                  "user_turn",
 		CascadeTiers:                 true,
 		AllowUnlistedTargetModels:    true,
 		DefaultModel:                 "",
 		Tiers:                        defaultAutoRouterTiers(),
+		TierThinking:                 defaultTierThinkingMap(),
 		TierCriteria:                 defaultAutoRouterTierCriteria(),
+		ModelContextLimits:           map[string]int{},
 		ResponseHeaders:              true,
 		EscalationKeyword:            "",
 		AllowUserAutoRouter:          true,
@@ -303,9 +314,7 @@ func normalizeModelSlice(items []string) []string {
 	seen := make(map[string]bool, len(items))
 	out := make([]string, 0, len(items))
 	for _, item := range items {
-		for _, part := range strings.FieldsFunc(item, func(r rune) bool {
-			return r == ',' || r == '，' || r == '\n' || r == '\r'
-		}) {
+		for _, part := range splitRouterModelList(item) {
 			m := strings.TrimSpace(part)
 			if m != "" && !seen[m] {
 				seen[m] = true
@@ -416,6 +425,12 @@ func normalizeAutoRouterConfig(cfg *AutoRouterConfig) error {
 		return errors.New("短句直通字符阈值需在 0 到 2000 之间")
 	}
 
+	if cfg.LongContextThreshold < 0 {
+		cfg.LongContextThreshold = 0
+	} else if cfg.LongContextThreshold > 2000000 {
+		cfg.LongContextThreshold = 2000000
+	}
+
 	cfg.SessionMode = strings.ToLower(strings.TrimSpace(cfg.SessionMode))
 	switch cfg.SessionMode {
 	case "":
@@ -426,7 +441,7 @@ func normalizeAutoRouterConfig(cfg *AutoRouterConfig) error {
 	}
 
 	cfg.DefaultModel = strings.TrimSpace(cfg.DefaultModel)
-	if cfg.DefaultModel == cfg.VirtualModel {
+	if cfg.DefaultModel == cfg.VirtualModel || parseRouterModelSpec(cfg.DefaultModel).BaseModel == cfg.VirtualModel {
 		return errors.New("默认兜底模型不能与虚拟路由模型同名")
 	}
 
@@ -438,7 +453,7 @@ func normalizeAutoRouterConfig(cfg *AutoRouterConfig) error {
 		}
 		filtered := make([]string, 0, len(list))
 		for _, m := range list {
-			if m == cfg.VirtualModel {
+			if m == cfg.VirtualModel || parseRouterModelSpec(m).BaseModel == cfg.VirtualModel {
 				return fmt.Errorf("档位 %s 的候选模型不能包含虚拟模型自身 (%s)", tier, cfg.VirtualModel)
 			}
 			filtered = append(filtered, m)
@@ -446,7 +461,16 @@ func normalizeAutoRouterConfig(cfg *AutoRouterConfig) error {
 		normalizedTiers[tier] = filtered
 	}
 	cfg.Tiers = normalizedTiers
+	cfg.TierThinking = normalizeTierThinkingMap(cfg.TierThinking)
 	cfg.TierCriteria = cfg.effectiveTierCriteria()
+	normCtxLimits := make(map[string]int, len(cfg.ModelContextLimits))
+	for k, v := range cfg.ModelContextLimits {
+		k = strings.ToLower(strings.TrimSpace(k))
+		if k != "" && v > 0 {
+			normCtxLimits[k] = v
+		}
+	}
+	cfg.ModelContextLimits = normCtxLimits
 	cfg.EscalationKeyword = strings.TrimSpace(cfg.EscalationKeyword)
 	cfg.SharedClassifierModels = normalizeModelSlice(cfg.SharedClassifierModels)
 
@@ -537,9 +561,17 @@ func cloneAutoRouterConfig(src AutoRouterConfig) AutoRouterConfig {
 	for k, v := range src.Tiers {
 		dst.Tiers[k] = append([]string(nil), v...)
 	}
+	dst.TierThinking = make(map[string]string, len(src.TierThinking))
+	for k, v := range src.TierThinking {
+		dst.TierThinking[k] = v
+	}
 	dst.TierCriteria = make(map[string]string, len(src.TierCriteria))
 	for k, v := range src.TierCriteria {
 		dst.TierCriteria[k] = v
+	}
+	dst.ModelContextLimits = make(map[string]int, len(src.ModelContextLimits))
+	for k, v := range src.ModelContextLimits {
+		dst.ModelContextLimits[k] = v
 	}
 	dst.SharedClassifierModels = append([]string(nil), src.SharedClassifierModels...)
 	return dst
@@ -553,9 +585,11 @@ func isAutoRouterModel(model string) bool {
 // ---------- Session model affinity for coding agents ----------
 
 type autoRouterSessionEntry struct {
-	model     string
-	tier      string
-	expiresAt time.Time
+	model         string
+	tier          string
+	upstreamID    int64
+	upstreamModel string
+	expiresAt     time.Time
 }
 
 var autoRouterSessions = struct {
@@ -565,8 +599,13 @@ var autoRouterSessions = struct {
 }{entries: make(map[string]autoRouterSessionEntry)}
 
 func lookupAutoRouterSession(sessionKey string) (model, tier string, ok bool) {
+	model, tier, _, _, ok = lookupAutoRouterSessionFull(sessionKey)
+	return model, tier, ok
+}
+
+func lookupAutoRouterSessionFull(sessionKey string) (model, tier string, upstreamID int64, upstreamModel string, ok bool) {
 	if sessionKey == "" {
-		return "", "", false
+		return "", "", 0, "", false
 	}
 	now := time.Now()
 	autoRouterSessions.Lock()
@@ -574,19 +613,23 @@ func lookupAutoRouterSession(sessionKey string) (model, tier string, ok bool) {
 	if autoRouterSessions.database != db {
 		autoRouterSessions.database = db
 		autoRouterSessions.entries = make(map[string]autoRouterSessionEntry)
-		return "", "", false
+		return "", "", 0, "", false
 	}
 	entry, exists := autoRouterSessions.entries[sessionKey]
 	if !exists || now.After(entry.expiresAt) {
 		delete(autoRouterSessions.entries, sessionKey)
-		return "", "", false
+		return "", "", 0, "", false
 	}
 	entry.expiresAt = now.Add(affinityTTL())
 	autoRouterSessions.entries[sessionKey] = entry
-	return entry.model, entry.tier, true
+	return entry.model, entry.tier, entry.upstreamID, entry.upstreamModel, true
 }
 
 func rememberAutoRouterSession(sessionKey, model, tier string) {
+	rememberAutoRouterSessionFull(sessionKey, model, tier, 0, "")
+}
+
+func rememberAutoRouterSessionFull(sessionKey, model, tier string, upstreamID int64, upstreamModel string) {
 	if sessionKey == "" || model == "" {
 		return
 	}
@@ -604,10 +647,15 @@ func rememberAutoRouterSession(sessionKey, model, tier string) {
 			}
 		}
 	}
+	if upstreamModel == "" {
+		upstreamModel = parseRouterModelSpec(model).BaseModel
+	}
 	autoRouterSessions.entries[sessionKey] = autoRouterSessionEntry{
-		model:     model,
-		tier:      tier,
-		expiresAt: now.Add(affinityTTL()),
+		model:         model,
+		tier:          tier,
+		upstreamID:    upstreamID,
+		upstreamModel: upstreamModel,
+		expiresAt:     now.Add(affinityTTL()),
 	}
 }
 
@@ -683,9 +731,11 @@ func resolveAutoRouteWithConfig(
 	if cr != nil && cr.Model != "" {
 		reqModel = cr.Model
 	}
+	estimatedTokens := estimateRequestContextTokens(cr)
 	decision = &routerDecisionDetails{
-		RequestedModel: reqModel,
-		Shadow:         cfg.Mode == "shadow",
+		RequestedModel:       reqModel,
+		EstimatedInputTokens: estimatedTokens,
+		Shadow:               cfg.Mode == "shadow",
 	}
 
 	contextTurns := cfg.ContextUserTurns
@@ -705,9 +755,12 @@ func resolveAutoRouteWithConfig(
 	var chosenTier string
 	if rSessionKey != "" && (cfg.SessionMode == "session_lock" || (cfg.SessionMode == "user_turn" && isToolResultTurn(cr))) {
 		if prevModel, prevTier, ok := lookupAutoRouterSession(rSessionKey); ok {
-			if !autoRouterCandidateQuotaExhausted(ak, cfg.VirtualModel, prevModel) &&
-				(cfg.AllowUnlistedTargetModels || ak.allowsModel(prevModel)) {
-				if _, err := pickUpstream(format, prevModel, nil, nativeOnly, cr); err == nil {
+			prevCtxLimit := effectiveModelContextLimit(prevModel, cfg.ModelContextLimits)
+			fitsContext := prevCtxLimit <= 0 || estimatedTokens <= prevCtxLimit
+			if fitsContext &&
+				!routerCandidateQuotaExhausted(ak, cfg.VirtualModel, prevModel) &&
+				(cfg.AllowUnlistedTargetModels || allowsRouterCandidate(ak, prevModel)) {
+				if _, _, err := pickUpstreamForRouterCandidate(format, prevModel, nil, nativeOnly, cr); err == nil {
 					chosenTier = prevTier
 					if chosenTier == "" {
 						chosenTier = TierComplex
@@ -720,12 +773,16 @@ func resolveAutoRouteWithConfig(
 		}
 	}
 
+	// Do not short-circuit to SIMPLE if the multi-turn conversation context is already large
+	// or contains tool/reasoning history.
+	canShortCircuit := estimatedTokens <= 2000 && (cr == nil || len(cr.Messages) <= 4) && !isToolResultTurn(cr)
+
 	if chosenTier == "" {
 		if cfg.RouteHousekeeping && isHousekeepingRequest(cr, lastUser) {
 			chosenTier = TierSimple
 			decision.Tier = TierSimple
 			decision.Cause = "housekeeping"
-		} else if shouldShortCircuitSimple(lastUser, cfg.SkipShortChars) {
+		} else if canShortCircuit && shouldShortCircuitSimple(lastUser, cfg.SkipShortChars) {
 			chosenTier = TierSimple
 			decision.Tier = TierSimple
 			decision.Cause = "short_circuit"
@@ -772,6 +829,16 @@ func resolveAutoRouteWithConfig(
 		}
 	}
 
+	// Automatic long-context tier upgrade: when total conversation tokens exceed
+	// LongContextThreshold, upgrade fast tiers (SIMPLE/MEDIUM) to COMPLEX.
+	if cfg.LongContextThreshold > 0 && estimatedTokens >= cfg.LongContextThreshold &&
+		(chosenTier == TierSimple || chosenTier == TierMedium) && decision.Cause != "housekeeping" {
+		chosenTier = TierComplex
+		decision.Tier = TierComplex
+		decision.ContextUpgraded = true
+		decision.Cause += "+long_context"
+	}
+
 	// Optional escalation keyword in user message
 	if cfg.EscalationKeyword != "" && strings.Contains(lastUser, cfg.EscalationKeyword) {
 		chosenTier = escalateTierOneStep(chosenTier)
@@ -788,7 +855,7 @@ func resolveAutoRouteWithConfig(
 	seen := make(map[string]bool)
 	addRaw := func(m, srcTier string) {
 		m = strings.TrimSpace(m)
-		if m == "" || m == cfg.VirtualModel || seen[m] {
+		if m == "" || m == cfg.VirtualModel || parseRouterModelSpec(m).BaseModel == cfg.VirtualModel || seen[m] {
 			return
 		}
 		seen[m] = true
@@ -813,19 +880,21 @@ func resolveAutoRouteWithConfig(
 	eligible := make([]string, 0, len(ordered))
 	quotaSkipped := 0
 	for idx, item := range ordered {
+		ctxLimit := effectiveModelContextLimit(item.model, cfg.ModelContextLimits)
 		step := routerCandidateStep{
-			Priority:   idx + 1,
-			Model:      item.model,
-			SourceTier: item.sourceTier,
+			Priority:     idx + 1,
+			Model:        item.model,
+			SourceTier:   item.sourceTier,
+			ContextLimit: ctxLimit,
 		}
-		if !cfg.AllowUnlistedTargetModels && ak.ID > 0 && !ak.allowsModel(item.model) {
+		if !cfg.AllowUnlistedTargetModels && ak.ID > 0 && !allowsRouterCandidate(ak, item.model) {
 			step.Status = "skipped"
 			step.Reason = "key_not_allowed"
 			decision.SkippedCandidates++
 			steps = append(steps, step)
 			continue
 		}
-		if autoRouterCandidateQuotaExhausted(ak, cfg.VirtualModel, item.model) {
+		if routerCandidateQuotaExhausted(ak, cfg.VirtualModel, item.model) {
 			step.Status = "skipped"
 			step.Reason = "quota_exhausted"
 			quotaSkipped++
@@ -833,7 +902,14 @@ func resolveAutoRouteWithConfig(
 			steps = append(steps, step)
 			continue
 		}
-		up, err := pickUpstream(format, item.model, nil, nativeOnly, cr)
+		if ctxLimit > 0 && estimatedTokens > ctxLimit {
+			step.Status = "skipped"
+			step.Reason = "context_exceeded"
+			decision.SkippedCandidates++
+			steps = append(steps, step)
+			continue
+		}
+		up, resolvedUpModel, err := pickUpstreamForRouterCandidate(format, item.model, nil, nativeOnly, cr)
 		if err != nil {
 			step.Status = "skipped"
 			step.Reason = "no_healthy_upstream"
@@ -841,10 +917,14 @@ func resolveAutoRouteWithConfig(
 			steps = append(steps, step)
 			continue
 		}
+		tierPolicy := cfg.TierThinking[item.sourceTier]
+		tPlan := resolveAutoRouterThinking(up, resolvedUpModel, item.sourceTier, item.model, tierPolicy, decision.Cause, cr)
+		step.Thinking = tPlan.EffectiveLabel
 		step.UpstreamID = up.ID
 		step.UpstreamName = up.Name
 		if len(eligible) == 0 {
 			step.Status = "selected"
+			decision.SelectedThinking = tPlan.EffectiveLabel
 		} else {
 			step.Status = "standby"
 		}
@@ -858,17 +938,24 @@ func resolveAutoRouteWithConfig(
 		return decision, nil, fmt.Errorf("quota exhausted for model %s (all candidate models exhausted)", reqModel)
 	}
 
-	// If no candidate passed upstream pre-check, fall back to the first non-quota-exhausted candidate
-	// (or DefaultModel) so relayHandler can attempt it and produce normal failure diagnostics.
+	// If no candidate passed pre-check (e.g. all exceeded context or cooling),
+	// fall back to the non-quota-exhausted candidate with the largest context window.
 	if len(eligible) == 0 {
+		bestModel := ""
+		bestCtx := -1
 		for _, item := range ordered {
-			if !autoRouterCandidateQuotaExhausted(ak, cfg.VirtualModel, item.model) &&
-				(cfg.AllowUnlistedTargetModels || ak.ID == 0 || ak.allowsModel(item.model)) {
-				eligible = append(eligible, item.model)
-				break
+			if !routerCandidateQuotaExhausted(ak, cfg.VirtualModel, item.model) &&
+				(cfg.AllowUnlistedTargetModels || ak.ID == 0 || allowsRouterCandidate(ak, item.model)) {
+				cLim := effectiveModelContextLimit(item.model, cfg.ModelContextLimits)
+				if bestModel == "" || cLim > bestCtx {
+					bestModel = item.model
+					bestCtx = cLim
+				}
 			}
 		}
-		if len(eligible) == 0 {
+		if bestModel != "" {
+			eligible = append(eligible, bestModel)
+		} else {
 			if quotaSkipped > 0 {
 				return decision, nil, fmt.Errorf("quota exhausted for model %s (no permitted candidate has remaining quota)", reqModel)
 			}
@@ -888,10 +975,10 @@ func resolveAutoRouteWithConfig(
 		if actual == "" && len(eligible) > 0 {
 			actual = eligible[0]
 		}
-		if !cfg.AllowUnlistedTargetModels && ak.ID > 0 && !ak.allowsModel(actual) {
+		if !cfg.AllowUnlistedTargetModels && ak.ID > 0 && !allowsRouterCandidate(ak, actual) {
 			return decision, nil, errModelNotAllowed
 		}
-		if autoRouterCandidateQuotaExhausted(ak, cfg.VirtualModel, actual) {
+		if routerCandidateQuotaExhausted(ak, cfg.VirtualModel, actual) {
 			return decision, nil, fmt.Errorf("quota exhausted for model %s", actual)
 		}
 		decision.SelectedModel = actual
@@ -912,6 +999,9 @@ func applyAutoRouterHeaders(c *gin.Context, cfg AutoRouterConfig, decision *rout
 	}
 	if decision.SelectedModel != "" {
 		h.Set("X-APISHARE-Router-Model", decision.SelectedModel)
+	}
+	if decision.SelectedThinking != "" && decision.SelectedThinking != "default" {
+		h.Set("X-APISHARE-Router-Thinking", decision.SelectedThinking)
 	}
 	if decision.Cause != "" {
 		h.Set("X-APISHARE-Router-Cause", decision.Cause)
@@ -936,14 +1026,20 @@ func applyAutoRouterHeaders(c *gin.Context, cfg AutoRouterConfig, decision *rout
 // ---------- Admin API Routes (#tab-router) ----------
 
 type autoRouterModelHealth struct {
-	Model         string   `json:"model"`
-	Family        string   `json:"family"`
-	HealthyCount  int      `json:"healthy_count"`
-	TotalCount    int      `json:"total_count"`
-	UpstreamNames []string `json:"upstream_names"`
-	Status        string   `json:"status"` // "healthy" | "cooling" | "missing"
-	PriceIn       float64  `json:"price_in"`
-	PriceOut      float64  `json:"price_out"`
+	Model            string   `json:"model"`
+	BaseModel        string   `json:"base_model,omitempty"`
+	Family           string   `json:"family"`
+	HealthyCount     int      `json:"healthy_count"`
+	TotalCount       int      `json:"total_count"`
+	UpstreamNames    []string `json:"upstream_names"`
+	Status           string   `json:"status"` // "healthy" | "cooling" | "missing"
+	PriceIn          float64  `json:"price_in"`
+	PriceOut         float64  `json:"price_out"`
+	ContextLimit     int      `json:"context_limit"`
+	ContextSource    string   `json:"context_source,omitempty"`
+	MaxOutput        int      `json:"max_output"`
+	SupportsThinking bool     `json:"supports_thinking"`
+	Efforts          []string `json:"efforts,omitempty"`
 }
 
 type autoRouterUpstreamModelGroup struct {
@@ -1079,23 +1175,43 @@ func buildAutoRouterModelHealthMap(ctx context.Context, cfg AutoRouterConfig, av
 		candidates[strings.TrimSpace(cfg.ClassifierModel)] = true
 	}
 	for model := range candidates {
-		info := autoRouterModelHealth{
-			Model:  model,
-			Family: publicFamily(model, ""),
-			Status: "missing",
+		spec := parseRouterModelSpec(model)
+		baseModel := spec.BaseModel
+		if baseModel == "" {
+			baseModel = model
 		}
-		price, _, _ := lookupRelayPrice(model, "")
+		tCap := classifyModelThinkingCapability(nil, baseModel)
+		ctxLimit, ctxSource := effectiveModelContextLimitWithSource(model, cfg.ModelContextLimits)
+		info := autoRouterModelHealth{
+			Model:            model,
+			BaseModel:        baseModel,
+			Family:           publicFamily(baseModel, ""),
+			Status:           "missing",
+			ContextLimit:     ctxLimit,
+			ContextSource:    ctxSource,
+			MaxOutput:        modelMaxOutputLimit(baseModel),
+			SupportsThinking: tCap.SupportsThinking,
+			Efforts:          tCap.Efforts,
+		}
+		price, _, _ := lookupRelayPrice(baseModel, "")
 		info.PriceIn = price.In
 		info.PriceOut = price.Out
 		for i := range snapshot.upstreams {
 			u := &snapshot.upstreams[i]
-			if !u.Enabled || u.Weight <= 0 || !u.servesModel(model) {
+			if !u.Enabled || u.Weight <= 0 || !servesRouterCandidate(u, model) {
 				continue
 			}
 			info.TotalCount++
 			info.UpstreamNames = append(info.UpstreamNames, u.Name)
-			if u.availableForRelay(model) {
+			upTarget := resolveUpstreamCandidateModel(u, model)
+			if u.availableForRelay(upTarget) {
 				info.HealthyCount++
+			}
+			if info.ContextSource == "builtin" && upTarget != "" && upTarget != baseModel {
+				if mappedLim, mappedSrc := effectiveModelContextLimitWithSource(upTarget, cfg.ModelContextLimits); mappedSrc != "builtin" {
+					info.ContextLimit = mappedLim
+					info.ContextSource = mappedSrc
+				}
 			}
 		}
 		switch {
@@ -1158,14 +1274,17 @@ func buildAutoRouterConfigView(ctx context.Context, cfg AutoRouterConfig) gin.H 
 		"min_confidence":                   cfg.MinConfidence,
 		"context_user_turns":               cfg.ContextUserTurns,
 		"skip_short_chars":                 cfg.SkipShortChars,
+		"long_context_threshold":           cfg.LongContextThreshold,
 		"route_housekeeping":               cfg.RouteHousekeeping,
 		"session_mode":                     cfg.SessionMode,
 		"cascade_tiers":                    cfg.CascadeTiers,
 		"allow_unlisted_target_models":     cfg.AllowUnlistedTargetModels,
 		"default_model":                    cfg.DefaultModel,
 		"tiers":                            cfg.Tiers,
+		"tier_thinking":                    normalizeTierThinkingMap(cfg.TierThinking),
 		"tier_criteria":                    cfg.effectiveTierCriteria(),
 		"default_tier_criteria":            defaultAutoRouterTierCriteria(),
+		"model_context_limits":             cfg.ModelContextLimits,
 		"response_headers":                 cfg.ResponseHeaders,
 		"escalation_keyword":               cfg.EscalationKeyword,
 		"allow_user_auto_router":           cfg.AllowUserAutoRouter,
@@ -1207,13 +1326,16 @@ func registerAutoRouterAdminRoutes(auth *gin.RouterGroup) {
 			MinConfidence                *float64             `json:"min_confidence"`
 			ContextUserTurns             *int                 `json:"context_user_turns"`
 			SkipShortChars               *int                 `json:"skip_short_chars"`
+			LongContextThreshold         *int                 `json:"long_context_threshold"`
 			RouteHousekeeping            *bool                `json:"route_housekeeping"`
 			SessionMode                  *string              `json:"session_mode"`
 			CascadeTiers                 *bool                `json:"cascade_tiers"`
 			AllowUnlistedTargetModels    *bool                `json:"allow_unlisted_target_models"`
 			DefaultModel                 *string              `json:"default_model"`
 			Tiers                        *map[string][]string `json:"tiers"`
+			TierThinking                 *map[string]string   `json:"tier_thinking"`
 			TierCriteria                 *map[string]string   `json:"tier_criteria"`
+			ModelContextLimits           *map[string]int      `json:"model_context_limits"`
 			ResponseHeaders              *bool                `json:"response_headers"`
 			EscalationKeyword            *string              `json:"escalation_keyword"`
 			AllowUserAutoRouter          *bool                `json:"allow_user_auto_router"`
@@ -1277,6 +1399,9 @@ func registerAutoRouterAdminRoutes(auth *gin.RouterGroup) {
 		if req.SkipShortChars != nil {
 			cfg.SkipShortChars = *req.SkipShortChars
 		}
+		if req.LongContextThreshold != nil {
+			cfg.LongContextThreshold = *req.LongContextThreshold
+		}
 		if req.RouteHousekeeping != nil {
 			cfg.RouteHousekeeping = *req.RouteHousekeeping
 		}
@@ -1295,8 +1420,14 @@ func registerAutoRouterAdminRoutes(auth *gin.RouterGroup) {
 		if req.Tiers != nil {
 			cfg.Tiers = *req.Tiers
 		}
+		if req.TierThinking != nil {
+			cfg.TierThinking = *req.TierThinking
+		}
 		if req.TierCriteria != nil {
 			cfg.TierCriteria = *req.TierCriteria
+		}
+		if req.ModelContextLimits != nil {
+			cfg.ModelContextLimits = *req.ModelContextLimits
 		}
 		if req.ResponseHeaders != nil {
 			cfg.ResponseHeaders = *req.ResponseHeaders
@@ -1402,10 +1533,11 @@ func registerAutoRouterAdminRoutes(auth *gin.RouterGroup) {
 	// Interactive Dry-Run playground: runs full routing resolution without calling answer upstreams
 	auth.POST("/auto-router/dry-run", func(c *gin.Context) {
 		var req struct {
-			Prompt   string            `json:"prompt"`
-			KeyID    int64             `json:"key_id"`
-			Format   string            `json:"format"`
-			Override *AutoRouterConfig `json:"override"`
+			Prompt          string            `json:"prompt"`
+			KeyID           int64             `json:"key_id"`
+			Format          string            `json:"format"`
+			ReasoningEffort string            `json:"reasoning_effort"`
+			Override        *AutoRouterConfig `json:"override"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数格式不正确"})
@@ -1452,9 +1584,10 @@ func registerAutoRouterAdminRoutes(auth *gin.RouterGroup) {
 			format = FormatGemini
 		}
 		cr := &canonReq{
-			Model:     cfg.VirtualModel,
-			Messages:  []canonMsg{{Role: "user", Text: prompt}},
-			InputText: prompt,
+			Model:           cfg.VirtualModel,
+			Messages:        []canonMsg{{Role: "user", Text: prompt}},
+			InputText:       prompt,
+			ReasoningEffort: strings.TrimSpace(req.ReasoningEffort),
 		}
 		decision, candidates, quotaErr := resolveAutoRouteWithConfig(c.Request.Context(), cfg, ak, format, false, http.Header{}, cr, true)
 		var quotaErrStr string

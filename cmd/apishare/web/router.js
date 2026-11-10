@@ -58,6 +58,11 @@ function cloneRouterDraftFromConfig(cfg) {
   ROUTER_TIERS.forEach(({ id }) => {
     tiers[id] = Array.isArray(cfg.tiers?.[id]) ? [...cfg.tiers[id]] : [];
   });
+  const defaultThinking = { SIMPLE: "none", MEDIUM: "low", COMPLEX: "medium", REASONING: "high" };
+  const tierThinking = {};
+  ROUTER_TIERS.forEach(({ id }) => {
+    tierThinking[id] = cfg.tier_thinking?.[id] || defaultThinking[id] || "auto";
+  });
   const criteria = {};
   ROUTER_TIERS.forEach(({ id, defaultCriteria }) => {
     criteria[id] = cfg.tier_criteria?.[id] || defaultCriteria;
@@ -79,13 +84,16 @@ function cloneRouterDraftFromConfig(cfg) {
     min_confidence: Number(cfg.min_confidence || 0.55),
     context_user_turns: Number(cfg.context_user_turns ?? 2),
     skip_short_chars: Number(cfg.skip_short_chars ?? 60),
+    long_context_threshold: Number(cfg.long_context_threshold ?? 32000),
     route_housekeeping: cfg.route_housekeeping !== false,
     session_mode: cfg.session_mode || "user_turn",
     cascade_tiers: cfg.cascade_tiers !== false,
     allow_unlisted_target_models: cfg.allow_unlisted_target_models !== false,
     default_model: cfg.default_model || "",
     tiers,
+    tier_thinking: tierThinking,
     tier_criteria: criteria,
+    model_context_limits: cfg.model_context_limits ? { ...cfg.model_context_limits } : {},
     response_headers: cfg.response_headers !== false,
     escalation_keyword: cfg.escalation_keyword || "",
     allow_user_auto_router: cfg.allow_user_auto_router !== false,
@@ -224,9 +232,40 @@ function setRouterMode(mode) {
   markRouterDirty(true);
 }
 
+function parseRouterCandidateSpecJS(raw) {
+  const s = String(raw || "").trim();
+  const openIdx = s.lastIndexOf("(");
+  if (openIdx > 0 && s.endsWith(")")) {
+    const base = s.slice(0, openIdx).trim();
+    const inside = s.slice(openIdx + 1, -1).trim();
+    const parts = inside.split(",").map((p) => p.trim()).filter(Boolean);
+    let thinking = "";
+    const otherParts = [];
+    parts.forEach((p) => {
+      const low = p.toLowerCase();
+      if (["none", "off", "disabled", "minimal", "low", "medium", "high", "xhigh", "max", "adaptive", "auto", "keep"].includes(low)) {
+        thinking = low === "off" || low === "disabled" ? "none" : low;
+      } else {
+        otherParts.push(p);
+      }
+    });
+    return { base, thinking, otherParts, raw: s };
+  }
+  return { base: s, thinking: "", otherParts: [], raw: s };
+}
+
+function formatContextWindowTokens(tokens) {
+  const n = Number(tokens || 0);
+  if (n <= 0) return "";
+  if (n >= 1000000) return (n / 1000000).toFixed(n % 1000000 === 0 ? 0 : 1) + "M";
+  if (n >= 1000) return Math.round(n / 1000) + "K";
+  return String(n);
+}
+
 function healthBadgeForRouterModel(model) {
   const healthMap = routerConfigCache?.model_health || {};
-  const info = healthMap[model];
+  const spec = parseRouterCandidateSpecJS(model);
+  const info = healthMap[model] || healthMap[spec.base];
   if (!info || info.status === "missing") {
     return '<span class="router-health-pill missing" title="当前没有已启用的上游提供此模型">无可用上游</span>';
   }
@@ -240,9 +279,28 @@ function healthBadgeForRouterModel(model) {
 
 function priceHintForRouterModel(model) {
   const healthMap = routerConfigCache?.model_health || {};
-  const info = healthMap[model];
-  if (!info || (!info.price_in && !info.price_out)) return "";
-  return '<span class="router-price-tag" title="输入 / 输出单价 (USD / 1M tokens)">$' + Number(info.price_in || 0).toFixed(2) + '/$' + Number(info.price_out || 0).toFixed(2) + '</span>';
+  const spec = parseRouterCandidateSpecJS(model);
+  const info = healthMap[model] || healthMap[spec.base];
+  let html = "";
+  const ctxLimit = Number(info?.context_limit || 0);
+  if (ctxLimit > 0) {
+    const srcLabels = {
+      spec: "候选内联指定",
+      config: "管理员手动覆盖",
+      learned: "上游错误响应自动学习",
+      probed: "上游 /v1/models 自动探测",
+      catalog: "LiteLLM 官方目录同步",
+      builtin: "内置模型族识别",
+    };
+    const srcText = srcLabels[info?.context_source] || "自动识别";
+    const maxOut = Number(info?.max_output || 0);
+    const outHint = maxOut > 0 ? " · 最大输出 " + formatContextWindowTokens(maxOut) : "";
+    html += '<span class="router-price-tag" title="最大上下文窗口：' + ctxLimit.toLocaleString() + ' tokens（来源：' + srcText + outHint + '）">' + formatContextWindowTokens(ctxLimit) + ' ctx</span>';
+  }
+  if (info && (info.price_in || info.price_out)) {
+    html += '<span class="router-price-tag" title="输入 / 输出单价 (USD / 1M tokens)">$' + Number(info.price_in || 0).toFixed(2) + '/$' + Number(info.price_out || 0).toFixed(2) + '</span>';
+  }
+  return html;
 }
 
 function upstreamModelGroupsForRouter() {
@@ -479,15 +537,46 @@ function renderRouterTiersEditor() {
   container.innerHTML = noUpstreamBanner + ROUTER_TIERS.map(({ id, label, subtitle }) => {
     const list = routerDraft.tiers[id] || [];
     const criteria = routerDraft.tier_criteria[id] || "";
+    const tierThinking = (routerDraft.tier_thinking && routerDraft.tier_thinking[id]) || "auto";
+    const thinkingOptions = [
+      { v: "auto", l: "思考：按档位自动" },
+      { v: "none", l: "思考：关闭 (none)" },
+      { v: "low", l: "思考：低 (low)" },
+      { v: "medium", l: "思考：中 (medium)" },
+      { v: "high", l: "思考：高 (high)" },
+      { v: "xhigh", l: "思考：超高 (xhigh)" },
+      { v: "max", l: "思考：最大 (max)" },
+      { v: "adaptive", l: "思考：自适应 (adaptive)" },
+      { v: "keep", l: "思考：保留原参 (keep)" },
+    ];
+    const tierThinkingSelectHtml = '<select class="router-tier-thinking-select" title="本档默认思考强度（自动按目标模型协议适配）" style="font-size:12px;padding:2px 6px;border-radius:6px;height:26px" onchange="updateRouterTierThinking(\'' + id + '\', this.value)">'
+      + thinkingOptions.map((o) => '<option value="' + o.v + '"' + (tierThinking === o.v ? " selected" : "") + '>' + o.l + '</option>').join("")
+      + '</select>';
+
     const candidatesHtml = list.length
       ? list.map((model, idx) => {
+          const spec = parseRouterCandidateSpecJS(model);
+          const candThinkOpts = [
+            { v: "", l: "跟随档位" },
+            { v: "none", l: "关闭思考 (none)" },
+            { v: "low", l: "低思考 (low)" },
+            { v: "medium", l: "中思考 (medium)" },
+            { v: "high", l: "高思考 (high)" },
+            { v: "xhigh", l: "超高 (xhigh)" },
+            { v: "max", l: "最大 (max)" },
+            { v: "adaptive", l: "自适应 (adaptive)" },
+          ];
+          const candThinkSelect = '<select class="router-cand-thinking-select" title="单独覆盖此候选模型的思考档位，也支持手动写 model(4096,128k)" style="font-size:11px;padding:1px 4px;border-radius:5px;height:22px;max-width:108px" onchange="updateRouterCandidateThinking(\'' + id + '\',' + idx + ',this.value)">'
+            + candThinkOpts.map((o) => '<option value="' + o.v + '"' + (spec.thinking === o.v ? " selected" : "") + '>' + o.l + '</option>').join("")
+            + '</select>';
           return '<div class="router-candidate-item">'
             + '<div class="router-candidate-main">'
             + '<span class="router-priority-rank" title="优先级 #' + (idx + 1) + '">#' + (idx + 1) + '</span>'
-            + modelIcon(model)
+            + modelIcon(spec.base)
             + '<span class="router-candidate-name" title="' + esc(model) + '">' + esc(model) + '</span>'
             + '</div>'
             + '<div class="router-candidate-meta">'
+            + candThinkSelect
             + priceHintForRouterModel(model)
             + healthBadgeForRouterModel(model)
             + '<div class="router-candidate-actions">'
@@ -505,12 +594,12 @@ function renderRouterTiersEditor() {
     return '<div class="router-tier-card" data-tier="' + id + '">'
       + '<div class="router-tier-header">'
       + '<div class="router-tier-title"><span class="router-tier-badge tier-' + id + '">' + esc(label) + '</span><small class="muted">' + esc(subtitle) + '</small></div>'
-      + '<span class="count-pill">' + list.length + ' 个候选</span>'
+      + '<div style="display:flex;align-items:center;gap:6px">' + tierThinkingSelectHtml + '<span class="count-pill">' + list.length + ' 个候选</span></div>'
       + '</div>'
       + '<div class="router-candidate-list">' + candidatesHtml + '</div>'
       + '<div class="router-tier-add-bar">'
       + quickSelectHtml
-      + '<input id="routerAddInput_' + id + '" class="router-tier-input" type="text" list="routerAvailableModelsList" placeholder="或手动输入模型 ID 回车添加…" onkeydown="if(event.key===\'Enter\'){event.preventDefault();addRouterCandidateFromInput(\'' + id + '\');}">'
+      + '<input id="routerAddInput_' + id + '" class="router-tier-input" type="text" list="routerAvailableModelsList" placeholder="或输入 model / model(high,128k) 回车添加…" onkeydown="if(event.key===\'Enter\'){event.preventDefault();addRouterCandidateFromInput(\'' + id + '\');}">'
       + '<button type="button" class="btn mini ghost router-tier-add-btn" onclick="addRouterCandidateFromInput(\'' + id + '\')">添加候选</button>'
       + '</div>'
       + '<details class="router-tier-criteria">'
@@ -550,13 +639,31 @@ function removeRouterCandidate(tier, idx) {
 
 function addRouterCandidate(tier, rawModel) {
   if (!routerDraft) return;
-  const parts = String(rawModel || "").split(/[,，\n\r]+/).map((s) => s.trim()).filter(Boolean);
+  const rawStr = String(rawModel || "").trim();
+  if (!rawStr) return;
+  // Split commas outside parentheses so model(high,128k) stays intact
+  const parts = [];
+  let cur = "";
+  let depth = 0;
+  for (let i = 0; i < rawStr.length; i++) {
+    const ch = rawStr[i];
+    if (ch === "(") depth++;
+    else if (ch === ")" && depth > 0) depth--;
+    if (depth === 0 && (ch === "," || ch === "，" || ch === "\n" || ch === "\r")) {
+      if (cur.trim()) parts.push(cur.trim());
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  if (cur.trim()) parts.push(cur.trim());
   if (!parts.length) return;
   if (!Array.isArray(routerDraft.tiers[tier])) routerDraft.tiers[tier] = [];
   const list = routerDraft.tiers[tier];
   let added = 0;
   parts.forEach((m) => {
-    if (m === routerDraft.virtual_model) {
+    const spec = parseRouterCandidateSpecJS(m);
+    if (spec.base === routerDraft.virtual_model) {
       toast("候选模型不能是虚拟模型自身 (" + m + ")", "error");
       return;
     }
@@ -569,6 +676,26 @@ function addRouterCandidate(tier, rawModel) {
     renderRouterTiersEditor();
     markRouterDirty(true);
   }
+}
+
+function updateRouterTierThinking(tier, val) {
+  if (!routerDraft) return;
+  if (!routerDraft.tier_thinking) routerDraft.tier_thinking = {};
+  routerDraft.tier_thinking[tier] = val || "auto";
+  markRouterDirty(true);
+}
+
+function updateRouterCandidateThinking(tier, idx, level) {
+  if (!routerDraft || !Array.isArray(routerDraft.tiers[tier])) return;
+  const list = routerDraft.tiers[tier];
+  if (idx < 0 || idx >= list.length) return;
+  const spec = parseRouterCandidateSpecJS(list[idx]);
+  const parts = [];
+  if (level) parts.push(level);
+  if (spec.otherParts && spec.otherParts.length) parts.push(...spec.otherParts);
+  list[idx] = parts.length ? spec.base + "(" + parts.join(",") + ")" : spec.base;
+  renderRouterTiersEditor();
+  markRouterDirty(true);
 }
 
 function addRouterCandidateFromInput(tier) {
@@ -748,6 +875,7 @@ function renderAutoRouterConfig() {
   $("routerMinConfidence").value = routerDraft.min_confidence || 0.55;
   $("routerContextTurns").value = routerDraft.context_user_turns ?? 2;
   $("routerSkipShortChars").value = routerDraft.skip_short_chars ?? 60;
+  if ($("routerLongContextThreshold")) $("routerLongContextThreshold").value = routerDraft.long_context_threshold ?? 32000;
   $("routerSessionMode").value = routerDraft.session_mode || "user_turn";
   $("routerHousekeeping").checked = routerDraft.route_housekeeping !== false;
   $("routerEscalationKeyword").value = routerDraft.escalation_keyword || "";
@@ -782,6 +910,7 @@ function collectRouterDraftFromInputs() {
   routerDraft.min_confidence = Number($("routerMinConfidence").value || 0.55);
   routerDraft.context_user_turns = Number($("routerContextTurns").value || 2);
   routerDraft.skip_short_chars = Number($("routerSkipShortChars").value || 0);
+  if ($("routerLongContextThreshold")) routerDraft.long_context_threshold = Number($("routerLongContextThreshold").value || 0);
   routerDraft.session_mode = $("routerSessionMode").value || "user_turn";
   routerDraft.route_housekeeping = $("routerHousekeeping").checked;
   routerDraft.escalation_keyword = $("routerEscalationKeyword").value.trim();
@@ -920,11 +1049,15 @@ function renderRouterDryRunResult(res) {
       : st.status === "standby"
       ? '<span class="badge">顺位待命 #' + st.priority + '</span>'
       : '<span class="badge warn">已跳过 · ' + esc(st.reason || "不可用") + '</span>';
+    const ctxTag = st.context_limit ? '<span class="router-price-tag">' + formatContextWindowTokens(st.context_limit) + ' ctx</span>' : '';
+    const thinkTag = st.thinking ? '<span class="router-price-tag" title="实际适配思考档位">思考: ' + esc(st.thinking) + '</span>' : '';
     return '<div class="router-step-row ' + esc(st.status) + '">'
-      + '<div style="display:flex;align-items:center;gap:6px">'
+      + '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
       + '<span class="router-tier-badge tier-' + esc(st.source_tier) + '">' + esc(st.source_tier) + '</span>'
       + modelIcon(st.model)
       + '<code>' + esc(st.model) + '</code>'
+      + thinkTag
+      + ctxTag
       + (st.upstream_name ? '<small class="muted">→ ' + esc(st.upstream_name) + '</small>' : '')
       + '</div>'
       + statusLabel
@@ -935,6 +1068,8 @@ function renderRouterDryRunResult(res) {
     + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
     + '<span>判定档位：</span><span class="router-tier-badge tier-' + esc(dec.tier || "DEFAULT") + '">' + esc(dec.tier || "DEFAULT") + '</span>'
     + '<span>→ 选中模型：</span>' + modelLabel(dec.selected_model || "")
+    + (dec.selected_thinking ? '<span class="router-price-tag" title="自动适配思考模式">思考: ' + esc(dec.selected_thinking) + '</span>' : '')
+    + (dec.estimated_input_tokens ? '<span class="router-price-tag" title="估算输入上下文 Tokens">~' + Number(dec.estimated_input_tokens).toLocaleString() + ' tok</span>' : '')
     + (dec.shadow && dec.shadow_model ? '<small class="muted">(Shadow 拟选: ' + esc(dec.shadow_model) + ')</small>' : '')
     + '</div>'
     + '<small class="muted">原因: <code>' + esc(dec.cause || "—") + '</code> · 分类耗时 ' + Number(dec.classifier_ms || 0) + ' ms'

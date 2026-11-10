@@ -58,6 +58,13 @@ func canonicalPricingModel(model string) string {
 	return model
 }
 
+// ModelTokenLimits describes a model's maximum input context window and output token limits
+// synced from LiteLLM's official model_prices_and_context_window.json catalog or probed/learned.
+type ModelTokenLimits struct {
+	ContextLimit int `json:"context_limit,omitempty"`
+	MaxOutput    int `json:"max_output,omitempty"`
+}
+
 // 官方价格缓存（内存），并持久化到 settings 表（重启离线也可用）。
 var autoPricing = struct {
 	sync.RWMutex
@@ -65,9 +72,15 @@ var autoPricing = struct {
 	fetchedAt string
 }{data: map[string]Price{}}
 
+// 官方模型上下文与最大输出上限缓存（随 LiteLLM 价格表同步并持久化）。
+var autoModelLimits = struct {
+	sync.RWMutex
+	data map[string]ModelTokenLimits
+}{data: map[string]ModelTokenLimits{}}
+
 var pricingHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
-// loadAutoPricingCache 启动时从 DB 恢复上次同步的价格。
+// loadAutoPricingCache 启动时从 DB 恢复上次同步的价格与上下文限制。
 func loadAutoPricingCache() {
 	if blob, err := settingsGet("auto_pricing_json"); err == nil && blob != "" {
 		var data map[string]Price
@@ -82,6 +95,32 @@ func loadAutoPricingCache() {
 			autoPricing.data = data
 			autoPricing.fetchedAt = at
 			autoPricing.Unlock()
+		}
+	}
+	if limitsBlob, err := settingsGet("auto_model_limits_json"); err == nil && limitsBlob != "" {
+		var byFull map[string]ModelTokenLimits
+		if json.Unmarshal([]byte(limitsBlob), &byFull) == nil && len(byFull) > 0 {
+			type bareLimitEntry struct {
+				lim  ModelTokenLimits
+				tier int
+			}
+			bare := map[string]bareLimitEntry{}
+			for key, lim := range byFull {
+				if name, tier := normalizePricingKey(key); name != "" {
+					if old, exists := bare[name]; !exists || tier < old.tier {
+						bare[name] = bareLimitEntry{lim: lim, tier: tier}
+					}
+				}
+			}
+			autoModelLimits.Lock()
+			autoModelLimits.data = map[string]ModelTokenLimits{}
+			for k, v := range byFull {
+				autoModelLimits.data[k] = v
+			}
+			for k, v := range bare {
+				autoModelLimits.data["bare:"+k] = v.lim
+			}
+			autoModelLimits.Unlock()
 		}
 	}
 }
@@ -105,7 +144,7 @@ func refreshAutoPricing() (int, error) {
 		return 0, err
 	}
 
-	// LiteLLM 原始结构：{ "模型名": { "input_cost_per_token": 2.5e-6, "output_cost_per_token": 1e-5, ... } }
+	// LiteLLM 原始结构：{ "模型名": { "input_cost_per_token": 2.5e-6, "output_cost_per_token": 1e-5, "max_input_tokens": 128000, ... } }
 	var src map[string]struct {
 		InputCostPerToken          *float64 `json:"input_cost_per_token"`
 		OutputCostPerToken         *float64 `json:"output_cost_per_token"`
@@ -116,6 +155,9 @@ func refreshAutoPricing() (int, error) {
 		InputAudioCostPerToken     *float64 `json:"input_cost_per_audio_token"`
 		OutputAudioCostPerToken    *float64 `json:"output_cost_per_audio_token"`
 		CacheReadAudioCostPerToken *float64 `json:"cache_read_input_audio_token_cost"`
+		MaxInputTokens             *int     `json:"max_input_tokens"`
+		MaxOutputTokens            *int     `json:"max_output_tokens"`
+		MaxTokens                  *int     `json:"max_tokens"`
 	}
 	if err := json.Unmarshal(raw, &src); err != nil {
 		return 0, err
@@ -128,7 +170,37 @@ func refreshAutoPricing() (int, error) {
 		tier int
 	}
 	bare := map[string]bareEntry{}
+
+	limitsByFull := map[string]ModelTokenLimits{}
+	type bareLimitEntry struct {
+		lim  ModelTokenLimits
+		tier int
+	}
+	limitsBare := map[string]bareLimitEntry{}
+
 	for key, e := range src {
+		ctxLimit := 0
+		if e.MaxInputTokens != nil && *e.MaxInputTokens > 0 {
+			ctxLimit = *e.MaxInputTokens
+		} else if e.MaxTokens != nil && *e.MaxTokens >= 2048 {
+			ctxLimit = *e.MaxTokens
+		}
+		maxOut := 0
+		if e.MaxOutputTokens != nil && *e.MaxOutputTokens > 0 {
+			maxOut = *e.MaxOutputTokens
+		} else if e.MaxTokens != nil && *e.MaxTokens > 0 && e.MaxInputTokens != nil && *e.MaxTokens <= *e.MaxInputTokens {
+			maxOut = *e.MaxTokens
+		}
+		if ctxLimit > 0 || maxOut > 0 {
+			lim := ModelTokenLimits{ContextLimit: ctxLimit, MaxOutput: maxOut}
+			limitsByFull[key] = lim
+			if name, tier := normalizePricingKey(key); name != "" {
+				if old, exists := limitsBare[name]; !exists || tier < old.tier {
+					limitsBare[name] = bareLimitEntry{lim: lim, tier: tier}
+				}
+			}
+		}
+
 		if e.InputCostPerToken == nil {
 			continue // 无定价的条目（部分 audio/图像/实验条目）跳过
 		}
@@ -169,12 +241,27 @@ func refreshAutoPricing() (int, error) {
 	autoPricing.fetchedAt = fetchedAt
 	autoPricing.Unlock()
 
+	if len(limitsByFull) > 0 {
+		autoModelLimits.Lock()
+		autoModelLimits.data = map[string]ModelTokenLimits{}
+		for k, v := range limitsByFull {
+			autoModelLimits.data[k] = v
+		}
+		for k, v := range limitsBare {
+			autoModelLimits.data["bare:"+k] = v.lim
+		}
+		autoModelLimits.Unlock()
+		if limitsBlob, err := json.Marshal(limitsByFull); err == nil {
+			_ = settingsSet("auto_model_limits_json", string(limitsBlob))
+		}
+	}
+
 	blob, _ := json.Marshal(byFull)
 	_ = settingsSet("auto_pricing_json", string(blob))
 	_ = settingsSet("auto_pricing_fetched_at", fetchedAt)
 	_ = settingsSet("auto_pricing_schema_version", pricingCacheSchemaVersion)
 
-	log.Printf("[pricing] official prices synced: %d models from %s", len(byFull), url)
+	log.Printf("[pricing] official prices synced: %d models (%d token limits) from %s", len(byFull), len(limitsByFull), url)
 	return len(byFull), nil
 }
 
@@ -286,6 +373,45 @@ func lookupAutoPrice(data map[string]Price, model string) (Price, bool) {
 		}
 	}
 	return Price{}, false
+}
+
+// lookupAutoModelLimits 在官方模型限制缓存中查找某模型的最大上下文与最大输出上限。
+func lookupAutoModelLimits(model string) (ModelTokenLimits, bool) {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if model == "" {
+		return ModelTokenLimits{}, false
+	}
+	autoModelLimits.RLock()
+	defer autoModelLimits.RUnlock()
+	data := autoModelLimits.data
+	if len(data) == 0 {
+		return ModelTokenLimits{}, false
+	}
+	if lim, ok := data["bare:"+model]; ok {
+		return lim, true
+	}
+	if name, _ := normalizePricingKey(model); name != "" && name != model {
+		if lim, ok := data["bare:"+name]; ok {
+			return lim, true
+		}
+	}
+	if lim, ok := data[model]; ok {
+		return lim, true
+	}
+	if bare := protocolModelName(model); bare != "" && bare != model {
+		if lim, ok := data["bare:"+bare]; ok {
+			return lim, true
+		}
+		if lim, ok := data[bare]; ok {
+			return lim, true
+		}
+	}
+	for _, prefix := range []string{"openai/", "anthropic/", "gemini/", "google/", "xai/", "deepseek/", "mistral/", "dashscope/", "moonshot/", "zhipuai/", "minimax/"} {
+		if lim, ok := data[prefix+model]; ok {
+			return lim, true
+		}
+	}
+	return ModelTokenLimits{}, false
 }
 
 // lookupPrice 返回某模型的有效单价与来源。

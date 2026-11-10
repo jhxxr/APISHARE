@@ -44,9 +44,11 @@ type UserAutoRouterConfig struct {
 	ClassifierFallback      string              `json:"classifier_fallback"` // "heuristic" | "default_model"
 	MinConfidence           float64             `json:"min_confidence"`
 	SkipShortChars          int                 `json:"skip_short_chars"`
+	LongContextThreshold    int                 `json:"long_context_threshold"`
 	CascadeTiers            bool                `json:"cascade_tiers"`
 	DefaultModel            string              `json:"default_model"`
 	Tiers                   map[string][]string `json:"tiers"`
+	TierThinking            map[string]string   `json:"tier_thinking"`
 	TierCriteria            map[string]string   `json:"tier_criteria"`
 }
 
@@ -69,6 +71,7 @@ func defaultUserAutoRouterConfig() UserAutoRouterConfig {
 		ClassifierFallback:     "heuristic",
 		MinConfidence:          0.55,
 		SkipShortChars:         60,
+		LongContextThreshold:   32000,
 		CascadeTiers:           true,
 		DefaultModel:           "",
 		Tiers: map[string][]string{
@@ -77,6 +80,7 @@ func defaultUserAutoRouterConfig() UserAutoRouterConfig {
 			TierComplex:   {},
 			TierReasoning: {},
 		},
+		TierThinking: defaultTierThinkingMap(),
 		TierCriteria: defaultAutoRouterTierCriteria(),
 	}
 }
@@ -86,6 +90,10 @@ func cloneUserAutoRouterConfig(src UserAutoRouterConfig) UserAutoRouterConfig {
 	dst.Tiers = make(map[string][]string, len(src.Tiers))
 	for k, v := range src.Tiers {
 		dst.Tiers[k] = append([]string(nil), v...)
+	}
+	dst.TierThinking = make(map[string]string, len(src.TierThinking))
+	for k, v := range src.TierThinking {
+		dst.TierThinking[k] = v
 	}
 	dst.TierCriteria = make(map[string]string, len(src.TierCriteria))
 	for k, v := range src.TierCriteria {
@@ -536,9 +544,14 @@ func normalizeUserAutoRouterConfig(sub string, ucfg *UserAutoRouterConfig, stric
 	if ucfg.SkipShortChars < 0 || ucfg.SkipShortChars > 2000 {
 		ucfg.SkipShortChars = def.SkipShortChars
 	}
+	if ucfg.LongContextThreshold < 0 {
+		ucfg.LongContextThreshold = 0
+	} else if ucfg.LongContextThreshold > 2000000 {
+		ucfg.LongContextThreshold = 2000000
+	}
 
 	ucfg.DefaultModel = strings.TrimSpace(ucfg.DefaultModel)
-	if strings.EqualFold(ucfg.DefaultModel, ucfg.VirtualModel) && ucfg.DefaultModel != "" {
+	if (strings.EqualFold(ucfg.DefaultModel, ucfg.VirtualModel) || strings.EqualFold(parseRouterModelSpec(ucfg.DefaultModel).BaseModel, ucfg.VirtualModel)) && ucfg.DefaultModel != "" {
 		if strict {
 			return errors.New("默认兜底模型不能与私人路由模型同名")
 		}
@@ -554,7 +567,7 @@ func normalizeUserAutoRouterConfig(sub string, ucfg *UserAutoRouterConfig, stric
 		}
 		filtered := make([]string, 0, len(list))
 		for _, m := range list {
-			if strings.EqualFold(m, ucfg.VirtualModel) {
+			if strings.EqualFold(m, ucfg.VirtualModel) || strings.EqualFold(parseRouterModelSpec(m).BaseModel, ucfg.VirtualModel) {
 				if strict {
 					return fmt.Errorf("档位 %s 的候选模型不能包含私人路由模型自身 (%s)", tier, ucfg.VirtualModel)
 				}
@@ -566,6 +579,7 @@ func normalizeUserAutoRouterConfig(sub string, ucfg *UserAutoRouterConfig, stric
 		totalCandidates += len(filtered)
 	}
 	ucfg.Tiers = normalizedTiers
+	ucfg.TierThinking = normalizeTierThinkingMap(ucfg.TierThinking)
 	ucfg.TierCriteria = ucfg.effectiveTierCriteria()
 
 	if ucfg.Enabled && strict {
@@ -628,7 +642,7 @@ func userServesModel(ak ApiKey, model string) bool {
 	}
 	for i := range ups {
 		u := &ups[i]
-		if u.Enabled && u.Weight > 0 && u.servesModel(model) {
+		if u.Enabled && u.Weight > 0 && servesRouterCandidate(u, model) {
 			return true
 		}
 	}
@@ -715,7 +729,7 @@ func pickUserUpstream(sub string, format clientFormat, model string, tried map[i
 		if nativeOnly && u.Type != format.nativeUpstreamType() {
 			continue
 		}
-		if !u.servesModel(model) {
+		if !servesRouterCandidate(&u, model) {
 			continue
 		}
 		elig = append(elig, u)
@@ -733,7 +747,8 @@ func pickUserUpstream(sub string, format clientFormat, model string, tried map[i
 	var healthyTop []Upstream
 	var cooledTop []Upstream
 	for _, u := range elig {
-		if u.availableForRelay(model) {
+		upTarget := resolveUpstreamCandidateModel(&u, model)
+		if u.availableForRelay(upTarget) {
 			if len(healthyTop) == 0 || u.Priority == healthyTop[0].Priority {
 				healthyTop = append(healthyTop, u)
 			}
@@ -1194,9 +1209,11 @@ func resolveUserAutoRouteWithConfig(ctx context.Context, sub string, ucfg UserAu
 	if cr != nil && strings.TrimSpace(cr.Model) != "" {
 		requested = strings.TrimSpace(cr.Model)
 	}
+	estimatedTokens := estimateRequestContextTokens(cr)
 	decision := &routerDecisionDetails{
-		RequestedModel:     requested,
-		ClassifierProvider: ucfg.ClassifierSource,
+		RequestedModel:       requested,
+		ClassifierProvider:   ucfg.ClassifierSource,
+		EstimatedInputTokens: estimatedTokens,
 	}
 
 	latestUser, stateText := extractClassifierState(cr, 2, 6000)
@@ -1213,23 +1230,30 @@ func resolveUserAutoRouteWithConfig(ctx context.Context, sub string, ucfg UserAu
 		endpointForKey := nativeEndpoint(format, cr)
 		skey := "user:" + sub + ":" + scopedSessionKey(ak.ID, sessionKeyFromCanon(endpointForKey, headers, cr))
 		if prevModel, prevTier, ok := lookupAutoRouterSession(skey); ok && prevModel != "" {
-			if target, okTarget, _ := evaluateUserCandidateTarget(sub, ucfg, ak, format, nativeOnly, cr, prevModel, prevTier); okTarget {
-				decision.Tier = prevTier
-				decision.Cause = "session_tool_followup"
-				decision.SelectedModel = prevModel
-				decision.Steps = []routerCandidateStep{{
-					Priority:   1,
-					Model:      prevModel,
-					SourceTier: prevTier,
-					Status:     "selected",
-				}}
-				return decision, []userRouteTarget{target}, nil
+			ctxLimit := effectiveModelContextLimit(prevModel, nil)
+			if estimatedTokens <= 0 || ctxLimit <= 0 || estimatedTokens <= ctxLimit {
+				if target, okTarget, _ := evaluateUserCandidateTarget(sub, ucfg, ak, format, nativeOnly, cr, prevModel, prevTier); okTarget {
+					tPlan := resolveAutoRouterThinking(nil, prevModel, prevTier, prevModel, ucfg.TierThinking[prevTier], "session_tool_followup", cr)
+					decision.Tier = prevTier
+					decision.Cause = "session_tool_followup"
+					decision.SelectedModel = prevModel
+					decision.SelectedThinking = tPlan.EffectiveLabel
+					decision.Steps = []routerCandidateStep{{
+						Priority:     1,
+						Model:        prevModel,
+						SourceTier:   prevTier,
+						Status:       "selected",
+						Thinking:     tPlan.EffectiveLabel,
+						ContextLimit: ctxLimit,
+					}}
+					return decision, []userRouteTarget{target}, nil
+				}
 			}
 		}
 	}
 
 	if chosenTier == "" {
-		if shouldShortCircuitSimple(latestUser, ucfg.SkipShortChars) {
+		if shouldShortCircuitSimple(latestUser, ucfg.SkipShortChars) && estimatedTokens <= 2000 && (cr == nil || len(cr.Messages) <= 4) && !hasToolResult {
 			chosenTier = TierSimple
 			cause = "short_circuit"
 		} else if ucfg.ClassifierSource == "heuristic" || ucfg.ClassifierSource == "" {
@@ -1270,10 +1294,21 @@ func resolveUserAutoRouteWithConfig(ctx context.Context, sub string, ucfg UserAu
 	if chosenTier == "" {
 		chosenTier = TierComplex
 	}
+	if ucfg.LongContextThreshold > 0 && estimatedTokens >= ucfg.LongContextThreshold && cause != "housekeeping" {
+		if chosenTier == TierSimple || chosenTier == TierMedium {
+			chosenTier = TierComplex
+			decision.ContextUpgraded = true
+			if cause != "" {
+				cause += "+long_context"
+			} else {
+				cause = "long_context"
+			}
+		}
+	}
 	decision.Tier = chosenTier
 	decision.Cause = cause
 
-	targets, steps, skippedCount, quotaErr := selectUserTierTargets(sub, ucfg, ak, format, nativeOnly, cr, chosenTier)
+	targets, steps, skippedCount, quotaErr := selectUserTierTargets(sub, ucfg, ak, format, nativeOnly, cr, chosenTier, estimatedTokens, cause)
 	decision.Steps = steps
 	decision.SkippedCandidates = skippedCount
 	if quotaErr != nil {
@@ -1281,6 +1316,12 @@ func resolveUserAutoRouteWithConfig(ctx context.Context, sub string, ucfg UserAu
 	}
 	if len(targets) > 0 {
 		decision.SelectedModel = targets[0].Model
+		for _, st := range steps {
+			if st.Status == "selected" {
+				decision.SelectedThinking = st.Thinking
+				break
+			}
+		}
 	}
 	decision.syncOutcome(ucfg.DefaultModel)
 	return decision, targets, nil
@@ -1288,11 +1329,12 @@ func resolveUserAutoRouteWithConfig(ctx context.Context, sub string, ucfg UserAu
 
 func evaluateUserCandidateTarget(sub string, ucfg UserAutoRouterConfig, ak ApiKey, format clientFormat, nativeOnly bool, cr *canonReq, model string, sourceTier string) (userRouteTarget, bool, string) {
 	model = strings.TrimSpace(model)
+	spec := parseRouterModelSpec(model)
 	target := userRouteTarget{
 		Model:      model,
 		SourceTier: sourceTier,
 	}
-	if model == "" || strings.EqualFold(model, ucfg.VirtualModel) {
+	if spec.BaseModel == "" || strings.EqualFold(spec.BaseModel, ucfg.VirtualModel) {
 		return target, false, "invalid_model"
 	}
 
@@ -1301,14 +1343,15 @@ func evaluateUserCandidateTarget(sub string, ucfg UserAutoRouterConfig, ak ApiKe
 	if ups, err := getUserUpstreams(sub); err == nil {
 		for i := range ups {
 			u := &ups[i]
-			if !u.Enabled || u.Weight <= 0 || !u.servesModel(model) {
+			if !u.Enabled || u.Weight <= 0 || !servesRouterCandidate(u, model) {
 				continue
 			}
 			if nativeOnly && u.Type != format.nativeUpstreamType() {
 				continue
 			}
 			byokConfigured = true
-			if u.availableForRelay(model) {
+			candModel := resolveUpstreamCandidateModel(u, model)
+			if u.availableForRelay(candModel) {
 				byokHealthy = true
 				break
 			}
@@ -1319,11 +1362,11 @@ func evaluateUserCandidateTarget(sub string, ucfg UserAutoRouterConfig, ak ApiKe
 	var siteHealthy bool
 	var siteRejectReason string
 	if ucfg.ChannelPreference != "personal_only" {
-		if ak.ID > 0 && !ak.allowsModel(model) {
+		if ak.ID > 0 && !allowsRouterCandidate(ak, model) {
 			siteRejectReason = "not_in_key_whitelist"
-		} else if ak.ID > 0 && ak.quotaExhausted(model) {
+		} else if ak.ID > 0 && routerCandidateQuotaExhausted(ak, "", model) {
 			siteRejectReason = "quota_exhausted"
-		} else if up, err := pickUpstream(format, model, nil, nativeOnly, cr); err == nil && up != nil {
+		} else if up, _, err := pickUpstreamForRouterCandidate(format, model, nil, nativeOnly, cr); err == nil && up != nil {
 			siteHealthy = true
 		} else {
 			siteRejectReason = "no_healthy_upstream"
@@ -1381,7 +1424,7 @@ func evaluateUserCandidateTarget(sub string, ucfg UserAutoRouterConfig, ak ApiKe
 	}
 }
 
-func selectUserTierTargets(sub string, ucfg UserAutoRouterConfig, ak ApiKey, format clientFormat, nativeOnly bool, cr *canonReq, startTier string) ([]userRouteTarget, []routerCandidateStep, int, error) {
+func selectUserTierTargets(sub string, ucfg UserAutoRouterConfig, ak ApiKey, format clientFormat, nativeOnly bool, cr *canonReq, startTier string, estimatedTokens int, cause string) ([]userRouteTarget, []routerCandidateStep, int, error) {
 	type tierCandidate struct {
 		model      string
 		sourceTier string
@@ -1390,7 +1433,8 @@ func selectUserTierTargets(sub string, ucfg UserAutoRouterConfig, ak ApiKey, for
 	ordered := make([]tierCandidate, 0, 12)
 	addCandidate := func(model, tier string) {
 		m := strings.TrimSpace(model)
-		if m == "" || strings.EqualFold(m, ucfg.VirtualModel) || seen[m] {
+		spec := parseRouterModelSpec(m)
+		if spec.BaseModel == "" || strings.EqualFold(spec.BaseModel, ucfg.VirtualModel) || seen[m] {
 			return
 		}
 		seen[m] = true
@@ -1414,8 +1458,17 @@ func selectUserTierTargets(sub string, ucfg UserAutoRouterConfig, ak ApiKey, for
 	sawQuotaExhausted := false
 	var firstExhaustedModel string
 
+	type contextFallbackItem struct {
+		stepIdx  int
+		target   userRouteTarget
+		ctxLimit int
+	}
+	var ctxFallbacks []contextFallbackItem
+
 	for idx, item := range ordered {
 		priority := idx + 1
+		ctxLimit := effectiveModelContextLimit(item.model, nil)
+		tPlan := resolveAutoRouterThinking(nil, item.model, item.sourceTier, item.model, ucfg.TierThinking[item.sourceTier], cause, cr)
 		target, ok, reason := evaluateUserCandidateTarget(sub, ucfg, ak, format, nativeOnly, cr, item.model, item.sourceTier)
 		if !ok {
 			skipped++
@@ -1426,11 +1479,32 @@ func selectUserTierTargets(sub string, ucfg UserAutoRouterConfig, ak ApiKey, for
 				}
 			}
 			steps = append(steps, routerCandidateStep{
-				Priority:   priority,
-				Model:      item.model,
-				SourceTier: item.sourceTier,
-				Status:     "skipped",
-				Reason:     reason,
+				Priority:     priority,
+				Model:        item.model,
+				SourceTier:   item.sourceTier,
+				Status:       "skipped",
+				Reason:       reason,
+				Thinking:     tPlan.EffectiveLabel,
+				ContextLimit: ctxLimit,
+			})
+			continue
+		}
+		if estimatedTokens > 0 && ctxLimit > 0 && estimatedTokens > ctxLimit {
+			skipped++
+			stepIdx := len(steps)
+			steps = append(steps, routerCandidateStep{
+				Priority:     priority,
+				Model:        item.model,
+				SourceTier:   item.sourceTier,
+				Status:       "skipped",
+				Reason:       "context_exceeded",
+				Thinking:     tPlan.EffectiveLabel,
+				ContextLimit: ctxLimit,
+			})
+			ctxFallbacks = append(ctxFallbacks, contextFallbackItem{
+				stepIdx:  stepIdx,
+				target:   target,
+				ctxLimit: ctxLimit,
 			})
 			continue
 		}
@@ -1448,8 +1522,27 @@ func selectUserTierTargets(sub string, ucfg UserAutoRouterConfig, ak ApiKey, for
 			SourceTier:   item.sourceTier,
 			Status:       status,
 			UpstreamName: upLabel,
+			Thinking:     tPlan.EffectiveLabel,
+			ContextLimit: ctxLimit,
 		})
 		selected = append(selected, target)
+	}
+
+	if len(selected) == 0 && len(ctxFallbacks) > 0 && !sawQuotaExhausted {
+		best := ctxFallbacks[0]
+		for _, fb := range ctxFallbacks[1:] {
+			if fb.ctxLimit > best.ctxLimit {
+				best = fb
+			}
+		}
+		if best.stepIdx >= 0 && best.stepIdx < len(steps) {
+			steps[best.stepIdx].Status = "selected"
+			steps[best.stepIdx].Reason = "largest_available_context"
+			if skipped > 0 {
+				skipped--
+			}
+		}
+		selected = append(selected, best.target)
 	}
 
 	if len(selected) == 0 && sawQuotaExhausted {
@@ -1645,9 +1738,10 @@ func buildUserAutoRouterView(ctx context.Context, sub string, ak ApiKey) gin.H {
 	}
 
 	for m := range allRelevant {
+		spec := parseRouterModelSpec(m)
 		_, ok, reason := evaluateUserCandidateTarget(sub, ucfg, ak, FormatOpenAIChat, false, nil, m, "")
-		inBYOK := personalSet[m]
-		inSite := siteSet[m]
+		inBYOK := personalSet[m] || personalSet[spec.BaseModel]
+		inSite := siteSet[m] || siteSet[spec.BaseModel]
 		sourceTag := "missing"
 		switch {
 		case inBYOK && inSite:
@@ -1657,13 +1751,19 @@ func buildUserAutoRouterView(ctx context.Context, sub string, ak ApiKey) gin.H {
 		case inSite:
 			sourceTag = "site"
 		}
+		profile := classifyModelThinkingCapability(nil, m)
+		ctxLimit, ctxSource := effectiveModelContextLimitWithSource(m, siteCfg.ModelContextLimits)
 		candidateStatus[m] = gin.H{
-			"available":      ok,
-			"reason":         reason,
-			"source":         sourceTag,
-			"in_byok":        inBYOK,
-			"in_site":        inSite,
-			"site_exhausted": inSite && ak.quotaExhausted(m),
+			"available":         ok,
+			"reason":            reason,
+			"source":            sourceTag,
+			"in_byok":           inBYOK,
+			"in_site":           inSite,
+			"site_exhausted":    inSite && routerCandidateQuotaExhausted(ak, "", m),
+			"context_limit":     ctxLimit,
+			"context_source":    ctxSource,
+			"max_output":        modelMaxOutputLimit(m),
+			"supports_thinking": profile.SupportsThinking,
 		}
 	}
 
@@ -1689,9 +1789,11 @@ func buildUserAutoRouterView(ctx context.Context, sub string, ak ApiKey) gin.H {
 		"classifier_fallback":              ucfg.ClassifierFallback,
 		"min_confidence":                   ucfg.MinConfidence,
 		"skip_short_chars":                 ucfg.SkipShortChars,
+		"long_context_threshold":           ucfg.LongContextThreshold,
 		"cascade_tiers":                    ucfg.CascadeTiers,
 		"default_model":                    ucfg.DefaultModel,
 		"tiers":                            ucfg.Tiers,
+		"tier_thinking":                    normalizeTierThinkingMap(ucfg.TierThinking),
 		"tier_criteria":                    ucfg.effectiveTierCriteria(),
 		"default_tier_criteria":            defaultAutoRouterTierCriteria(),
 		"upstreams":                        upViews,
@@ -2137,9 +2239,11 @@ func registerUserRouterRoutes(userAPI *gin.RouterGroup) {
 			ClassifierFallback      *string              `json:"classifier_fallback"`
 			MinConfidence           *float64             `json:"min_confidence"`
 			SkipShortChars          *int                 `json:"skip_short_chars"`
+			LongContextThreshold    *int                 `json:"long_context_threshold"`
 			CascadeTiers            *bool                `json:"cascade_tiers"`
 			DefaultModel            *string              `json:"default_model"`
 			Tiers                   *map[string][]string `json:"tiers"`
+			TierThinking            *map[string]string   `json:"tier_thinking"`
 			TierCriteria            *map[string]string   `json:"tier_criteria"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -2194,6 +2298,9 @@ func registerUserRouterRoutes(userAPI *gin.RouterGroup) {
 		if req.SkipShortChars != nil {
 			ucfg.SkipShortChars = *req.SkipShortChars
 		}
+		if req.LongContextThreshold != nil {
+			ucfg.LongContextThreshold = *req.LongContextThreshold
+		}
 		if req.CascadeTiers != nil {
 			ucfg.CascadeTiers = *req.CascadeTiers
 		}
@@ -2202,6 +2309,9 @@ func registerUserRouterRoutes(userAPI *gin.RouterGroup) {
 		}
 		if req.Tiers != nil {
 			ucfg.Tiers = *req.Tiers
+		}
+		if req.TierThinking != nil {
+			ucfg.TierThinking = *req.TierThinking
 		}
 		if req.TierCriteria != nil {
 			ucfg.TierCriteria = *req.TierCriteria

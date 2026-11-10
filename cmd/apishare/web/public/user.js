@@ -590,6 +590,13 @@
       COMPLEX: Array.isArray(tiers.COMPLEX) ? [...tiers.COMPLEX] : [],
       REASONING: Array.isArray(tiers.REASONING) ? [...tiers.REASONING] : [],
     };
+    const tt = data.tier_thinking || {};
+    state.routerTierThinking = {
+      SIMPLE: tt.SIMPLE || "none",
+      MEDIUM: tt.MEDIUM || "low",
+      COMPLEX: tt.COMPLEX || "medium",
+      REASONING: tt.REASONING || "high",
+    };
     renderUserByokList();
     renderUserRouterPanel();
   }
@@ -1042,41 +1049,117 @@
     }
   }
 
+  function parseUserCandidateSpec(raw) {
+    const s = String(raw || "").trim();
+    const openIdx = s.lastIndexOf("(");
+    if (openIdx > 0 && s.endsWith(")")) {
+      const base = s.slice(0, openIdx).trim();
+      const inside = s.slice(openIdx + 1, -1).trim();
+      const parts = inside.split(",").map((p) => p.trim()).filter(Boolean);
+      let thinking = "";
+      const otherParts = [];
+      parts.forEach((p) => {
+        const low = p.toLowerCase();
+        if (["none", "off", "disabled", "minimal", "low", "medium", "high", "xhigh", "max", "adaptive", "auto", "keep"].includes(low)) {
+          thinking = low === "off" || low === "disabled" ? "none" : low;
+        } else {
+          otherParts.push(p);
+        }
+      });
+      return { base, thinking, otherParts, raw: s };
+    }
+    return { base: s, thinking: "", otherParts: [], raw: s };
+  }
+
+  function formatUserCtxLimit(tokens) {
+    const n = Number(tokens || 0);
+    if (n <= 0) return "";
+    if (n >= 1000000) return (n / 1000000).toFixed(n % 1000000 === 0 ? 0 : 1) + "M";
+    if (n >= 1000) return Math.round(n / 1000) + "K";
+    return String(n);
+  }
+
   function sourceBadgeForCandidate(model) {
     const v = state.routerView;
-    const st = v?.candidate_status?.[model];
+    const spec = parseUserCandidateSpec(model);
+    const st = v?.candidate_status?.[model] || v?.candidate_status?.[spec.base];
     const personalSet = new Set(v?.personal_models || []);
     const siteSet = new Set(v?.site_models || []);
-    const inByok = st ? st.in_byok : personalSet.has(model);
-    const inSite = st ? st.in_site : siteSet.has(model);
+    const inByok = st ? st.in_byok : (personalSet.has(model) || personalSet.has(spec.base));
+    const inSite = st ? st.in_site : (siteSet.has(model) || siteSet.has(spec.base));
+    const srcLabels = {
+      spec: "候选内联指定",
+      config: "站点管理员配置",
+      learned: "上游错误响应自动学习",
+      probed: "上游 /v1/models 自动探测",
+      catalog: "LiteLLM 官方目录同步",
+      builtin: "内置模型族识别",
+    };
+    const ctxSrc = srcLabels[st?.context_source] || "自动识别";
+    const ctxTag = st?.context_limit ? `<span class="user-source-pill site" title="模型上下文窗口：${Number(st.context_limit).toLocaleString()} tokens（来源：${ctxSrc}）">${formatUserCtxLimit(st.context_limit)} ctx</span>` : "";
 
     if (inByok && inSite) {
-      return `<span class="user-source-pill both" title="同时存在于你的自带渠道与站点授权模型">自带+站点双备</span>`;
+      return `${ctxTag}<span class="user-source-pill both" title="同时存在于你的自带渠道与站点授权模型">自带+站点双备</span>`;
     }
     if (inByok) {
-      return `<span class="user-source-pill byok" title="来自你的自带渠道，调用不扣站点额度">我的渠道 · 免额度</span>`;
+      return `${ctxTag}<span class="user-source-pill byok" title="来自你的自带渠道，调用不扣站点额度">我的渠道 · 免额度</span>`;
     }
     if (inSite) {
       if (st?.site_exhausted) {
-        return `<span class="user-source-pill warn" title="站点该模型额度已耗尽(402)，路由时将自动跳过">站点 · 402耗尽</span>`;
+        return `${ctxTag}<span class="user-source-pill warn" title="站点该模型额度已耗尽(402)，路由时将自动跳过">站点 · 402耗尽</span>`;
       }
-      return `<span class="user-source-pill site" title="来自站点公共渠道，按密钥额度计费">站点模型</span>`;
+      return `${ctxTag}<span class="user-source-pill site" title="来自站点公共渠道，按密钥额度计费">站点模型</span>`;
     }
-    return `<span class="user-source-pill warn" title="当前未在自带渠道或密钥授权模型中找到">未绑定来源</span>`;
+    return `${ctxTag}<span class="user-source-pill warn" title="当前未在自带渠道或密钥授权模型中找到">未绑定来源</span>`;
   }
 
   function renderUserTiersEditor() {
     const host = $("#userTiersEditor");
     if (!host) return;
     const allModels = collectUserAvailableModelList();
+    if (!state.routerTierThinking) {
+      state.routerTierThinking = { SIMPLE: "none", MEDIUM: "low", COMPLEX: "medium", REASONING: "high" };
+    }
+    const tierThinkOpts = [
+      { v: "auto", l: "思考:自动" },
+      { v: "none", l: "思考:关(none)" },
+      { v: "low", l: "思考:低(low)" },
+      { v: "medium", l: "思考:中(med)" },
+      { v: "high", l: "思考:高(high)" },
+      { v: "xhigh", l: "思考:超高" },
+      { v: "max", l: "思考:最大" },
+      { v: "adaptive", l: "思考:自适应" },
+      { v: "keep", l: "思考:原参" },
+    ];
+    const candThinkOpts = [
+      { v: "", l: "随档位" },
+      { v: "none", l: "none" },
+      { v: "low", l: "low" },
+      { v: "medium", l: "medium" },
+      { v: "high", l: "high" },
+      { v: "xhigh", l: "xhigh" },
+      { v: "max", l: "max" },
+      { v: "adaptive", l: "adaptive" },
+    ];
 
     host.innerHTML = USER_TIER_META.map(({ id, title }) => {
       const list = state.routerTiers[id] || [];
+      const curTierThink = state.routerTierThinking[id] || "auto";
+      const tierThinkSel = `<select data-user-tier-thinking="${id}" title="本档默认思考档位" style="font-size:11px;padding:1px 4px;border-radius:5px;height:22px">`
+        + tierThinkOpts.map((o) => `<option value="${o.v}"${curTierThink === o.v ? " selected" : ""}>${o.l}</option>`).join("")
+        + `</select>`;
+
       const rowsHTML = list.length
-        ? list.map((m, idx) => `<div class="user-cand-row">
+        ? list.map((m, idx) => {
+            const spec = parseUserCandidateSpec(m);
+            const cSel = `<select data-user-cand-thinking="${id}" data-idx="${idx}" title="单独覆盖此模型的思考档位" style="font-size:11px;padding:0 3px;border-radius:4px;height:20px;max-width:74px">`
+              + candThinkOpts.map((o) => `<option value="${o.v}"${spec.thinking === o.v ? " selected" : ""}>${o.l}</option>`).join("")
+              + `</select>`;
+            return `<div class="user-cand-row">
             <div class="user-cand-left">
               <span class="user-cand-rank">#${idx + 1}</span>
               <span class="user-cand-name" title="${esc(m)}">${esc(m)}</span>
+              ${cSel}
               ${sourceBadgeForCandidate(m)}
             </div>
             <div class="user-cand-btns">
@@ -1084,7 +1167,8 @@
               <button type="button" data-tier-move="${id}" data-idx="${idx}" data-dir="1" ${idx === list.length - 1 ? "disabled" : ""} title="下移优先级">↓</button>
               <button type="button" data-tier-del="${id}" data-idx="${idx}" title="移除">×</button>
             </div>
-          </div>`).join("")
+          </div>`;
+          }).join("")
         : `<div class="muted" style="font-size:11px;padding:6px 2px">暂无候选模型，命中本档时将顺延下一档或默认模型</div>`;
 
       const unusedModels = allModels.filter((m) => !list.includes(m));
@@ -1096,16 +1180,38 @@
       return `<div class="user-tier-card" data-user-tier="${id}">
         <div class="user-tier-head">
           <span class="user-tier-badge ${id}">${esc(title)}</span>
-          <small class="muted">${list.length} 个候选</small>
+          <div style="display:flex;align-items:center;gap:6px">${tierThinkSel}<small class="muted">${list.length} 个候选</small></div>
         </div>
         <div class="user-cand-list">${rowsHTML}</div>
         <div class="user-tier-add">
           <select data-tier-select="${id}" aria-label="向 ${id} 添加候选模型">${optGroups}</select>
-          <input type="text" data-tier-input="${id}" list="userAllCandidateModelsList" placeholder="或手动输入模型名回车…">
+          <input type="text" data-tier-input="${id}" list="userAllCandidateModelsList" placeholder="或输入 model / model(high) 回车…">
           <button type="button" class="btn ghost mini" data-tier-add-btn="${id}">添加</button>
         </div>
       </div>`;
     }).join("");
+
+    $$("[data-user-tier-thinking]", host).forEach((sel) => {
+      sel.addEventListener("change", () => {
+        if (!state.routerTierThinking) state.routerTierThinking = {};
+        state.routerTierThinking[sel.dataset.userTierThinking] = sel.value || "auto";
+      });
+    });
+    $$("[data-user-cand-thinking]", host).forEach((sel) => {
+      sel.addEventListener("change", () => {
+        const t = sel.dataset.userCandThinking;
+        const idx = Number(sel.dataset.idx);
+        const list = state.routerTiers[t] || [];
+        if (idx >= 0 && idx < list.length) {
+          const spec = parseUserCandidateSpec(list[idx]);
+          const parts = [];
+          if (sel.value) parts.push(sel.value);
+          if (spec.otherParts && spec.otherParts.length) parts.push(...spec.otherParts);
+          list[idx] = parts.length ? `${spec.base}(${parts.join(",")})` : spec.base;
+          renderUserTiersEditor();
+        }
+      });
+    });
 
     $$("[data-tier-move]", host).forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -1224,6 +1330,7 @@
       user_classifier_endpoint: ($("#userExternalEndpoint")?.value || "").trim(),
       user_classifier_api_key: ($("#userExternalApiKey")?.value || "").trim(),
       tiers: state.routerTiers,
+      tier_thinking: state.routerTierThinking,
     };
   }
 
@@ -1308,6 +1415,7 @@
           <div>
             <span>判定档位: <span class="user-tier-badge ${esc(dec.tier || "DEFAULT")}">${esc(dec.tier || "DEFAULT")}</span></span>
             <span style="margin-left:8px">最终命中模型: <strong><code>${esc(dec.selected_model || "无可用模型")}</code></strong></span>
+            ${dec.selected_thinking ? `<span style="margin-left:6px" class="muted">(思考: <code>${esc(dec.selected_thinking)}</code>)</span>` : ""}
           </div>
           <span class="muted">分类器: <code>${esc(dec.cause || "heuristic")}</code></span>
         </div>

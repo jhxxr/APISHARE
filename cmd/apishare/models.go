@@ -277,11 +277,27 @@ func probeUpstreamModelListWithClient(ctx context.Context, upType, baseURL, apiK
 		}
 		var result struct {
 			Data []struct {
-				ID     string          `json:"id"`
-				Effort json.RawMessage `json:"effort"`
+				ID                  string          `json:"id"`
+				Effort              json.RawMessage `json:"effort"`
+				ContextLength       int             `json:"context_length"`
+				ContextWindow       int             `json:"context_window"`
+				MaxModelLen         int             `json:"max_model_len"`
+				MaxContextLength    int             `json:"max_context_length"`
+				InputTokenLimit     int             `json:"input_token_limit"`
+				MaxInputTokens      int             `json:"max_input_tokens"`
+				MaxOutputTokens     int             `json:"max_output_tokens"`
+				MaxCompletionTokens int             `json:"max_completion_tokens"`
+				OutputTokenLimit    int             `json:"output_token_limit"`
+				MaxTokens           int             `json:"max_tokens"`
+				TopProvider         struct {
+					ContextLength       int `json:"context_length"`
+					MaxCompletionTokens int `json:"max_completion_tokens"`
+				} `json:"top_provider"`
 			} `json:"data"`
 			Models []struct {
-				Name string `json:"name"`
+				Name             string `json:"name"`
+				InputTokenLimit  int    `json:"inputTokenLimit"`
+				OutputTokenLimit int    `json:"outputTokenLimit"`
 			} `json:"models"`
 			HasMore       bool   `json:"has_more"`
 			LastID        string `json:"last_id"`
@@ -306,11 +322,38 @@ func probeUpstreamModelListWithClient(ctx context.Context, upType, baseURL, apiK
 				if id := strings.TrimSpace(model.ID); efforts != nil && id != "" && json.Unmarshal(model.Effort, &effort) == nil && len(effort.SupportedLevels) > 0 {
 					efforts[id] = effort.SupportedLevels
 				}
+				ctxLim := firstPositiveInt(
+					model.ContextLength,
+					model.ContextWindow,
+					model.MaxModelLen,
+					model.MaxContextLength,
+					model.InputTokenLimit,
+					model.MaxInputTokens,
+					model.TopProvider.ContextLength,
+				)
+				maxOut := firstPositiveInt(
+					model.MaxOutputTokens,
+					model.MaxCompletionTokens,
+					model.OutputTokenLimit,
+					model.TopProvider.MaxCompletionTokens,
+				)
+				if ctxLim == 0 && model.MaxTokens >= 4096 {
+					ctxLim = model.MaxTokens
+				} else if maxOut == 0 && model.MaxTokens > 0 && (ctxLim == 0 || model.MaxTokens <= ctxLim) {
+					maxOut = model.MaxTokens
+				}
+				if ctxLim > 0 || maxOut > 0 {
+					recordProbedModelLimits(model.ID, ctxLim, maxOut)
+				}
 			}
 		}
 		for _, model := range result.Models {
 			if upType == "gemini" {
-				add(strings.TrimPrefix(model.Name, "models/"))
+				id := strings.TrimPrefix(model.Name, "models/")
+				add(id)
+				if model.InputTokenLimit > 0 || model.OutputTokenLimit > 0 {
+					recordProbedModelLimits(id, model.InputTokenLimit, model.OutputTokenLimit)
+				}
 			}
 		}
 		cursor = ""
