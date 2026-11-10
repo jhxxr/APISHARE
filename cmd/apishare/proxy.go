@@ -554,6 +554,56 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		info.Status = limit.statusCode()
 		return info, false, limit
 	}
+	if up.isDecisionUpstream(upModel) {
+		start := time.Now()
+		info.startedAt = start
+		defer func() { info.DurationMS = time.Since(start).Milliseconds() }()
+		_, state := extractClassifierState(task.canon, 2, 6000)
+		if strings.TrimSpace(state) == "" {
+			state = "hello"
+		}
+		res, usage, dErr := classifyViaUpstream(c.Request.Context(), up, task.model, up.Type, state, nil, "", 0, 15000)
+		info.LatencyMS = time.Since(start).Milliseconds()
+		if dErr != nil {
+			info.Status = http.StatusBadGateway
+			up.markRelayFailure(info.Status, time.Time{})
+			return info, false, dErr
+		}
+		info.Status = http.StatusOK
+		up.markRelaySuccess(start)
+		decisionJSON, _ := json.Marshal(map[string]any{
+			"tier":          res.Tier,
+			"choice":        res.RawChoice,
+			"confidence":    res.Confidence,
+			"probabilities": res.Probabilities,
+			"latency_ms":    res.LatencyMS,
+		})
+		result := &canonResponse{
+			Blocks: []responseBlock{{Kind: "text", Text: string(decisionJSON)}},
+			Finish: "stop",
+			Usage:  usage,
+		}
+		info.OutputText.WriteString(result.text())
+		info.mergeUsage(result.Usage)
+		if task.stream {
+			info.markFirstToken()
+			writer := newProtocolStream(c, task.format, task.model, task.wantUsageChunk)
+			for i, block := range result.Blocks {
+				if sErr := writer.push(c, streamDelta{Key: fmt.Sprintf("block_%d", i), Block: block}, result.Usage); sErr != nil {
+					writer.fail(c)
+					return info, true, sErr
+				}
+			}
+			sErr := writer.finish(c, result.Usage, result.Finish, result.StopSequence)
+			if sErr != nil {
+				writer.fail(c)
+			}
+			return info, true, sErr
+		}
+		response := renderProtocolResponse(task.format, task.model, "", result)
+		c.JSON(http.StatusOK, response)
+		return info, true, nil
+	}
 	replayScope := responseReplayScope{task.apiKeyID, up.ID, task.model, upModel}
 	wireFormat, err := up.resolveWireFormat(c.Request.Context(), task.format, upModel)
 	if err != nil {

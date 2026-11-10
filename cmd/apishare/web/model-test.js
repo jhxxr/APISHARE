@@ -34,6 +34,9 @@ function openModelTest(id) {
   if (!mapping || Array.isArray(mapping) || typeof mapping !== "object") mapping = {};
   modelTest.mapping = mapping;
   modelTest.configured = uniqueModelNames([...parseAllowlist(upstream.models), ...Object.keys(mapping)]);
+  if (!modelTest.configured.length && (upstream.type === "systemone" || upstream.type === "cloudflare")) {
+    modelTest.configured = upstream.type === "cloudflare" ? ["@cf/cloudflare/clef-flash", "@cf/cloudflare/clef"] : ["jev", "Julia-1"];
+  }
   const cached = modelTestCachedCatalog(upstream);
   modelTest.fetched = cached.models;
   modelTest.selected = modelTest.configured[0] || modelTest.fetched[0] || "";

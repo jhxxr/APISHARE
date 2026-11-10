@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -790,5 +791,244 @@ func TestXAuthUserBYOKDefaultAndCustomProxy(t *testing.T) {
 	if w := chatCall(); w.Code != http.StatusOK || atomic.LoadInt32(&userCustomProxyHits) != 2 || atomic.LoadInt32(&siteProxyHits) != 1 || !strings.Contains(w.Body.String(), "via-user-custom-proxy") {
 		t.Fatalf("expected BYOK channel with proxy_mode=custom to use user custom proxy directly without site proxy, code=%d userProxyHits=%d siteProxyHits=%d body=%s",
 			w.Code, userCustomProxyHits, siteProxyHits, w.Body.String())
+	}
+}
+
+func TestAutoRouterUpstreamBoundModelsAndNoPlaceholders(t *testing.T) {
+	setupAutoRouterTestDB(t)
+	router := newRouter()
+	adminToken := makeAdminToken()
+
+	// 1. Fresh config must not have any hardcoded placeholder models
+	reqCfg := httptest.NewRequest(http.MethodGet, "/admin/api/auto-router/config", nil)
+	reqCfg.Header.Set("Authorization", "Bearer "+adminToken)
+	wCfg := httptest.NewRecorder()
+	router.ServeHTTP(wCfg, reqCfg)
+	if wCfg.Code != http.StatusOK {
+		t.Fatalf("expected GET /admin/api/auto-router/config 200, got %d: %s", wCfg.Code, wCfg.Body.String())
+	}
+	bodyStr := wCfg.Body.String()
+	for _, placeholder := range []string{"deepseek-v4.1-flash", "glm-5.3-flash", "mimo-v2.6-flash", "glm-5.3", "deepseek-v4-pro-0813", "grok-4.7"} {
+		if strings.Contains(bodyStr, placeholder) {
+			t.Fatalf("expected fresh auto-router config to not contain placeholder model %q, got %s", placeholder, bodyStr)
+		}
+	}
+
+	// 2. Bind real models to two upstreams and verify available_models and upstream_models
+	if err := dbInsertUpstream(&Upstream{
+		Name:     "DashScope-Main",
+		Type:     "openai",
+		BaseURL:  "https://dashscope.aliyuncs.com/compatible-mode/v1",
+		APIKey:   "sk-dash",
+		Models:   "qwen-plus,qwen-turbo",
+		ModelMap: `{"qwen-alias":"qwen-max"}`,
+		Priority: 0,
+		Weight:   1,
+		Enabled:  true,
+	}); err != nil {
+		t.Fatalf("dbInsertUpstream 1: %v", err)
+	}
+	if err := dbInsertUpstream(&Upstream{
+		Name:     "Anthropic-Pool",
+		Type:     "anthropic",
+		BaseURL:  "https://api.anthropic.com",
+		APIKey:   "sk-ant",
+		Models:   "claude-3-7-sonnet",
+		ModelMap: "{}",
+		Priority: 1,
+		Weight:   1,
+		Enabled:  true,
+	}); err != nil {
+		t.Fatalf("dbInsertUpstream 2: %v", err)
+	}
+	invalidateRoutingSnapshot()
+
+	// Also simulate legacy persisted DB config that still had unbound placeholder models
+	_ = settingsSet(autoRouterSettingsKey, `{"mode":"off","virtual_model":"auto","default_model":"grok-4.7","tiers":{"SIMPLE":["deepseek-v4.1-flash","qwen-turbo"],"REASONING":["grok-4.7"]}}`)
+	_ = loadAutoRouterCache()
+
+	reqCfg2 := httptest.NewRequest(http.MethodGet, "/admin/api/auto-router/config", nil)
+	reqCfg2.Header.Set("Authorization", "Bearer "+adminToken)
+	wCfg2 := httptest.NewRecorder()
+	router.ServeHTTP(wCfg2, reqCfg2)
+	if wCfg2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", wCfg2.Code, wCfg2.Body.String())
+	}
+
+	var parsed struct {
+		DefaultModel    string                          `json:"default_model"`
+		Tiers           map[string][]string             `json:"tiers"`
+		AvailableModels []string                        `json:"available_models"`
+		UpstreamModels  []autoRouterUpstreamModelGroup `json:"upstream_models"`
+	}
+	if err := json.Unmarshal(wCfg2.Body.Bytes(), &parsed); err != nil {
+		t.Fatalf("unmarshal config view: %v", err)
+	}
+	if parsed.DefaultModel != "" {
+		t.Fatalf("expected unbound legacy placeholder default_model grok-4.7 to be stripped, got %q", parsed.DefaultModel)
+	}
+	if len(parsed.Tiers[TierSimple]) != 1 || parsed.Tiers[TierSimple][0] != "qwen-turbo" {
+		t.Fatalf("expected SIMPLE tier to keep bound qwen-turbo and strip unbound deepseek-v4.1-flash, got %v", parsed.Tiers[TierSimple])
+	}
+	if len(parsed.Tiers[TierReasoning]) != 0 {
+		t.Fatalf("expected REASONING tier to strip unbound grok-4.7, got %v", parsed.Tiers[TierReasoning])
+	}
+	expectedAvail := "claude-3-7-sonnet,qwen-alias,qwen-plus,qwen-turbo"
+	if strings.Join(parsed.AvailableModels, ",") != expectedAvail {
+		t.Fatalf("expected available_models=%q, got %q", expectedAvail, strings.Join(parsed.AvailableModels, ","))
+	}
+	if len(parsed.UpstreamModels) != 2 {
+		t.Fatalf("expected 2 upstream_models groups, got %d", len(parsed.UpstreamModels))
+	}
+}
+
+func TestDecisionModelUpstreamAddProbeTestAndClassify(t *testing.T) {
+	setupAutoRouterTestDB(t)
+
+	var (
+		systemOnePaths  []string
+		systemOneBodies []string
+		cfPaths         []string
+		cfBodies        []string
+	)
+	var mu sync.Mutex
+
+	mockSystemOne := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		systemOnePaths = append(systemOnePaths, r.URL.Path)
+		systemOneBodies = append(systemOneBodies, string(b))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"answers":{"tier":{"choice":"COMPLEX","probabilities":{"SIMPLE":0.02,"MEDIUM":0.08,"COMPLEX":0.82,"REASONING":0.08}}}}`))
+	}))
+	defer mockSystemOne.Close()
+
+	mockCloudflare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		cfPaths = append(cfPaths, r.URL.Path)
+		cfBodies = append(cfBodies, string(b))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"result":{"answers":{"tier":{"choice":"REASONING","probabilities":{"SIMPLE":0.01,"MEDIUM":0.04,"COMPLEX":0.10,"REASONING":0.85}}}}}`))
+	}))
+	defer mockCloudflare.Close()
+
+	// 1. Validate upstream types for Admin & User BYOK
+	for _, tp := range []string{"systemone", "cloudflare"} {
+		if !validUpstreamType(tp) {
+			t.Fatalf("expected validUpstreamType(%q) == true", tp)
+		}
+		if !validUserUpstreamType(tp) {
+			t.Fatalf("expected validUserUpstreamType(%q) == true", tp)
+		}
+	}
+
+	// 2. Probe models on systemone and cloudflare decision upstreams
+	sysModels, err := probeUpstreamModelsWithClient(context.Background(), "systemone", mockSystemOne.URL, "sk-jev-test", mockSystemOne.Client())
+	if err != nil {
+		t.Fatalf("probeUpstreamModelsWithClient(systemone): %v", err)
+	}
+	if strings.Join(sysModels, ",") != "jev,Julia-1" {
+		t.Fatalf("expected systemone probe models jev,Julia-1, got %v", sysModels)
+	}
+
+	cfBaseURL := mockCloudflare.URL + "/client/v4/accounts/acc123/ai/run"
+	cfModels, err := probeUpstreamModelsWithClient(context.Background(), "cloudflare", cfBaseURL, "cf-token-test", mockCloudflare.Client())
+	if err != nil {
+		t.Fatalf("probeUpstreamModelsWithClient(cloudflare): %v", err)
+	}
+	if strings.Join(cfModels, ",") != "@cf/cloudflare/clef-flash,@cf/cloudflare/clef" {
+		t.Fatalf("expected cloudflare probe models, got %v", cfModels)
+	}
+
+	// 3. Insert systemone and cloudflare upstreams into gateway upstreams (with empty Models to test default bound models)
+	sysUp := &Upstream{
+		Name:     "Jev-Decision-Upstream",
+		Type:     "systemone",
+		BaseURL:  mockSystemOne.URL,
+		APIKey:   "sk-jev-test",
+		Models:   "",
+		ModelMap: "{}",
+		Priority: 0,
+		Weight:   1,
+		Enabled:  true,
+	}
+	if err := dbInsertUpstream(sysUp); err != nil {
+		t.Fatalf("dbInsertUpstream(systemone): %v", err)
+	}
+	cfUp := &Upstream{
+		Name:     "CF-Clef-Decision-Upstream",
+		Type:     "cloudflare",
+		BaseURL:  cfBaseURL,
+		APIKey:   "cf-token-test",
+		Models:   "",
+		ModelMap: "{}",
+		Priority: 1,
+		Weight:   1,
+		Enabled:  true,
+	}
+	if err := dbInsertUpstream(cfUp); err != nil {
+		t.Fatalf("dbInsertUpstream(cloudflare): %v", err)
+	}
+	invalidateRoutingSnapshot()
+
+	// Verify collectGatewayUpstreamBoundModels includes default decision models
+	boundModels, groups := collectGatewayUpstreamBoundModels(context.Background(), "auto")
+	boundJoined := strings.Join(boundModels, ",")
+	for _, want := range []string{"jev", "Julia-1", "@cf/cloudflare/clef-flash", "@cf/cloudflare/clef"} {
+		if !strings.Contains(boundJoined, want) {
+			t.Fatalf("expected boundModels %q to contain %q (groups=%+v)", boundJoined, want, groups)
+		}
+	}
+
+	// 4. Test classifyViaGatewayUpstream for both "jev" (systemone) and "@cf/cloudflare/clef-flash" (cloudflare)
+	resSys, usedSysUp, _, err := classifyViaGatewayUpstream(context.Background(), "jev", "Design a distributed Raft consensus engine in Go", nil, "", 0.5, 3000)
+	if err != nil {
+		t.Fatalf("classifyViaGatewayUpstream(jev): %v", err)
+	}
+	if resSys.Tier != TierComplex || usedSysUp == nil || usedSysUp.ID != sysUp.ID {
+		t.Fatalf("expected Tier=COMPLEX from sysUp, got tier=%q up=%+v", resSys.Tier, usedSysUp)
+	}
+
+	resCF, usedCFUp, _, err := classifyViaGatewayUpstream(context.Background(), "@cf/cloudflare/clef-flash", "Prove the Riemann hypothesis step by step", nil, "", 0.5, 3000)
+	if err != nil {
+		t.Fatalf("classifyViaGatewayUpstream(clef-flash): %v", err)
+	}
+	if resCF.Tier != TierReasoning || usedCFUp == nil || usedCFUp.ID != cfUp.ID {
+		t.Fatalf("expected Tier=REASONING from cfUp, got tier=%q up=%+v", resCF.Tier, usedCFUp)
+	}
+
+	// Verify exact wire paths and questions.tier decision payload format
+	mu.Lock()
+	lastSysPath := systemOnePaths[len(systemOnePaths)-1]
+	lastSysBody := systemOneBodies[len(systemOneBodies)-1]
+	lastCFPath := cfPaths[len(cfPaths)-1]
+	lastCFBody := cfBodies[len(cfBodies)-1]
+	mu.Unlock()
+
+	if lastSysPath != "/v1/systemone" {
+		t.Fatalf("expected systemone path /v1/systemone, got %q", lastSysPath)
+	}
+	if !strings.Contains(lastSysBody, `"questions":{"tier":{"criteria":`) || !strings.Contains(lastSysBody, `"type":"choice"`) {
+		t.Fatalf("expected systemone payload to use questions.tier decision schema, got %s", lastSysBody)
+	}
+	if lastCFPath != "/client/v4/accounts/acc123/ai/run/@cf/cloudflare/clef-flash" {
+		t.Fatalf("expected cloudflare path /client/v4/accounts/acc123/ai/run/@cf/cloudflare/clef-flash, got %q", lastCFPath)
+	}
+	if !strings.Contains(lastCFBody, `"model":"clef-flash"`) || !strings.Contains(lastCFBody, `"questions":{"tier":`) {
+		t.Fatalf("expected cloudflare payload to use questions.tier decision schema with stripped model clef-flash, got %s", lastCFBody)
+	}
+
+	// 5. Test Admin "测试模型" (testUpstreamModel) on the decision upstream
+	testResp, status, err := testUpstreamModel(context.Background(), sysUp, "jev", "Write a microservice in Go", 64, false)
+	if err != nil || status != http.StatusOK || testResp == nil {
+		t.Fatalf("testUpstreamModel(systemone): status=%d err=%v", status, err)
+	}
+	if !strings.Contains(testResp.text(), `"tier":"COMPLEX"`) {
+		t.Fatalf("expected testUpstreamModel response to contain decision JSON with tier COMPLEX, got %s", testResp.text())
 	}
 }

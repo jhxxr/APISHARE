@@ -237,6 +237,136 @@ func normalizeOpenAIChatClassifierEndpoint(raw string) string {
 	return upstreamURL(trimmed, "/v1/chat/completions")
 }
 
+// defaultDecisionModelsForType returns the built-in default models for decision-model
+// upstream types ("systemone" and "cloudflare") when no explicit model list is configured.
+func defaultDecisionModelsForType(upType string) []string {
+	switch strings.ToLower(strings.TrimSpace(upType)) {
+	case "systemone":
+		return []string{"jev", "Julia-1"}
+	case "cloudflare":
+		return []string{"@cf/cloudflare/clef-flash", "@cf/cloudflare/clef"}
+	default:
+		return nil
+	}
+}
+
+func (u *Upstream) isCloudflareDecisionUpstream(model string) bool {
+	if u == nil {
+		return false
+	}
+	t := strings.ToLower(strings.TrimSpace(u.Type))
+	if t == "cloudflare" {
+		return true
+	}
+	baseLower := strings.ToLower(strings.TrimSpace(u.BaseURL))
+	if strings.Contains(baseLower, "/ai/run") || strings.Contains(baseLower, "/client/v4/accounts/") {
+		return true
+	}
+	mLower := strings.ToLower(strings.TrimSpace(model))
+	return strings.HasPrefix(mLower, "@cf/")
+}
+
+// isDecisionUpstream reports whether an upstream should be invoked using the
+// SystemOne / Cloudflare Clef decision JSON format ({"state": ..., "questions": {"tier": ...}})
+// rather than LLM chat completions.
+func (u *Upstream) isDecisionUpstream(model string) bool {
+	if u == nil {
+		return false
+	}
+	t := strings.ToLower(strings.TrimSpace(u.Type))
+	if t == "systemone" || t == "cloudflare" {
+		return true
+	}
+	if t == "openai" || t == "" {
+		baseLower := strings.TrimRight(strings.ToLower(strings.TrimSpace(u.BaseURL)), "/")
+		if strings.HasSuffix(baseLower, "/systemone") ||
+			strings.HasSuffix(baseLower, "/decisions") ||
+			strings.HasSuffix(baseLower, "/ai/run") ||
+			strings.Contains(baseLower, "/ai/run/@cf/") {
+			return true
+		}
+		mLower := strings.ToLower(strings.TrimSpace(model))
+		if strings.HasPrefix(mLower, "@cf/cloudflare/clef") {
+			return true
+		}
+	}
+	return false
+}
+
+// decisionEndpointURL resolves the target HTTP endpoint URL for a decision-model upstream.
+func (u *Upstream) decisionEndpointURL(upModel string) string {
+	if u == nil {
+		return ""
+	}
+	trimmed := strings.TrimRight(strings.TrimSpace(u.BaseURL), "/")
+	if trimmed == "" {
+		if strings.EqualFold(strings.TrimSpace(u.Type), "systemone") {
+			return defaultJevEndpointURL
+		}
+		return ""
+	}
+	if u.isCloudflareDecisionUpstream(upModel) {
+		m := strings.TrimSpace(upModel)
+		if m == "" {
+			m = defaultClefFlashModel
+		}
+		if !strings.HasPrefix(strings.ToLower(m), "@cf/") && !strings.Contains(m, "/") {
+			m = "@cf/cloudflare/" + m
+		}
+		lower := strings.ToLower(trimmed)
+		if idx := strings.Index(lower, "/ai/run/"); idx >= 0 {
+			// If BaseURL already embeds a model path under /ai/run/, replace with target model when specified
+			if strings.TrimSpace(upModel) != "" {
+				return trimmed[:idx+len("/ai/run/")] + strings.TrimPrefix(m, "/")
+			}
+			return trimmed
+		}
+		if strings.HasSuffix(lower, "/ai/run") {
+			return trimmed + "/" + strings.TrimPrefix(m, "/")
+		}
+		if strings.Contains(lower, "/client/v4/accounts/") {
+			return trimmed + "/ai/run/" + strings.TrimPrefix(m, "/")
+		}
+		return trimmed + "/ai/run/" + strings.TrimPrefix(m, "/")
+	}
+	return normalizeSystemOneEndpoint(trimmed)
+}
+
+func buildDecisionClassifierPayload(model string, isCloudflare bool, state string, instructions string, criteria map[string]string) ([]byte, error) {
+	reqModel := strings.TrimSpace(model)
+	if isCloudflare {
+		if reqModel == "" {
+			reqModel = defaultClefFlashModel
+		}
+		reqModel = strings.TrimPrefix(reqModel, "@cf/cloudflare/")
+	} else if reqModel == "" {
+		reqModel = "jev"
+	}
+	if strings.TrimSpace(instructions) == "" {
+		instructions = defaultClassifierInstructions
+	}
+	if len(criteria) == 0 {
+		criteria = defaultAutoRouterTierCriteria()
+	}
+	payload := map[string]any{
+		"model": reqModel,
+		"state": truncateTail(state, 6000),
+		"questions": map[string]any{
+			"tier": map[string]any{
+				"type":         "choice",
+				"instructions": instructions,
+				"criteria": map[string]string{
+					TierSimple:    criteria[TierSimple],
+					TierMedium:    criteria[TierMedium],
+					TierComplex:   criteria[TierComplex],
+					TierReasoning: criteria[TierReasoning],
+				},
+			},
+		},
+	}
+	return json.Marshal(payload)
+}
+
 // classifyWithDecisionModel invokes the configured external decision classifier
 // (Cloudflare Clef, TypeSafe Jev, SystemOne/vLLM, or OpenAI-compatible chat).
 func classifyWithDecisionModel(ctx context.Context, cfg AutoRouterConfig, state string, bypassBreaker bool) (*classifierDecisionResult, error) {
@@ -301,27 +431,7 @@ func classifyWithDecisionModel(ctx context.Context, cfg AutoRouterConfig, state 
 		reqBody, err = json.Marshal(payload)
 	} else {
 		// Standard SystemOne / Jev / Cloudflare Clef decision format
-		reqModel := model
-		if provider == "cloudflare" {
-			reqModel = strings.TrimPrefix(model, "@cf/cloudflare/")
-		}
-		payload := map[string]any{
-			"model": reqModel,
-			"state": truncateTail(state, 6000),
-			"questions": map[string]any{
-				"tier": map[string]any{
-					"type":         "choice",
-					"instructions": instructions,
-					"criteria": map[string]string{
-						TierSimple:    criteria[TierSimple],
-						TierMedium:    criteria[TierMedium],
-						TierComplex:   criteria[TierComplex],
-						TierReasoning: criteria[TierReasoning],
-					},
-				},
-			},
-		}
-		reqBody, err = json.Marshal(payload)
+		reqBody, err = buildDecisionClassifierPayload(model, provider == "cloudflare", state, instructions, criteria)
 	}
 	if err != nil {
 		return nil, err

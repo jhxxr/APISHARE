@@ -83,7 +83,7 @@ function cloneRouterDraftFromConfig(cfg) {
     session_mode: cfg.session_mode || "user_turn",
     cascade_tiers: cfg.cascade_tiers !== false,
     allow_unlisted_target_models: cfg.allow_unlisted_target_models !== false,
-    default_model: cfg.default_model || "grok-4.7",
+    default_model: cfg.default_model || "",
     tiers,
     tier_criteria: criteria,
     response_headers: cfg.response_headers !== false,
@@ -245,11 +245,236 @@ function priceHintForRouterModel(model) {
   return '<span class="router-price-tag" title="输入 / 输出单价 (USD / 1M tokens)">$' + Number(info.price_in || 0).toFixed(2) + '/$' + Number(info.price_out || 0).toFixed(2) + '</span>';
 }
 
+function upstreamModelGroupsForRouter() {
+  const vm = (routerDraft?.virtual_model || routerConfigCache?.virtual_model || "auto").toLowerCase();
+  const rawGroups = Array.isArray(routerConfigCache?.upstream_models) ? routerConfigCache.upstream_models : [];
+  if (rawGroups.length) {
+    return rawGroups
+      .map((g) => ({
+        id: g.id,
+        name: g.name || ("#" + g.id),
+        type: g.type || "openai",
+        enabled: g.enabled !== false,
+        healthy: Boolean(g.healthy),
+        models: (Array.isArray(g.models) ? g.models : []).filter((m) => m && m.toLowerCase() !== vm),
+      }))
+      .filter((g) => g.models.length > 0);
+  }
+  if (Array.isArray(upsCache) && upsCache.length) {
+    return upsCache
+      .map((u) => {
+        const models = String(u.models || "")
+          .split(/[,，\n\r]+/)
+          .map((s) => s.trim())
+          .filter((m) => m && m.toLowerCase() !== vm);
+        return {
+          id: u.id,
+          name: u.name || ("#" + u.id),
+          type: u.type || "openai",
+          enabled: u.enabled !== false && Number(u.weight ?? 1) > 0,
+          healthy: u.healthy !== false,
+          models,
+        };
+      })
+      .filter((g) => g.models.length > 0);
+  }
+  return [];
+}
+
 function availableGatewayModelOptions() {
+  const vm = (routerDraft?.virtual_model || routerConfigCache?.virtual_model || "auto").toLowerCase();
   const set = new Set();
-  (routerConfigCache?.available_models || []).forEach((m) => { if (m) set.add(m); });
-  Object.keys(routerConfigCache?.model_health || {}).forEach((m) => { if (m && m !== routerDraft?.virtual_model) set.add(m); });
+  (routerConfigCache?.available_models || []).forEach((m) => {
+    if (m && m.toLowerCase() !== vm) set.add(m);
+  });
+  const groups = upstreamModelGroupsForRouter();
+  groups.forEach((g) => {
+    if (g.enabled) {
+      g.models.forEach((m) => { if (m && m.toLowerCase() !== vm) set.add(m); });
+    }
+  });
+  if (set.size === 0) {
+    groups.forEach((g) => {
+      g.models.forEach((m) => { if (m && m.toLowerCase() !== vm) set.add(m); });
+    });
+  }
+  const healthMap = routerConfigCache?.model_health || {};
+  Object.keys(healthMap).forEach((m) => {
+    const info = healthMap[m];
+    if (m && m.toLowerCase() !== vm && info && info.status !== "missing" && Number(info.total_count || 0) > 0) {
+      set.add(m);
+    }
+  });
   return [...set].sort();
+}
+
+function buildUpstreamModelSelectOptionsHTML(excludeList = [], placeholderText = "+ 从上游已绑定模型选择…", selectedValue = "") {
+  const excludeSet = new Set(excludeList || []);
+  const groups = upstreamModelGroupsForRouter();
+  const allModels = availableGatewayModelOptions();
+  if (!groups.length && !allModels.length) {
+    let html = '<option value="">（当前无已绑定模型的上游，请先在「上游服务」绑定模型）</option>';
+    if (selectedValue) {
+      html += '<option value="' + esc(selectedValue) + '" selected>' + esc(selectedValue) + ' (未绑定上游)</option>';
+    }
+    return html;
+  }
+
+  let optGroupsHtml = "";
+  const coveredInGroups = new Set();
+  let totalAvailable = 0;
+
+  groups.forEach((g) => {
+    const models = g.models.filter((m) => !excludeSet.has(m));
+    g.models.forEach((m) => coveredInGroups.add(m));
+    if (!models.length) return;
+    totalAvailable += models.length;
+    const stateLabel = !g.enabled ? " · 已停用" : (g.healthy ? " · 健康" : " · 冷却中");
+    optGroupsHtml += '<optgroup label="' + esc("上游：" + g.name + " (" + g.type + stateLabel + ")") + '">'
+      + models.map((m) => '<option value="' + esc(m) + '"' + (selectedValue === m ? " selected" : "") + '>' + esc(m) + ' · [' + esc(g.name) + ']</option>').join("")
+      + '</optgroup>';
+  });
+
+  const uncovered = allModels.filter((m) => !coveredInGroups.has(m) && !excludeSet.has(m));
+  if (uncovered.length) {
+    totalAvailable += uncovered.length;
+    optGroupsHtml += '<optgroup label="上游已发现模型">'
+      + uncovered.map((m) => '<option value="' + esc(m) + '"' + (selectedValue === m ? " selected" : "") + '>' + esc(m) + '</option>').join("")
+      + '</optgroup>';
+  }
+
+  if (selectedValue && !allModels.includes(selectedValue) && !coveredInGroups.has(selectedValue)) {
+    optGroupsHtml = '<optgroup label="当前自定义模型"><option value="' + esc(selectedValue) + '" selected>' + esc(selectedValue) + ' (自定义)</option></optgroup>' + optGroupsHtml;
+  }
+
+  if (!totalAvailable && !selectedValue) {
+    return '<option value="">（所有上游已绑定模型均已添加）</option>';
+  }
+  return '<option value="">' + esc(placeholderText) + '</option>' + optGroupsHtml;
+}
+
+function populateRouterDefaultModelSelect() {
+  const sel = $("routerDefaultModelSelect");
+  if (!sel || !routerDraft) return;
+  const current = (routerDraft.default_model || "").trim();
+  sel.innerHTML = buildUpstreamModelSelectOptionsHTML([], "从上游已绑定模型选择兜底模型…", current);
+  sel.value = current;
+}
+
+function syncRouterDefaultModelSelect() {
+  const sel = $("routerDefaultModelSelect");
+  if (!sel || !routerDraft) return;
+  const current = (routerDraft.default_model || "").trim();
+  const hasOption = Array.from(sel.options).some((opt) => opt.value === current);
+  if (hasOption) {
+    sel.value = current;
+  } else {
+    populateRouterDefaultModelSelect();
+  }
+}
+
+function onSelectRouterDefaultModel(val) {
+  if (!routerDraft) return;
+  routerDraft.default_model = (val || "").trim();
+  if ($("routerDefaultModel")) $("routerDefaultModel").value = routerDraft.default_model;
+  renderRouterTiersEditor();
+  markRouterDirty(true);
+}
+
+function onSelectRouterGatewayClassifierModel(val) {
+  if (!routerDraft || !val) return;
+  routerDraft.classifier_model = val.trim();
+  if ($("routerClassifierModel")) $("routerClassifierModel").value = routerDraft.classifier_model;
+  markRouterDirty(true);
+}
+
+function syncRouterGatewayClassifierSelect() {
+  const sel = $("routerClassifierUpstreamModelSelect");
+  if (!sel || !routerDraft) return;
+  const current = (routerDraft.classifier_model || "").trim();
+  const hasOption = Array.from(sel.options).some((opt) => opt.value === current);
+  if (hasOption) {
+    sel.value = current;
+  } else {
+    sel.innerHTML = buildUpstreamModelSelectOptionsHTML([], "从上游已绑定模型中选择决策模型…", current);
+    sel.value = current;
+  }
+}
+
+function renderRouterSharedClassifierControls() {
+  if (!routerDraft) return;
+  const list = Array.isArray(routerDraft.shared_classifier_models) ? routerDraft.shared_classifier_models : [];
+  const sel = $("routerSharedClassifierModelSelect");
+  if (sel) {
+    sel.innerHTML = buildUpstreamModelSelectOptionsHTML(list, "+ 从上游已绑定模型选择添加到共享白名单…");
+  }
+  const chips = $("routerSharedClassifierChips");
+  if (chips) {
+    chips.innerHTML = list.map((m) =>
+      '<span class="router-preset-chip" style="display:inline-flex;align-items:center;gap:6px">'
+      + esc(m)
+      + '<button type="button" style="border:0;background:transparent;cursor:pointer;padding:0 2px;font-weight:700;color:inherit" title="移除 ' + esc(m) + '" onclick="removeRouterSharedClassifierModel(\'' + esc(m) + '\')">×</button>'
+      + '</span>'
+    ).join("");
+  }
+}
+
+function addRouterSharedClassifierModel(model) {
+  if (!routerDraft || !model) return;
+  const m = model.trim();
+  if (!m) return;
+  if (!Array.isArray(routerDraft.shared_classifier_models)) routerDraft.shared_classifier_models = [];
+  if (!routerDraft.shared_classifier_models.includes(m)) {
+    routerDraft.shared_classifier_models.push(m);
+    if ($("routerSharedClassifierModels")) {
+      $("routerSharedClassifierModels").value = routerDraft.shared_classifier_models.join(", ");
+    }
+    renderRouterSharedClassifierControls();
+    markRouterDirty(true);
+  }
+}
+
+function removeRouterSharedClassifierModel(model) {
+  if (!routerDraft || !Array.isArray(routerDraft.shared_classifier_models)) return;
+  routerDraft.shared_classifier_models = routerDraft.shared_classifier_models.filter((x) => x !== model);
+  if ($("routerSharedClassifierModels")) {
+    $("routerSharedClassifierModels").value = routerDraft.shared_classifier_models.join(", ");
+  }
+  renderRouterSharedClassifierControls();
+  markRouterDirty(true);
+}
+
+function syncRouterSharedClassifierModelsFromInput() {
+  if (!routerDraft || !$("routerSharedClassifierModels")) return;
+  routerDraft.shared_classifier_models = $("routerSharedClassifierModels").value
+    .split(/[,，\n\r]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  renderRouterSharedClassifierControls();
+}
+
+function autoFillRouterTiersFromUpstreams() {
+  if (!routerDraft) return;
+  const pool = availableGatewayModelOptions();
+  if (!pool.length) {
+    toast("当前还没有在上游服务中绑定任何模型，请先在「上游服务」中配置模型", "error");
+    return;
+  }
+  const fast = pool.filter((m) => /flash|mini|haiku|lite|turbo|instant|nano/i.test(m));
+  const reason = pool.filter((m) => /reasoner|r1|o1|o3|o4|thinking|grok-4|opus|qwq/i.test(m));
+  const strong = pool.filter((m) => !fast.includes(m));
+
+  routerDraft.tiers.SIMPLE = (fast.length ? fast : pool).slice(0, 3);
+  routerDraft.tiers.MEDIUM = (fast.length ? [...fast, ...strong] : pool).slice(0, 3);
+  routerDraft.tiers.COMPLEX = (strong.length ? strong : pool).slice(0, 3);
+  routerDraft.tiers.REASONING = (reason.length ? reason : (strong.length ? strong : pool)).slice(0, 2);
+  if (!routerDraft.default_model || !pool.includes(routerDraft.default_model)) {
+    routerDraft.default_model = routerDraft.tiers.COMPLEX[0] || pool[0] || "";
+    if ($("routerDefaultModel")) $("routerDefaultModel").value = routerDraft.default_model;
+  }
+  renderRouterTiersEditor();
+  markRouterDirty(true);
+  toast("已根据上游绑定的模型特征智能填充四档候选与默认模型，请点击「保存设置」生效");
 }
 
 function renderRouterTiersEditor() {
@@ -260,8 +485,16 @@ function renderRouterTiersEditor() {
   if (datalist) {
     datalist.innerHTML = allModels.map((m) => '<option value="' + esc(m) + '"></option>').join("");
   }
+  populateRouterDefaultModelSelect();
+  renderRouterSharedClassifierControls();
 
-  container.innerHTML = ROUTER_TIERS.map(({ id, label, subtitle }) => {
+  const noUpstreamBanner = !allModels.length
+    ? '<div class="router-candidate-empty" style="margin-bottom:8px;border-style:dashed">'
+      + '当前尚未检测到「上游服务」绑定的模型。请先前往左侧 <strong>上游服务</strong> 为渠道绑定可用模型，即可在下方下拉框中直接选择。'
+      + '</div>'
+    : '';
+
+  container.innerHTML = noUpstreamBanner + ROUTER_TIERS.map(({ id, label, subtitle }) => {
     const list = routerDraft.tiers[id] || [];
     const criteria = routerDraft.tier_criteria[id] || "";
     const candidatesHtml = list.length
@@ -281,13 +514,11 @@ function renderRouterTiersEditor() {
             + '<button type="button" class="router-order-btn remove" title="从本档移除" aria-label="移除 ' + esc(model) + '" onclick="removeRouterCandidate(\'' + id + '\',' + idx + ')">×</button>'
             + '</div></div></div>';
         }).join("")
-      : '<div class="router-candidate-empty">当前档位暂无候选模型，将自动顺延到更高档位或兜底默认模型</div>';
+      : '<div class="router-candidate-empty">当前档位暂无候选模型，可从下方下拉框选择上游已绑定的模型添加（为空时自动顺延到更高档位或兜底默认模型）</div>';
 
-    const quickOptions = allModels.filter((m) => !list.includes(m));
-    const quickSelectHtml = quickOptions.length
-      ? '<select aria-label="从可用模型快速添加到 ' + id + '" onchange="if(this.value){addRouterCandidate(\'' + id + '\',this.value);this.value=\'\';}"><option value="">+ 从可用模型选择添加…</option>'
-        + quickOptions.map((m) => '<option value="' + esc(m) + '">' + esc(m) + '</option>').join("") + '</select>'
-      : '';
+    const quickSelectHtml = '<select class="router-tier-select" aria-label="从上游已绑定模型添加到 ' + id + '" onchange="if(this.value){addRouterCandidate(\'' + id + '\',this.value);this.value=\'\';}">'
+      + buildUpstreamModelSelectOptionsHTML(list, "+ 从上游已绑定模型选择加入 " + id + "…")
+      + '</select>';
 
     return '<div class="router-tier-card" data-tier="' + id + '">'
       + '<div class="router-tier-header">'
@@ -296,9 +527,9 @@ function renderRouterTiersEditor() {
       + '</div>'
       + '<div class="router-candidate-list">' + candidatesHtml + '</div>'
       + '<div class="router-tier-add-bar">'
-      + '<input id="routerAddInput_' + id + '" type="text" list="routerAvailableModelsList" placeholder="输入模型 ID 回车添加（按 #1 → #2 优先级依次尝试）…" onkeydown="if(event.key===\'Enter\'){event.preventDefault();addRouterCandidateFromInput(\'' + id + '\');}">'
-      + '<button type="button" class="btn mini ghost" onclick="addRouterCandidateFromInput(\'' + id + '\')">添加候选</button>'
       + quickSelectHtml
+      + '<input id="routerAddInput_' + id + '" class="router-tier-input" type="text" list="routerAvailableModelsList" placeholder="或手动输入模型 ID 回车添加…" onkeydown="if(event.key===\'Enter\'){event.preventDefault();addRouterCandidateFromInput(\'' + id + '\');}">'
+      + '<button type="button" class="btn mini ghost router-tier-add-btn" onclick="addRouterCandidateFromInput(\'' + id + '\')">添加候选</button>'
       + '</div>'
       + '<details class="router-tier-criteria">'
       + '<summary>自定义本档给分类器的判定标准说明</summary>'
@@ -310,7 +541,9 @@ function renderRouterTiersEditor() {
 
   const defHealth = $("routerDefaultModelHealth");
   if (defHealth) {
-    defHealth.innerHTML = healthBadgeForRouterModel(routerDraft.default_model || "");
+    defHealth.innerHTML = routerDraft.default_model
+      ? healthBadgeForRouterModel(routerDraft.default_model)
+      : '<span class="router-health-pill missing" title="请从上游已绑定模型中选择兜底默认模型">未选择</span>';
   }
 }
 
@@ -395,8 +628,8 @@ function selectRouterClassifier(provider) {
     if (!routerDraft.classifier_model || routerDraft.classifier_model.startsWith("@cf/")) routerDraft.classifier_model = "decision-model-preview";
     if (!routerDraft.endpoint_url) routerDraft.endpoint_url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
   } else if (provider === "gateway_upstream") {
-    if (!routerDraft.classifier_model || routerDraft.classifier_model.startsWith("@cf/")) {
-      const gwModels = availableGatewayModelOptions();
+    const gwModels = availableGatewayModelOptions();
+    if (!routerDraft.classifier_model || routerDraft.classifier_model.startsWith("@cf/") || (gwModels.length > 0 && !gwModels.includes(routerDraft.classifier_model))) {
       routerDraft.classifier_model = gwModels[0] || "";
     }
   }
@@ -428,8 +661,31 @@ function renderRouterClassifierForm() {
   $("routerClassifierRemoteFields").classList.toggle("hidden", isHeuristic);
   $("routerCloudflareAccountField").classList.toggle("hidden", !isCloudflare);
   $("routerEndpointField").classList.toggle("hidden", isHeuristic || isGatewayUpstream);
+  if ($("routerExternalCredFields")) {
+    $("routerExternalCredFields").classList.toggle("hidden", isHeuristic || isGatewayUpstream);
+  }
+  const gwClassifierSel = $("routerClassifierUpstreamModelSelect");
+  if (gwClassifierSel) {
+    gwClassifierSel.classList.toggle("hidden", !isGatewayUpstream);
+    if (isGatewayUpstream) {
+      const currentClf = (routerDraft.classifier_model || "").trim();
+      gwClassifierSel.innerHTML = buildUpstreamModelSelectOptionsHTML([], "从上游已绑定模型中选择决策模型…", currentClf);
+      gwClassifierSel.value = currentClf;
+    }
+  }
 
-  $("routerClassifierModel").value = routerDraft.classifier_model || "";
+  const clfInput = $("routerClassifierModel");
+  if (clfInput) {
+    clfInput.value = routerDraft.classifier_model || "";
+    const placeholders = {
+      cloudflare: "@cf/cloudflare/clef-flash",
+      jev: "jev",
+      systemone: "Julia-1",
+      openai_chat: "decision-model-preview",
+      gateway_upstream: "从左侧下拉框选择上游已绑定的模型，或输入模型 ID",
+    };
+    clfInput.placeholder = placeholders[p] || "@cf/cloudflare/clef-flash";
+  }
   $("routerCloudflareAccount").value = routerDraft.cloudflare_account_id || "";
   $("routerEndpointURL").value = routerDraft.endpoint_url || "";
   $("routerProxySelect").value = String(routerDraft.proxy_id || 0);
@@ -469,8 +725,15 @@ function renderRouterClassifierForm() {
     } else if (p === "openai_chat") {
       presetsBox.innerHTML = '<button type="button" class="router-preset-chip" onclick="applyRouterClassifierPreset(\'openai_chat\',\'decision-model-preview\',\'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions\')">阿里云百炼 decision-model-preview</button>';
     } else if (p === "gateway_upstream") {
-      const gwModels = availableGatewayModelOptions().slice(0, 6);
-      presetsBox.innerHTML = gwModels.map((m) => '<button type="button" class="router-preset-chip" onclick="applyRouterClassifierPreset(\'gateway_upstream\',\'' + esc(m) + '\')">' + esc(m) + ' (网关上游)</button>').join("");
+      const gwModels = availableGatewayModelOptions().slice(0, 8);
+      const healthMap = routerConfigCache?.model_health || {};
+      presetsBox.innerHTML = gwModels.length
+        ? gwModels.map((m) => {
+            const upNames = (healthMap[m]?.upstream_names || []).join(", ");
+            const suffix = upNames ? " (" + upNames + ")" : " (网关上游)";
+            return '<button type="button" class="router-preset-chip" onclick="applyRouterClassifierPreset(\'gateway_upstream\',\'' + esc(m) + '\')">' + esc(m + suffix) + '</button>';
+          }).join("")
+        : '<small class="muted">当前暂无已绑定的上游模型，请先在「上游服务」中为渠道绑定模型。</small>';
     } else {
       presetsBox.innerHTML = "";
     }
@@ -481,7 +744,7 @@ function renderAutoRouterConfig() {
   if (!routerDraft) return;
   setRouterMode(routerDraft.mode);
   $("routerVirtualModel").value = routerDraft.virtual_model || "auto";
-  $("routerDefaultModel").value = routerDraft.default_model || "grok-4.7";
+  $("routerDefaultModel").value = routerDraft.default_model || "";
   $("routerCascadeTiers").checked = routerDraft.cascade_tiers !== false;
   $("routerAllowUnlisted").checked = routerDraft.allow_unlisted_target_models !== false;
   $("routerResponseHeaders").checked = routerDraft.response_headers !== false;
@@ -508,7 +771,7 @@ function renderAutoRouterConfig() {
 function collectRouterDraftFromInputs() {
   if (!routerDraft) return null;
   routerDraft.virtual_model = $("routerVirtualModel").value.trim() || "auto";
-  routerDraft.default_model = $("routerDefaultModel").value.trim() || "grok-4.7";
+  routerDraft.default_model = $("routerDefaultModel").value.trim();
   routerDraft.cascade_tiers = $("routerCascadeTiers").checked;
   routerDraft.allow_unlisted_target_models = $("routerAllowUnlisted").checked;
   routerDraft.response_headers = $("routerResponseHeaders").checked;

@@ -265,7 +265,7 @@
             <div class="upstream-metric"><span><svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg> 首 Token 延迟</span><strong id="upFirstToken">—</strong><small>近 7 天成功请求的平均值</small></div>
             <div class="upstream-metric"><span><svg class="icon" aria-hidden="true"><use href="#i-token"/></svg> 今日 Tokens</span><strong id="upTodayTokens">—</strong><small id="upTokenNote">输入与输出总用量</small></div>
           </div>
-          <div class="upstream-filters"><label class="search-field"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><input id="upstreamSearch" type="search" placeholder="按上游名称 / 模型 / 地址搜索" aria-label="搜索上游" oninput="renderUpstreams()"></label><select id="upstreamStatusFilter" aria-label="按上游状态筛选" onchange="renderUpstreams()"><option value="">全部状态</option><option value="enabled">已启用</option><option value="disabled">已停用</option><option value="healthy">健康且启用</option><option value="cooling">冷却中</option></select><select id="upstreamTypeFilter" aria-label="按上游格式筛选" onchange="renderUpstreams()"><option value="">全部格式</option><option value="openai-chat">OpenAI Chat Completions</option><option value="openai-responses">OpenAI Responses</option><option value="opencode-free">OpenCode 免费模型</option><option value="cliproxy">CLIProxyAPI 账号池</option><option value="cline">Cline 免费模型</option><option value="anthropic">Anthropic Messages</option><option value="gemini">Gemini generateContent</option><option value="openai-auto">OpenAI · 旧配置</option><option value="opencode">OpenCode · 旧配置</option></select><select id="upstreamSort" aria-label="上游排序依据" onchange="renderUpstreams()"><option value="priority">优先级</option><option value="name">名称</option><option value="calls">今日调用</option><option value="cost">今日花费</option><option value="weight">权重</option></select><button id="upstreamSortDirection" class="icon-btn" onclick="toggleUpstreamSort()" aria-label="当前升序，点击切换为降序" title="切换排序方向"><svg class="icon" aria-hidden="true"><use href="#i-sort"/></svg></button></div>
+          <div class="upstream-filters"><label class="search-field"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><input id="upstreamSearch" type="search" placeholder="按上游名称 / 模型 / 地址搜索" aria-label="搜索上游" oninput="renderUpstreams()"></label><select id="upstreamStatusFilter" aria-label="按上游状态筛选" onchange="renderUpstreams()"><option value="">全部状态</option><option value="enabled">已启用</option><option value="disabled">已停用</option><option value="healthy">健康且启用</option><option value="cooling">冷却中</option></select><select id="upstreamTypeFilter" aria-label="按上游格式筛选" onchange="renderUpstreams()"><option value="">全部格式</option><option value="openai-chat">OpenAI Chat Completions</option><option value="openai-responses">OpenAI Responses</option><option value="opencode-free">OpenCode 免费模型</option><option value="cliproxy">CLIProxyAPI 账号池</option><option value="cline">Cline 免费模型</option><option value="anthropic">Anthropic Messages</option><option value="gemini">Gemini generateContent</option><option value="systemone">SystemOne 决策模型 (/v1/systemone)</option><option value="cloudflare">Cloudflare Clef 决策模型 (Workers AI)</option><option value="openai-auto">OpenAI · 旧配置</option><option value="opencode">OpenCode · 旧配置</option></select><select id="upstreamSort" aria-label="上游排序依据" onchange="renderUpstreams()"><option value="priority">优先级</option><option value="name">名称</option><option value="calls">今日调用</option><option value="cost">今日花费</option><option value="weight">权重</option></select><button id="upstreamSortDirection" class="icon-btn" onclick="toggleUpstreamSort()" aria-label="当前升序，点击切换为降序" title="切换排序方向"><svg class="icon" aria-hidden="true"><use href="#i-sort"/></svg></button></div>
           <div class="upstream-list-meta"><span id="upstreamListCount" role="status">正在加载上游…</span><div class="upstream-view-switch" aria-label="列表显示方式"><button data-upstream-view="table" aria-pressed="true" onclick="setUpstreamView('table')">表格</button><button data-upstream-view="cards" aria-pressed="false" onclick="setUpstreamView('cards')">卡片</button></div></div>
           <div id="upstreamBulkBar" class="upstream-bulk-bar hidden"><span id="upstreamSelectedCount"></span><button class="text-btn" onclick="setBulkUpstreamEnabled(true)">批量启用</button><button class="text-btn" onclick="setBulkUpstreamEnabled(false)">批量停用</button><button class="text-btn" onclick="clearUpstreamSelection()">取消选择</button></div>
           <div id="upstreamTableView" class="upstream-table-shell"><div class="table-wrap"><table class="tbl upstream-table" id="upsTable"><thead><tr><th scope="col" class="upstream-select-cell"><input id="upstreamSelectAll" type="checkbox" aria-label="选择当前筛选的全部上游" onchange="selectAllUpstreams(this.checked)"></th><th scope="col">启用</th><th scope="col">上游 / 密钥</th><th scope="col">模型</th><th scope="col">健康</th><th scope="col">今日统计</th><th scope="col">用量 (7D)</th><th scope="col">调度</th><th scope="col" class="actions-heading">操作</th></tr></thead><tbody></tbody></table></div></div>
@@ -321,7 +321,7 @@
               <strong id="routerKpiTotal" class="router-kpi-val">—</strong>
               <div id="routerKpiTotalSub" class="router-kpi-sub">等待加载…</div>
             </article>
-            <article class="router-kpi-card" style="grid-column: span 2">
+            <article class="router-kpi-card router-kpi-card-wide">
               <div class="router-kpi-head"><span>四档分流占比 (SIMPLE / MEDIUM / COMPLEX / REASONING)</span></div>
               <div id="routerTierBar" class="router-tier-bar"></div>
               <div id="routerTierLegend" class="router-tier-legend"></div>
@@ -347,11 +347,16 @@
           <div class="router-layout">
             <div class="router-col">
               <div class="card-block settings-card">
-                <div class="section-heading">
-                  <span class="section-icon"><svg class="icon"><use href="#i-layers"/></svg></span>
-                  <div>
-                    <h2>四档候选模型与优先级排序</h2>
-                    <p>每个档位按 <code>#1 → #2 → #3</code> 优先级依次评估：自动跳过当前密钥额度已耗尽（402）或无健康上游的模型；转发中若首选模型全部上游失败且未响应，自动切换同档下一候选。</p>
+                <div class="section-heading router-section-heading">
+                  <div class="router-section-heading-main">
+                    <span class="section-icon"><svg class="icon"><use href="#i-layers"/></svg></span>
+                    <div>
+                      <h2>四档候选模型与优先级排序</h2>
+                      <p>每个档位按 <code>#1 → #2 → #3</code> 优先级依次评估：自动跳过当前密钥额度已耗尽（402）或无健康上游的模型；转发中若首选模型全部上游失败且未响应，自动切换同档下一候选。</p>
+                    </div>
+                  </div>
+                  <div class="router-section-heading-actions">
+                    <button type="button" class="btn mini ghost" onclick="autoFillRouterTiersFromUpstreams()" title="从已配置上游绑定的模型中按特征自动填入四档与默认模型">一键从上游模型智能填充</button>
                   </div>
                 </div>
                 <div id="routerTiersContainer" class="router-tiers-stack"></div>
@@ -360,9 +365,12 @@
                   <div class="form-grid">
                     <label class="field">
                       <span>兜底默认模型 (Default Model) <span class="required">*</span></span>
-                      <div style="display:flex;align-items:center;gap:8px">
-                        <input id="routerDefaultModel" type="text" list="routerAvailableModelsList" value="grok-4.7" spellcheck="false" oninput="routerDraft.default_model=this.value.trim();renderRouterTiersEditor();markRouterDirty(true)">
-                        <span id="routerDefaultModelHealth"></span>
+                      <div class="router-model-select-row">
+                        <select id="routerDefaultModelSelect" aria-label="从上游已绑定模型选择兜底默认模型" onchange="onSelectRouterDefaultModel(this.value)">
+                          <option value="">从上游已绑定模型中选择…</option>
+                        </select>
+                        <input id="routerDefaultModel" type="text" list="routerAvailableModelsList" placeholder="或手动输入模型 ID" spellcheck="false" oninput="routerDraft.default_model=this.value.trim();syncRouterDefaultModelSelect();renderRouterTiersEditor();markRouterDirty(true)">
+                        <span id="routerDefaultModelHealth" class="router-default-health-wrap"></span>
                       </div>
                       <small>Shadow 模式下实际使用的模型，以及当所有档位候选模型均不可用时的最终保底模型。</small>
                     </label>
@@ -428,7 +436,12 @@
                 <div id="routerClassifierRemoteFields">
                   <div class="field">
                     <label for="routerClassifierModel">决策模型名称</label>
-                    <input id="routerClassifierModel" type="text" placeholder="@cf/cloudflare/clef-flash" spellcheck="false" oninput="markRouterDirty(true)">
+                    <div class="router-model-select-row">
+                      <select id="routerClassifierUpstreamModelSelect" class="hidden" aria-label="从上游已绑定模型选择决策模型" onchange="onSelectRouterGatewayClassifierModel(this.value)">
+                        <option value="">从上游已绑定模型中选择…</option>
+                      </select>
+                      <input id="routerClassifierModel" type="text" placeholder="@cf/cloudflare/clef-flash" spellcheck="false" oninput="if(routerDraft){routerDraft.classifier_model=this.value.trim();syncRouterGatewayClassifierSelect();}markRouterDirty(true)">
+                    </div>
                     <div id="routerModelPresets" class="router-preset-chips"></div>
                   </div>
                   <div id="routerCloudflareAccountField" class="field">
@@ -440,21 +453,23 @@
                     <label for="routerEndpointURL">自定义端点 URL <span class="optional">Cloudflare 可留空自动拼接</span></label>
                     <input id="routerEndpointURL" type="url" placeholder="https://api.typesafe.ai/v1/systemone" spellcheck="false" oninput="markRouterDirty(true)">
                   </div>
-                  <div class="form-grid">
-                    <label class="field">
-                      <span>API Token / 密钥</span>
-                      <input id="routerAPIKey" type="password" autocomplete="new-password" placeholder="留空保留已存密钥或使用环境变量" spellcheck="false" oninput="markRouterDirty(true)">
-                      <small id="routerApiKeyHint"></small>
-                    </label>
-                    <label class="field">
-                      <span>出站代理 (Proxy)</span>
-                      <select id="routerProxySelect" onchange="markRouterDirty(true)">
-                        <option value="0">直连（跟随系统默认网络）</option>
-                      </select>
-                      <small>访问 Cloudflare / Jev 时可选走已配置代理。</small>
-                    </label>
+                  <div id="routerExternalCredFields">
+                    <div class="form-grid">
+                      <label class="field">
+                        <span>API Token / 密钥</span>
+                        <input id="routerAPIKey" type="password" autocomplete="new-password" placeholder="留空保留已存密钥或使用环境变量" spellcheck="false" oninput="markRouterDirty(true)">
+                        <small id="routerApiKeyHint"></small>
+                      </label>
+                      <label class="field">
+                        <span>出站代理 (Proxy)</span>
+                        <select id="routerProxySelect" onchange="markRouterDirty(true)">
+                          <option value="0">直连（跟随系统默认网络）</option>
+                        </select>
+                        <small>访问 Cloudflare / Jev 时可选走已配置代理。</small>
+                      </label>
+                    </div>
+                    <label class="check-label"><input id="routerClearAPIKey" type="checkbox" onchange="markRouterDirty(true)">清除后台已保存的 API Token（回退使用环境变量）</label>
                   </div>
-                  <label class="check-label"><input id="routerClearAPIKey" type="checkbox" onchange="markRouterDirty(true)">清除后台已保存的 API Token（回退使用环境变量）</label>
                 </div>
 
                 <div class="form-grid" style="margin-top:10px">
@@ -508,14 +523,20 @@
                     <span><strong>允许用户私人路由复用上方「站点专属外部决策分类器」</strong><small>默认关闭：保护站点独占决策模型（如站长私有 Cloudflare Clef / Jev 凭证），用户配置自定义路由时无法调用。</small></span>
                     <input id="routerShareSiteClassifier" type="checkbox" class="switch-input" onchange="markRouterDirty(true)"><span class="switch-track"></span>
                   </label>
-                  <label class="field" style="margin-top:8px">
-                    <span>向用户开放共享的网关上游决策模型白名单 <span class="optional">逗号分隔</span></span>
-                    <input id="routerSharedClassifierModels" type="text" list="routerAvailableModelsList" placeholder="例如：qwen-turbo, glm-4-flash, decision-model" spellcheck="false" oninput="markRouterDirty(true)">
-                    <small>填写已在「上游服务」中添加的模型 ID：既可作为 API 中转的一部分，也可供 XAuth 用户在个人智能路由中选作共享决策分类器（按用户密钥配额扣费）。</small>
-                  </label>
+                  <div class="field" style="margin-top:8px">
+                    <label for="routerSharedClassifierModels">向用户开放共享的网关上游决策模型白名单 <span class="optional">从上游绑定模型选择或逗号分隔</span></label>
+                    <div class="router-model-select-row">
+                      <select id="routerSharedClassifierModelSelect" aria-label="从上游已绑定模型选择共享决策模型" onchange="if(this.value){addRouterSharedClassifierModel(this.value);this.value='';}">
+                        <option value="">+ 从上游已绑定模型选择添加…</option>
+                      </select>
+                      <input id="routerSharedClassifierModels" type="text" list="routerAvailableModelsList" placeholder="或手动输入模型 ID（逗号分隔）" spellcheck="false" oninput="syncRouterSharedClassifierModelsFromInput();markRouterDirty(true)">
+                    </div>
+                    <div id="routerSharedClassifierChips" class="router-preset-chips"></div>
+                    <small>从「上游服务」已绑定的模型中选择：既可作为 API 中转的一部分，也可供 XAuth 用户在个人智能路由中选作共享决策分类器（按用户密钥配额扣费）。</small>
+                  </div>
                 </div>
 
-                <div class="form-actions" style="margin-top:12px;justify-content:space-between">
+                <div class="form-actions router-form-actions">
                   <button type="button" class="btn ghost" onclick="testAutoRouterClassifier(this)"><svg class="icon"><use href="#i-activity"/></svg> 测试分类器连接</button>
                   <button type="button" class="btn" onclick="saveAutoRouter(this)"><svg class="icon"><use href="#i-check"/></svg> 保存全部设置</button>
                 </div>
@@ -541,8 +562,8 @@
                   <span>测试 Prompt 内容</span>
                   <textarea id="routerDryRunPrompt" rows="3" placeholder="输入你想测试的用户问题或代码需求…">用 Go 写一个带超时控制的 HTTP GET 请求工具函数，支持自定义 Header 并解析 JSON 响应。</textarea>
                 </label>
-                <div style="display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap">
-                  <label class="field" style="flex:1;min-width:220px;margin:0">
+                <div class="router-dryrun-action-row">
+                  <label class="field router-dryrun-key-field">
                     <span>模拟特定 API 密钥权限与 402 额度状态</span>
                     <select id="routerDryRunKey">
                       <option value="0">不绑定特定密钥（仅检查上游健康度）</option>
@@ -661,7 +682,7 @@
       <div class="editor-body">
         <aside class="editor-nav" aria-label="编辑器分区"><p class="nav-label">连接配置</p><button type="button" data-section="editorBasic" class="editor-nav-item active" onclick="jumpEditor('editorBasic')"><span>01</span> 基本信息</button><button id="poolEditorNav" type="button" data-section="editorPool" class="editor-nav-item hidden" onclick="jumpEditor('editorPool')"><span>02</span> 账号与授权</button><button type="button" data-section="editorConnection" class="editor-nav-item" onclick="jumpEditor('editorConnection')"><span>02</span> 连接与认证</button><button type="button" data-section="editorHeaders" class="editor-nav-item" onclick="jumpEditor('editorHeaders')"><span>03</span> 请求头覆盖</button><button type="button" data-section="editorModels" class="editor-nav-item" onclick="jumpEditor('editorModels')"><span>04</span> 模型访问</button><button type="button" data-section="editorRouting" class="editor-nav-item" onclick="jumpEditor('editorRouting')"><span>05</span> 调度策略</button><div class="editor-nav-note"><svg class="icon"><use href="#i-info"/></svg><p>配置清晰，<br>连接更稳定。</p><small>保存后，新配置立即生效。</small></div></aside>
         <div id="editorScroll" class="editor-scroll">
-          <section id="editorBasic" class="editor-section"><div class="editor-section-heading"><span>01</span><div><h3>基本信息</h3><p>一个名称，辨识每一条连接。</p></div></div><div class="form-grid"><label class="field"><span>上游名称 <span class="required">*</span></span><input id="editName" placeholder="例如：团队 Claude 主账号" required maxlength="120"></label><label class="field"><span>上游请求格式</span><select id="editType" required onchange="updateEditorProvider()" aria-describedby="providerHint clientFormatHint"><option value="openai-chat">OpenAI Chat Completions</option><option value="openai-responses">OpenAI Responses</option><option value="opencode-free">OpenCode 免费模型</option><option value="cliproxy">CLIProxyAPI 账号池</option><option value="cline">Cline 免费模型</option><option value="anthropic">Anthropic Messages</option><option value="gemini">Gemini generateContent</option><option id="legacyOpenCodeFormatOption" value="opencode" hidden disabled>OpenCode · 旧配置（Zen / Go）</option><option id="legacyOpenAIFormatOption" value="openai-auto" hidden disabled>OpenAI · 旧配置（跟随客户端）</option></select></label><label id="opencodeTierField" class="field hidden"><span>OpenCode 套餐</span><select id="editOpenCodeTier" onchange="updateOpenCodeTier()"><option value="zen">Zen（按量付费）</option><option value="go">Go（订阅）</option></select></label><label id="opencodeProtocolField" class="field hidden"><span>模型原生协议</span><select id="editOpenCodeProtocol" onchange="clearProbeResults(); updateEditorDirty()" aria-describedby="openCodeProtocolHint"><option value="auto">按模型自动识别（推荐）</option><option value="chat">Chat Completions</option><option value="responses">Responses</option><option value="anthropic">Anthropic Messages</option></select><small id="openCodeProtocolHint">自动识别 Chat、Responses 或 Messages。自建代理或未收录的模型可手动指定协议，并配置对应模型白名单。</small></label><label class="field"><span>结构化输出转换</span><select id="editStructuredOutput" aria-describedby="structuredOutputHint"><option value="">保留结构约束（默认）</option><option value="json_object">JSON 兼容模式（校验后返回）</option><option value="disabled">不支持跨格式结构化输出</option></select><small id="structuredOutputHint">仅影响跨格式请求。只支持 JSON 模式的 Chat / Responses 上游可选兼容模式；需确认上游支持，且 Schema 根类型为 object。原生请求按原格式转发。</small></label></div><div id="providerHint" class="field-hint">上游固定使用 /v1/chat/completions。</div><div id="clientFormatHint" class="field-hint">选择上游实际支持的请求格式。客户端可使用 OpenAI Chat、Responses、Anthropic 或 Gemini 格式，网关自动转换请求与响应。</div></section>
+          <section id="editorBasic" class="editor-section"><div class="editor-section-heading"><span>01</span><div><h3>基本信息</h3><p>一个名称，辨识每一条连接。</p></div></div><div class="form-grid"><label class="field"><span>上游名称 <span class="required">*</span></span><input id="editName" placeholder="例如：团队 Claude 主账号" required maxlength="120"></label><label class="field"><span>上游请求格式</span><select id="editType" required onchange="updateEditorProvider()" aria-describedby="providerHint clientFormatHint"><option value="openai-chat">OpenAI Chat Completions</option><option value="openai-responses">OpenAI Responses</option><option value="opencode-free">OpenCode 免费模型</option><option value="cliproxy">CLIProxyAPI 账号池</option><option value="cline">Cline 免费模型</option><option value="anthropic">Anthropic Messages</option><option value="gemini">Gemini generateContent</option><option value="systemone">SystemOne / Jev 决策模型 (/v1/systemone)</option><option value="cloudflare">Cloudflare Clef 决策模型 (Workers AI)</option><option id="legacyOpenCodeFormatOption" value="opencode" hidden disabled>OpenCode · 旧配置（Zen / Go）</option><option id="legacyOpenAIFormatOption" value="openai-auto" hidden disabled>OpenAI · 旧配置（跟随客户端）</option></select></label><label id="opencodeTierField" class="field hidden"><span>OpenCode 套餐</span><select id="editOpenCodeTier" onchange="updateOpenCodeTier()"><option value="zen">Zen（按量付费）</option><option value="go">Go（订阅）</option></select></label><label id="opencodeProtocolField" class="field hidden"><span>模型原生协议</span><select id="editOpenCodeProtocol" onchange="clearProbeResults(); updateEditorDirty()" aria-describedby="openCodeProtocolHint"><option value="auto">按模型自动识别（推荐）</option><option value="chat">Chat Completions</option><option value="responses">Responses</option><option value="anthropic">Anthropic Messages</option></select><small id="openCodeProtocolHint">自动识别 Chat、Responses 或 Messages。自建代理或未收录的模型可手动指定协议，并配置对应模型白名单。</small></label><label class="field"><span>结构化输出转换</span><select id="editStructuredOutput" aria-describedby="structuredOutputHint"><option value="">保留结构约束（默认）</option><option value="json_object">JSON 兼容模式（校验后返回）</option><option value="disabled">不支持跨格式结构化输出</option></select><small id="structuredOutputHint">仅影响跨格式请求。只支持 JSON 模式的 Chat / Responses 上游可选兼容模式；需确认上游支持，且 Schema 根类型为 object。原生请求按原格式转发。</small></label></div><div id="providerHint" class="field-hint">上游固定使用 /v1/chat/completions。</div><div id="clientFormatHint" class="field-hint">选择上游实际支持的请求格式。客户端可使用 OpenAI Chat、Responses、Anthropic 或 Gemini 格式，网关自动转换请求与响应。</div></section>
           <section id="editorPool" class="editor-section pool-section hidden" aria-labelledby="poolHeading">
             <div class="pool-section-heading"><div><span class="pool-kicker">CLIPROXYAPI / ACCOUNT POOL</span><h3 id="poolHeading">让每个账号，各就其位。</h3><p>在此管理当前池的账号、授权与网络出口。</p></div><span id="coreRuntime" class="badge off">待创建</span></div>
             <div class="pool-summary" aria-label="账号池概况"><div><span>池内账号</span><strong id="poolAccountCount">0</strong><small>凭据独立保存</small></div><div><span>可用账号</span><strong id="poolReadyCount">0</strong><small id="poolReadyNote">等待添加账号</small></div><div><span>网络出口</span><strong id="poolProxyCount">默认</strong><small>支持每账号单独指定</small></div></div>

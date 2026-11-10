@@ -47,6 +47,7 @@
 !.env.*.example
 
 # 编辑器本地配置与系统缓存
+.claude/
 .idea/
 .vscode/
 .fleet/

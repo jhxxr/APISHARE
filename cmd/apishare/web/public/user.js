@@ -696,10 +696,45 @@
     if ($("#byokProxyDefaultHint")) {
       $("#byokProxyDefaultHint").textContent = "「系统默认」自动跟随管理员设置的默认出口（直连或站点绑定代理）；若选择「自定义代理」，则由服务器直接连接你提供的代理，不会再经过管理员配置的代理。";
     }
+    syncByokTypeHints(false);
     syncByokProxyModeVisibility();
     if ($("#byokEnabled")) $("#byokEnabled").checked = target ? Boolean(target.enabled) : true;
     $("#byokProbeResult")?.classList.add("hidden");
     dlg.showModal();
+  }
+
+  function syncByokTypeHints(autoFillModels = true) {
+    const type = $("#byokType")?.value || "openai";
+    const baseInput = $("#byokBaseURL");
+    const modelsInput = $("#byokModels");
+    if (baseInput) {
+      if (type === "systemone") {
+        baseInput.placeholder = "例如：https://api.typesafe.ai/v1/systemone";
+      } else if (type === "cloudflare") {
+        baseInput.placeholder = "例如：https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/ai/run";
+      } else if (type === "anthropic") {
+        baseInput.placeholder = "例如：https://api.anthropic.com";
+      } else if (type === "gemini") {
+        baseInput.placeholder = "例如：https://generativelanguage.googleapis.com";
+      } else {
+        baseInput.placeholder = "例如：https://api.deepseek.com 或 https://api.openai.com";
+      }
+    }
+    if (modelsInput) {
+      if (type === "systemone") {
+        modelsInput.placeholder = "默认自动绑定：jev, Julia-1（也可留空）";
+        if (autoFillModels && !modelsInput.value.trim()) {
+          modelsInput.value = "jev, Julia-1";
+        }
+      } else if (type === "cloudflare") {
+        modelsInput.placeholder = "默认自动绑定：@cf/cloudflare/clef-flash, @cf/cloudflare/clef（也可留空）";
+        if (autoFillModels && !modelsInput.value.trim()) {
+          modelsInput.value = "@cf/cloudflare/clef-flash, @cf/cloudflare/clef";
+        }
+      } else {
+        modelsInput.placeholder = "例如：deepseek-chat, deepseek-reasoner, gpt-4o-mini";
+      }
+    }
   }
 
   function syncByokProxyModeVisibility() {
@@ -905,7 +940,7 @@
         : "仅用于你的私人路由分档请求";
     }
 
-    // Populate datalists
+    // Populate datalists & bound model selects
     const personalModels = Array.isArray(v.personal_models) ? v.personal_models : [];
     const siteModels = Array.isArray(v.site_models) ? v.site_models : [];
     const allModels = Array.from(new Set([...personalModels, ...siteModels]));
@@ -915,9 +950,76 @@
     if ($("#userAllCandidateModelsList")) {
       $("#userAllCandidateModelsList").innerHTML = allModels.map((m) => `<option value="${esc(m)}"></option>`).join("");
     }
+    populateUserDefaultModelSelect();
+    populateUserUpstreamClassifierModelSelect();
 
     syncUserClassifierVisibility();
     renderUserTiersEditor();
+  }
+
+  function populateUserDefaultModelSelect() {
+    const sel = $("#userRouterDefaultModelSelect");
+    if (!sel) return;
+    const v = state.routerView || {};
+    const personalModels = Array.isArray(v.personal_models) ? v.personal_models : [];
+    const siteModels = Array.isArray(v.site_models) ? v.site_models : [];
+    const current = ($("#userRouterDefaultModel")?.value || "").trim();
+    if (!personalModels.length && !siteModels.length) {
+      sel.innerHTML = `<option value="">（尚未绑定渠道模型）</option>`
+        + (current ? `<option value="${esc(current)}" selected>${esc(current)}</option>` : "");
+      sel.value = current;
+      return;
+    }
+    let html = `<option value="">从已绑定模型中选择…</option>`;
+    if (personalModels.length) {
+      html += `<optgroup label="我的自带渠道模型 (免站点额度)">`
+        + personalModels.map((m) => `<option value="${esc(m)}"${current === m ? " selected" : ""}>[我的渠道] ${esc(m)}</option>`).join("")
+        + `</optgroup>`;
+    }
+    if (siteModels.length) {
+      html += `<optgroup label="站点已授权模型">`
+        + siteModels.map((m) => `<option value="${esc(m)}"${current === m ? " selected" : ""}>[站点模型] ${esc(m)}</option>`).join("")
+        + `</optgroup>`;
+    }
+    if (current && !personalModels.includes(current) && !siteModels.includes(current)) {
+      html += `<optgroup label="自定义模型"><option value="${esc(current)}" selected>${esc(current)} (自定义)</option></optgroup>`;
+    }
+    sel.innerHTML = html;
+    sel.value = current;
+  }
+
+  function populateUserUpstreamClassifierModelSelect() {
+    const sel = $("#userUpstreamClassifierModelSelect");
+    if (!sel) return;
+    const v = state.routerView || {};
+    const ups = Array.isArray(v.upstreams) ? v.upstreams : [];
+    const selectedUpId = Number($("#userClassifierUpstreamSelect")?.value || 0);
+    const current = ($("#userUpstreamClassifierModel")?.value || "").trim();
+
+    const targetUps = selectedUpId > 0 ? ups.filter((u) => Number(u.id) === selectedUpId) : ups;
+    const hasAnyBound = targetUps.some((u) => Array.isArray(u.models) && u.models.length > 0);
+    if (!hasAnyBound) {
+      sel.innerHTML = `<option value="">（请先在个人渠道中绑定模型）</option>`
+        + (current ? `<option value="${esc(current)}" selected>${esc(current)}</option>` : "");
+      sel.value = current;
+      return;
+    }
+
+    let html = `<option value="">从自带渠道已绑定模型中选择…</option>`;
+    const covered = new Set();
+    targetUps.forEach((u) => {
+      const models = Array.isArray(u.models) ? u.models : [];
+      if (!models.length) return;
+      models.forEach((m) => covered.add(m));
+      html += `<optgroup label="${esc(`渠道：${u.name} (${u.type})`)}">`
+        + models.map((m) => `<option value="${esc(m)}"${current === m ? " selected" : ""}>${esc(m)} · [${esc(u.name)}]</option>`).join("")
+        + `</optgroup>`;
+    });
+    if (current && !covered.has(current)) {
+      html += `<optgroup label="自定义模型"><option value="${esc(current)}" selected>${esc(current)} (自定义)</option></optgroup>`;
+    }
+    sel.innerHTML = html;
+    sel.value = current;
   }
 
   function syncUserClassifierVisibility() {
@@ -1095,6 +1197,7 @@
     if ($("#userRouterDefaultModel") && !$("#userRouterDefaultModel").value.trim()) {
       $("#userRouterDefaultModel").value = state.routerTiers.COMPLEX[0] || pool[0] || "";
     }
+    populateUserDefaultModelSelect();
     renderUserTiersEditor();
     toast("已按模型特征自动排布四档候选，请点击「保存路由策略」生效");
   }
@@ -1287,11 +1390,39 @@
     $("#addByokBtn")?.addEventListener("click", () => openByokModal(0));
     $("#closeUserUpstreamDialog")?.addEventListener("click", () => $("#userUpstreamDialog")?.close());
     $("#cancelByokBtn")?.addEventListener("click", () => $("#userUpstreamDialog")?.close());
+    $("#byokType")?.addEventListener("change", () => syncByokTypeHints(true));
     $("#byokProxyMode")?.addEventListener("change", syncByokProxyModeVisibility);
     $("#probeByokBtn")?.addEventListener("click", probeByokModels);
     $("#userUpstreamForm")?.addEventListener("submit", saveByokUpstream);
     $("#userClassifierSource")?.addEventListener("change", syncUserClassifierVisibility);
     $("#userExternalClassifierProvider")?.addEventListener("change", syncUserClassifierVisibility);
+    $("#userRouterDefaultModelSelect")?.addEventListener("change", (e) => {
+      if (e.target.value && $("#userRouterDefaultModel")) {
+        $("#userRouterDefaultModel").value = e.target.value;
+      }
+    });
+    $("#userRouterDefaultModel")?.addEventListener("input", () => populateUserDefaultModelSelect());
+    $("#userClassifierUpstreamSelect")?.addEventListener("change", () => {
+      populateUserUpstreamClassifierModelSelect();
+      const sel = $("#userUpstreamClassifierModelSelect");
+      const inp = $("#userUpstreamClassifierModel");
+      const selectedUpId = Number($("#userClassifierUpstreamSelect")?.value || 0);
+      if (selectedUpId > 0 && inp) {
+        const ups = Array.isArray(state.routerView?.upstreams) ? state.routerView.upstreams : [];
+        const target = ups.find((u) => Number(u.id) === selectedUpId);
+        const models = Array.isArray(target?.models) ? target.models : [];
+        if (models.length && (!inp.value.trim() || !models.includes(inp.value.trim()))) {
+          inp.value = models[0];
+          if (sel) sel.value = models[0];
+        }
+      }
+    });
+    $("#userUpstreamClassifierModelSelect")?.addEventListener("change", (e) => {
+      if (e.target.value && $("#userUpstreamClassifierModel")) {
+        $("#userUpstreamClassifierModel").value = e.target.value;
+      }
+    });
+    $("#userUpstreamClassifierModel")?.addEventListener("input", () => populateUserUpstreamClassifierModelSelect());
     $("#autoFillUserTiersBtn")?.addEventListener("click", autoFillUserTiers);
     $("#saveUserRouterBtn")?.addEventListener("click", saveUserRouter);
     $("#copyUserRouterCmdBtn")?.addEventListener("click", copyUserRouterCommand);

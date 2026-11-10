@@ -25,6 +25,11 @@ func compileUpstreamConfig(up *Upstream) {
 		for _, model := range strings.Split(up.Models, ",") {
 			config.models[strings.TrimSpace(model)] = true
 		}
+	} else if defaults := defaultDecisionModelsForType(up.Type); len(defaults) > 0 {
+		config.models = make(map[string]bool, len(defaults))
+		for _, dm := range defaults {
+			config.models[dm] = true
+		}
 	}
 	config.modelMap, _ = parseModelMap(up.ModelMap)
 	config.headerRules, config.headerError = parseHeaderOverrides(up.HeaderOverrides)

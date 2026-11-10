@@ -431,7 +431,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			return
 		}
 		if !validUpstreamType(u.Type) {
-			c.JSON(400, gin.H{"error": "type must be openai, cliproxy, opencode-free, opencode, cline, anthropic or gemini"})
+			c.JSON(400, gin.H{"error": "type must be openai, cliproxy, opencode-free, opencode, cline, anthropic, gemini, systemone or cloudflare"})
 			return
 		}
 		if err := u.normalizeAPIKeys(nil); err != nil {
@@ -852,7 +852,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			return
 		}
 		if !validUpstreamType(req.Type) {
-			c.JSON(400, gin.H{"ok": false, "error": "type must be openai, cliproxy, opencode-free, opencode, cline, anthropic or gemini"})
+			c.JSON(400, gin.H{"ok": false, "error": "type must be openai, cliproxy, opencode-free, opencode, cline, anthropic, gemini, systemone or cloudflare"})
 			return
 		}
 		up := &Upstream{Type: req.Type, BaseURL: req.BaseURL, APIKey: req.APIKey, APIKeys: req.APIKeys, KeyProxyMode: req.KeyProxyMode, ProxyID: req.ProxyID, HeaderOverrides: req.HeaderOverrides, OpenAIProtocol: req.OpenAIProtocol, OpenCodeTier: req.OpenCodeTier}

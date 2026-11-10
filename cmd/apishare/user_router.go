@@ -235,7 +235,7 @@ func validUserClassifierProvider(provider string) bool {
 
 func validUserUpstreamType(t string) bool {
 	switch strings.ToLower(strings.TrimSpace(t)) {
-	case "openai", "anthropic", "gemini":
+	case "openai", "anthropic", "gemini", "systemone", "cloudflare":
 		return true
 	default:
 		return false
@@ -654,8 +654,14 @@ func userAvailableModels(sub string) []string {
 		if !u.Enabled || u.Weight <= 0 {
 			continue
 		}
-		for _, id := range strings.Split(u.Models, ",") {
-			add(id)
+		if strings.TrimSpace(u.Models) != "" {
+			for _, id := range strings.Split(u.Models, ",") {
+				add(id)
+			}
+		} else if defaults := defaultDecisionModelsForType(u.Type); len(defaults) > 0 {
+			for _, dm := range defaults {
+				add(dm)
+			}
 		}
 		for client := range u.modelMap() {
 			if u.servesModel(client) {
@@ -778,6 +784,11 @@ func classifyViaUpstream(ctx context.Context, up *Upstream, clientModel string, 
 	if up == nil {
 		return nil, upstreamUsage{}, errors.New("classifier upstream is nil")
 	}
+	if up.pooledKeys() {
+		if selected := up.selectAPIKey("", clientModel, map[string]bool{}); selected != nil {
+			up = selected
+		}
+	}
 	if timeoutMS <= 0 {
 		timeoutMS = 1500
 	}
@@ -795,6 +806,72 @@ func classifyViaUpstream(ctx context.Context, up *Upstream, clientModel string, 
 	}
 
 	upModel := up.mapModel(clientModel)
+	if strings.TrimSpace(upModel) == "" {
+		if defaults := defaultDecisionModelsForType(up.Type); len(defaults) > 0 {
+			upModel = defaults[0]
+		}
+	}
+
+	// Native Decision Model Upstream (SystemOne / Jev / Julia-1 / Cloudflare Workers AI Clef)
+	if up.isDecisionUpstream(upModel) {
+		reqBody, err := buildDecisionClassifierPayload(upModel, up.isCloudflareDecisionUpstream(upModel), state, instructions, criteria)
+		if err != nil {
+			return nil, upstreamUsage{}, err
+		}
+		reqURL := up.decisionEndpointURL(upModel)
+		if reqURL == "" {
+			return nil, upstreamUsage{}, errors.New("missing decision classifier upstream URL")
+		}
+		req, err := http.NewRequestWithContext(callCtx, http.MethodPost, reqURL, bytes.NewReader(reqBody))
+		if err != nil {
+			return nil, upstreamUsage{}, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+		if strings.TrimSpace(up.APIKey) != "" {
+			req.Header.Set("Authorization", "Bearer "+up.APIKey)
+		}
+		if err := up.applyHeaders(req, nil); err != nil {
+			return nil, upstreamUsage{}, err
+		}
+		httpClient, err := up.httpClient(autoRouterHTTPClient)
+		if err != nil {
+			return nil, upstreamUsage{}, err
+		}
+		start := time.Now()
+		resp, err := httpClient.Do(req)
+		latency := time.Since(start).Milliseconds()
+		if err != nil {
+			return nil, upstreamUsage{}, err
+		}
+		defer resp.Body.Close()
+		respBody, err := io.ReadAll(io.LimitReader(resp.Body, 256<<10))
+		if err != nil {
+			return nil, upstreamUsage{}, err
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, upstreamUsage{}, fmt.Errorf("classifier upstream HTTP %d: %s", resp.StatusCode, truncate(strings.TrimSpace(string(respBody)), 200))
+		}
+		_, usage := parseUpstreamNonStream("openai", respBody)
+		if !usage.InKnown {
+			usage.Prompt = estimateTokensModel(clientModel, instructions+"\n"+state)
+		}
+		if !usage.OutKnown {
+			usage.Completion = 4
+		}
+		parsed, parseErr := parseDecisionClassifierResponse(respBody, minConfidence)
+		if parseErr != nil {
+			return nil, usage, parseErr
+		}
+		parsed.LatencyMS = latency
+		parsed.Provider = providerLabel
+		parsed.Model = clientModel
+		if parsed.Model == "" {
+			parsed.Model = upModel
+		}
+		return parsed, usage, nil
+	}
+
 	wireFormat, err := up.resolveWireFormat(callCtx, FormatOpenAIChat, upModel)
 	if err != nil {
 		wireFormat = FormatOpenAIChat
@@ -821,7 +898,24 @@ func classifyViaUpstream(ctx context.Context, up *Upstream, clientModel string, 
 	if err != nil {
 		return nil, upstreamUsage{}, err
 	}
-	reqURL := up.endpointURL(wireFormat, nativeEndpoint(wireFormat, &canonReq{Model: upModel, Stream: false}))
+	var freeTools openCodeToolCompatibility
+	var freeShaped bool
+	reqBody, freeShaped, err = up.shapeOpenCodeFreeRequest(reqBody, wireFormat, upModel, &freeTools)
+	if err != nil {
+		return nil, upstreamUsage{}, err
+	}
+	var clineTask string
+	if up.Type == "cline" {
+		if shaped, taskID, shapeErr := shapeClineRequest(reqBody, fmt.Sprintf("classifier:%d", up.ID)); shapeErr == nil {
+			reqBody = shaped
+			clineTask = taskID
+		}
+	}
+	endpoint := nativeEndpoint(wireFormat, &canonReq{Model: upModel, Stream: false})
+	reqURL := up.endpointURL(wireFormat, endpoint)
+	if freeShaped {
+		reqURL = up.openCodeFreeEndpointURL(wireFormat, endpoint)
+	}
 
 	req, err := http.NewRequestWithContext(callCtx, http.MethodPost, reqURL, bytes.NewReader(reqBody))
 	if err != nil {
@@ -829,7 +923,14 @@ func classifyViaUpstream(ctx context.Context, up *Upstream, clientModel string, 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	if clineTask != "" {
+		req.Header.Set("X-Task-ID", clineTask)
+	}
 	switch up.Type {
+	case "opencode", openCodeFreeType:
+		if session, sErr := newOpenCodeSessionID(); sErr == nil {
+			setOpenCodeHeaders(req, up.openCodeAPIKey(), wireFormat, session, nil, nil, reqBody)
+		}
 	case "anthropic":
 		req.Header.Set("x-api-key", up.APIKey)
 		req.Header.Set("anthropic-version", "2023-06-01")
@@ -865,6 +966,16 @@ func classifyViaUpstream(ctx context.Context, up *Upstream, clientModel string, 
 	}
 
 	text, usage := parseUpstreamNonStream(up.Type, respBody)
+	if strings.TrimSpace(text) == "" {
+		if canonResp, pErr := parseProtocolResponse(wireFormat, respBody); pErr == nil && canonResp != nil {
+			if t := strings.TrimSpace(canonResp.text()); t != "" {
+				text = t
+			}
+			if !usage.InKnown && canonResp.Usage.InKnown {
+				usage = canonResp.Usage
+			}
+		}
+	}
 	if !usage.InKnown {
 		usage.Prompt = estimateTokensModel(clientModel, sysPrompt+"\n"+state)
 	}
@@ -877,6 +988,14 @@ func classifyViaUpstream(ctx context.Context, up *Upstream, clientModel string, 
 		parsed.Provider = providerLabel
 		parsed.Model = clientModel
 		return parsed, usage, nil
+	}
+	if strings.TrimSpace(text) != "" {
+		if parsed, parseErr := parseDecisionClassifierResponse([]byte(text), minConfidence); parseErr == nil {
+			parsed.LatencyMS = latency
+			parsed.Provider = providerLabel
+			parsed.Model = clientModel
+			return parsed, usage, nil
+		}
 	}
 	if tier, probs := extractTierFromChatText(text); tier != "" {
 		return &classifierDecisionResult{
@@ -900,6 +1019,9 @@ func classifyViaGatewayUpstream(ctx context.Context, model string, state string,
 	up, err := pickUpstream(FormatOpenAIChat, model, nil, false, nil)
 	if err != nil {
 		return nil, nil, upstreamUsage{}, fmt.Errorf("no available gateway upstream for classifier model %q: %w", model, err)
+	}
+	if selected := up.selectAPIKey("", model, map[string]bool{}); selected != nil {
+		up = selected
 	}
 	res, usage, callErr := classifyViaUpstream(ctx, up, model, "gateway_upstream", state, criteria, instructions, minConfidence, timeoutMS)
 	if callErr != nil {
@@ -1401,6 +1523,11 @@ func buildUserUpstreamViews(sub string) ([]userUpstreamView, error) {
 			cooldownStr = until.UTC().Format(time.RFC3339)
 		}
 		modelsList := normalizeModelSlice([]string{u.Models})
+		if len(modelsList) == 0 {
+			if defaults := defaultDecisionModelsForType(u.Type); len(defaults) > 0 {
+				modelsList = append([]string(nil), defaults...)
+			}
+		}
 		proxyMode := u.userProxyMode
 		if proxyMode == "" {
 			proxyMode = "default"
@@ -1447,6 +1574,9 @@ func buildUserAutoRouterView(ctx context.Context, sub string, ak ApiKey) gin.H {
 	siteVM := strings.TrimSpace(siteCfg.VirtualModel)
 	if siteVM == "" {
 		siteVM = "auto"
+	}
+	if len(siteModels) == 0 && strings.TrimSpace(ak.Models) == "" {
+		siteModels, _ = collectGatewayUpstreamBoundModels(ctx, siteVM)
 	}
 	filteredSiteModels := make([]string, 0, len(siteModels))
 	for _, m := range siteModels {
@@ -1628,7 +1758,7 @@ func registerUserRouterRoutes(userAPI *gin.RouterGroup) {
 			upType = "openai"
 		}
 		if !validUserUpstreamType(upType) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "渠道类型仅支持 openai、anthropic 或 gemini"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "渠道类型仅支持 openai、anthropic、gemini、systemone 或 cloudflare"})
 			return
 		}
 		proto := strings.ToLower(strings.TrimSpace(req.OpenAIProtocol))
@@ -1654,6 +1784,11 @@ func registerUserRouterRoutes(userAPI *gin.RouterGroup) {
 			return
 		}
 		modelsNorm := strings.Join(normalizeModelSlice([]string{req.Models}), ",")
+		if modelsNorm == "" {
+			if defaults := defaultDecisionModelsForType(upType); len(defaults) > 0 {
+				modelsNorm = strings.Join(defaults, ",")
+			}
+		}
 		modelMapJSON, err := normalizeUserModelMapJSON(req.ModelMap)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -1743,7 +1878,7 @@ func registerUserRouterRoutes(userAPI *gin.RouterGroup) {
 		if req.Type != nil {
 			curType = strings.ToLower(strings.TrimSpace(*req.Type))
 			if !validUserUpstreamType(curType) {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "渠道类型仅支持 openai、anthropic 或 gemini"})
+				c.JSON(http.StatusBadRequest, gin.H{"error": "渠道类型仅支持 openai、anthropic、gemini、systemone 或 cloudflare"})
 				return
 			}
 		}
@@ -1777,6 +1912,11 @@ func registerUserRouterRoutes(userAPI *gin.RouterGroup) {
 				return
 			}
 			curMap = mJSON
+		}
+		if curModels == "" {
+			if defaults := defaultDecisionModelsForType(curType); len(defaults) > 0 {
+				curModels = strings.Join(defaults, ",")
+			}
 		}
 		if curModels == "" && curMap == "{}" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请至少保留一个可用模型名称"})
@@ -1906,7 +2046,7 @@ func registerUserRouterRoutes(userAPI *gin.RouterGroup) {
 			upType = "openai"
 		}
 		if !validUserUpstreamType(upType) {
-			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "渠道类型仅支持 openai、anthropic 或 gemini"})
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "渠道类型仅支持 openai、anthropic、gemini、systemone 或 cloudflare"})
 			return
 		}
 		if err := validatePublicUpstreamURL(baseURL, false); err != nil {

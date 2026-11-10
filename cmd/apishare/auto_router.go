@@ -200,11 +200,65 @@ func defaultAutoRouterTierCriteria() map[string]string {
 
 func defaultAutoRouterTiers() map[string][]string {
 	return map[string][]string{
-		TierSimple:    {"deepseek-v4.1-flash", "glm-5.3-flash", "mimo-v2.6-flash"},
-		TierMedium:    {"deepseek-v4.1-flash", "glm-5.3-flash", "mimo-v2.6-flash"},
-		TierComplex:   {"glm-5.3", "deepseek-v4-pro-0813", "grok-4.7"},
-		TierReasoning: {"grok-4.7"},
+		TierSimple:    {},
+		TierMedium:    {},
+		TierComplex:   {},
+		TierReasoning: {},
 	}
+}
+
+var legacyPlaceholderRouterModels = map[string]bool{
+	"deepseek-v4.1-flash":  true,
+	"glm-5.3-flash":        true,
+	"mimo-v2.6-flash":      true,
+	"glm-5.3":              true,
+	"deepseek-v4-pro-0813": true,
+	"grok-4.7":             true,
+}
+
+func isModelExplicitlyBoundByAnyUpstream(model string) bool {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return false
+	}
+	snapshot, err := getRoutingSnapshot()
+	if err != nil {
+		return false
+	}
+	for i := range snapshot.upstreams {
+		u := &snapshot.upstreams[i]
+		if serves, explicit := u.servesModelExplicit(model); serves && explicit {
+			return true
+		}
+	}
+	return false
+}
+
+func stripUnboundLegacyPlaceholderModels(cfg *AutoRouterConfig) bool {
+	if cfg == nil {
+		return false
+	}
+	changed := false
+	if legacyPlaceholderRouterModels[cfg.DefaultModel] && !isModelExplicitlyBoundByAnyUpstream(cfg.DefaultModel) {
+		cfg.DefaultModel = ""
+		changed = true
+	}
+	for _, tier := range allRouterTiers {
+		list := cfg.Tiers[tier]
+		if len(list) == 0 {
+			continue
+		}
+		filtered := make([]string, 0, len(list))
+		for _, m := range list {
+			if legacyPlaceholderRouterModels[m] && !isModelExplicitlyBoundByAnyUpstream(m) {
+				changed = true
+				continue
+			}
+			filtered = append(filtered, m)
+		}
+		cfg.Tiers[tier] = filtered
+	}
+	return changed
 }
 
 func defaultAutoRouterConfig() AutoRouterConfig {
@@ -224,7 +278,7 @@ func defaultAutoRouterConfig() AutoRouterConfig {
 		SessionMode:                  "user_turn",
 		CascadeTiers:                 true,
 		AllowUnlistedTargetModels:    true,
-		DefaultModel:                 "grok-4.7",
+		DefaultModel:                 "",
 		Tiers:                        defaultAutoRouterTiers(),
 		TierCriteria:                 defaultAutoRouterTierCriteria(),
 		ResponseHeaders:              true,
@@ -397,7 +451,12 @@ func normalizeAutoRouterConfig(cfg *AutoRouterConfig) error {
 			totalCandidates += len(list)
 		}
 		if cfg.DefaultModel == "" && totalCandidates == 0 {
-			return errors.New("启用智能路由前，请至少配置默认兜底模型或一个档位的候选模型")
+			boundModels, _ := collectGatewayUpstreamBoundModels(context.Background(), cfg.VirtualModel)
+			if len(boundModels) > 0 {
+				cfg.DefaultModel = boundModels[0]
+			} else {
+				return errors.New("启用智能路由前，请至少配置默认兜底模型或一个档位的候选模型")
+			}
 		}
 	}
 	return nil
@@ -418,6 +477,7 @@ func loadAutoRouterCache() error {
 		if raw, err := settingsGet(autoRouterSettingsKey); err == nil && strings.TrimSpace(raw) != "" {
 			parsed := defaultAutoRouterConfig()
 			if json.Unmarshal([]byte(raw), &parsed) == nil {
+				stripUnboundLegacyPlaceholderModels(&parsed)
 				_ = normalizeAutoRouterConfig(&parsed)
 				cfg = parsed
 			}
@@ -881,6 +941,96 @@ type autoRouterModelHealth struct {
 	PriceOut      float64  `json:"price_out"`
 }
 
+type autoRouterUpstreamModelGroup struct {
+	ID      int64    `json:"id"`
+	Name    string   `json:"name"`
+	Type    string   `json:"type"`
+	Enabled bool     `json:"enabled"`
+	Healthy bool     `json:"healthy"`
+	Models  []string `json:"models"`
+}
+
+func collectGatewayUpstreamBoundModels(ctx context.Context, virtualModel string) ([]string, []autoRouterUpstreamModelGroup) {
+	virtualModel = strings.TrimSpace(virtualModel)
+	if virtualModel == "" {
+		virtualModel = "auto"
+	}
+	snapshot, err := getRoutingSnapshot()
+	if err != nil {
+		return []string{}, []autoRouterUpstreamModelGroup{}
+	}
+	enabledSet := make(map[string]bool)
+	allSet := make(map[string]bool)
+	groups := make([]autoRouterUpstreamModelGroup, 0, len(snapshot.upstreams))
+
+	for i := range snapshot.upstreams {
+		u := &snapshot.upstreams[i]
+		seenUp := make(map[string]bool)
+		upModels := make([]string, 0)
+		addModel := func(m string) {
+			m = strings.TrimSpace(m)
+			if m == "" || strings.EqualFold(m, virtualModel) || seenUp[m] {
+				return
+			}
+			if (u.openCodePublic() || u.openCodeFreeOnly()) && !u.openCodeFreeModel(u.mapModel(m)) {
+				return
+			}
+			seenUp[m] = true
+			upModels = append(upModels, m)
+			allSet[m] = true
+			if u.Enabled && u.Weight > 0 {
+				enabledSet[m] = true
+			}
+		}
+		if list := strings.TrimSpace(u.Models); list != "" {
+			for _, part := range strings.Split(list, ",") {
+				addModel(part)
+			}
+		} else if defaults := defaultDecisionModelsForType(u.Type); len(defaults) > 0 {
+			for _, dm := range defaults {
+				addModel(dm)
+			}
+		} else if u.Enabled && u.Weight > 0 {
+			ids, _ := publicWildcardModels(*u)
+			for _, id := range ids {
+				addModel(id)
+			}
+		}
+		if mm := u.modelMap(); len(mm) > 0 {
+			mapKeys := make([]string, 0, len(mm))
+			for client := range mm {
+				if u.servesModel(client) {
+					mapKeys = append(mapKeys, client)
+				}
+			}
+			sort.Strings(mapKeys)
+			for _, client := range mapKeys {
+				addModel(client)
+			}
+		}
+		isEnabled := u.Enabled && u.Weight > 0
+		groups = append(groups, autoRouterUpstreamModelGroup{
+			ID:      u.ID,
+			Name:    u.Name,
+			Type:    u.Type,
+			Enabled: isEnabled,
+			Healthy: isEnabled && u.availableForRelay(),
+			Models:  upModels,
+		})
+	}
+
+	targetSet := enabledSet
+	if len(targetSet) == 0 {
+		targetSet = allSet
+	}
+	models := make([]string, 0, len(targetSet))
+	for m := range targetSet {
+		models = append(models, m)
+	}
+	sort.Strings(models)
+	return models, groups
+}
+
 func buildAutoRouterModelHealthMap(ctx context.Context, cfg AutoRouterConfig) map[string]autoRouterModelHealth {
 	out := make(map[string]autoRouterModelHealth)
 	snapshot, err := getRoutingSnapshot()
@@ -888,6 +1038,12 @@ func buildAutoRouterModelHealthMap(ctx context.Context, cfg AutoRouterConfig) ma
 		return out
 	}
 	candidates := make(map[string]bool)
+	boundModels, _ := collectGatewayUpstreamBoundModels(ctx, cfg.VirtualModel)
+	for _, m := range boundModels {
+		if m != "" {
+			candidates[m] = true
+		}
+	}
 	if cfg.DefaultModel != "" {
 		candidates[cfg.DefaultModel] = true
 	}
@@ -897,6 +1053,14 @@ func buildAutoRouterModelHealthMap(ctx context.Context, cfg AutoRouterConfig) ma
 				candidates[m] = true
 			}
 		}
+	}
+	for _, m := range cfg.SharedClassifierModels {
+		if m != "" {
+			candidates[m] = true
+		}
+	}
+	if cfg.Classifier == "gateway_upstream" && strings.TrimSpace(cfg.ClassifierModel) != "" {
+		candidates[strings.TrimSpace(cfg.ClassifierModel)] = true
 	}
 	if mods, err := availableModels(ctx); err == nil {
 		for _, m := range mods {
@@ -939,6 +1103,8 @@ func buildAutoRouterModelHealthMap(ctx context.Context, cfg AutoRouterConfig) ma
 }
 
 func buildAutoRouterConfigView(ctx context.Context, cfg AutoRouterConfig) gin.H {
+	stripUnboundLegacyPlaceholderModels(&cfg)
+	availableModelsList, upstreamGroups := collectGatewayUpstreamBoundModels(ctx, cfg.VirtualModel)
 	provider, endpoint, resolvedModel, apiKey, keySource, credErr := cfg.effectiveClassifierCredentials()
 	breakerOpen, breakerUntil, breakerFails, breakerLast := autoRouterBreakerOpen()
 	var breakerUntilStr string
@@ -994,6 +1160,8 @@ func buildAutoRouterConfigView(ctx context.Context, cfg AutoRouterConfig) gin.H 
 		"allow_user_auto_router":           cfg.AllowUserAutoRouter,
 		"share_site_classifier_with_users": cfg.ShareSiteClassifierWithUsers,
 		"shared_classifier_models":         cfg.SharedClassifierModels,
+		"available_models":                 availableModelsList,
+		"upstream_models":                  upstreamGroups,
 		"breaker": gin.H{
 			"open":       breakerOpen,
 			"until":      breakerUntilStr,

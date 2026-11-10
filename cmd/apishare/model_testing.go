@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -93,6 +94,24 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	model = up.mapModel(model)
+	if up.isDecisionUpstream(model) {
+		res, usage, dErr := classifyViaUpstream(ctx, up, model, up.Type, message, nil, "", 0, 15000)
+		if dErr != nil {
+			return nil, 0, dErr
+		}
+		decisionJSON, _ := json.Marshal(map[string]any{
+			"tier":          res.Tier,
+			"choice":        res.RawChoice,
+			"confidence":    res.Confidence,
+			"probabilities": res.Probabilities,
+			"latency_ms":    res.LatencyMS,
+		})
+		return &canonResponse{
+			Blocks: []responseBlock{{Kind: "text", Text: string(decisionJSON)}},
+			Finish: "stop",
+			Usage:  usage,
+		}, http.StatusOK, nil
+	}
 	format, err := up.resolveWireFormat(ctx, FormatOpenAIChat, model)
 	if err != nil {
 		return nil, 0, err

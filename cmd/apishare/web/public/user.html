@@ -249,7 +249,12 @@
               </label>
               <label class="user-field">
                 <span>兜底默认模型 (Default)</span>
-                <input id="userRouterDefaultModel" type="text" list="userAllCandidateModelsList" placeholder="例如：gpt-4o 或 grok-4.7">
+                <div class="user-model-select-combo">
+                  <select id="userRouterDefaultModelSelect" aria-label="从已绑定模型选择兜底默认模型">
+                    <option value="">从已绑定模型中选择…</option>
+                  </select>
+                  <input id="userRouterDefaultModel" type="text" list="userAllCandidateModelsList" placeholder="或手动输入模型名">
+                </div>
                 <small>当命中档位无可用候选时的最终保底模型</small>
               </label>
             </div>
@@ -275,7 +280,7 @@
                   <small>仅列出站点管理员开放共享的决策模型（站点私有决策模型已隔离）</small>
                 </label>
 
-                <div id="userUpstreamClassifierWrap" class="user-form-grid-2 hidden" style="grid-column: span 2">
+                <div id="userUpstreamClassifierWrap" class="user-form-grid-2 user-grid-span-2 hidden">
                   <label class="user-field">
                     <span>指定自带渠道</span>
                     <select id="userClassifierUpstreamSelect">
@@ -284,11 +289,16 @@
                   </label>
                   <label class="user-field">
                     <span>用于分档的自带模型名称</span>
-                    <input id="userUpstreamClassifierModel" type="text" list="userPersonalModelsList" placeholder="例如：gpt-4o-mini、glm-4-flash">
+                    <div class="user-model-select-combo">
+                      <select id="userUpstreamClassifierModelSelect" aria-label="从自带渠道已绑定模型中选择决策模型">
+                        <option value="">从渠道绑定模型中选择…</option>
+                      </select>
+                      <input id="userUpstreamClassifierModel" type="text" list="userPersonalModelsList" placeholder="或手动输入模型名">
+                    </div>
                   </label>
                 </div>
 
-                <div id="userExternalClassifierWrap" class="user-form-grid-2 hidden" style="grid-column: span 2">
+                <div id="userExternalClassifierWrap" class="user-form-grid-2 user-grid-span-2 hidden">
                   <label class="user-field">
                     <span>外部决策协议</span>
                     <select id="userExternalClassifierProvider">
@@ -310,7 +320,7 @@
                     <span>自定义决策接口 URL <span class="muted">(Cloudflare 可留空)</span></span>
                     <input id="userExternalEndpoint" type="url" placeholder="https://api.typesafe.ai/v1/systemone">
                   </label>
-                  <label class="user-field" style="grid-column: span 2">
+                  <label class="user-field user-grid-span-2">
                     <span>外部决策 API Key / Token</span>
                     <input id="userExternalApiKey" type="password" autocomplete="new-password" placeholder="留空保留已存密钥">
                     <small id="userExternalKeyHint" class="muted"></small>
@@ -425,6 +435,8 @@
               <option value="openai">OpenAI 兼容 (/v1/chat/completions)</option>
               <option value="anthropic">Anthropic (/v1/messages)</option>
               <option value="gemini">Google Gemini (/v1beta/models)</option>
+              <option value="systemone">SystemOne / Jev 决策模型 (/v1/systemone)</option>
+              <option value="cloudflare">Cloudflare Clef 决策模型 (Workers AI)</option>
             </select>
           </label>
         </div>

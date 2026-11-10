@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -194,7 +195,7 @@ func probeUpstreamModelListWithClient(ctx context.Context, upType, baseURL, apiK
 	}
 	upType, baseURL, apiKey = strings.TrimSpace(upType), strings.TrimSpace(baseURL), strings.TrimSpace(apiKey)
 	if !validUpstreamType(upType) {
-		return nil, fmt.Errorf("type must be openai, cliproxy, opencode-free, opencode, cline, anthropic or gemini")
+		return nil, fmt.Errorf("type must be openai, cliproxy, opencode-free, opencode, cline, anthropic, gemini, systemone or cloudflare")
 	}
 	base, err := url.Parse(baseURL)
 	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" || base.User != nil || base.RawQuery != "" || base.Fragment != "" {
@@ -205,6 +206,9 @@ func probeUpstreamModelListWithClient(ctx context.Context, upType, baseURL, apiK
 	}
 	if upType == "cline" {
 		return probeClineModels(ctx, &Upstream{Type: upType, BaseURL: baseURL, APIKey: apiKey, HeaderOverrides: headers}, client)
+	}
+	if upType == "systemone" || upType == "cloudflare" {
+		return probeDecisionUpstreamModels(ctx, &Upstream{Type: upType, BaseURL: baseURL, APIKey: apiKey, HeaderOverrides: headers}, client)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -447,7 +451,7 @@ func availableModels(ctx context.Context) ([]catalogModel, error) {
 	}
 enqueue:
 	for i, up := range ups {
-		if !up.Enabled || up.Weight <= 0 || (strings.TrimSpace(up.Models) != "" && !up.openCodeAuto() && !up.openCodePublic() && !up.openCodeFreeOnly()) {
+		if !up.Enabled || up.Weight <= 0 || len(defaultDecisionModelsForType(up.Type)) > 0 || (strings.TrimSpace(up.Models) != "" && !up.openCodeAuto() && !up.openCodePublic() && !up.openCodeFreeOnly()) {
 			continue
 		}
 		select {
@@ -484,6 +488,10 @@ enqueue:
 		if list := strings.TrimSpace(u.Models); list != "" {
 			for _, id := range strings.Split(list, ",") {
 				add(id)
+			}
+		} else if defaults := defaultDecisionModelsForType(u.Type); len(defaults) > 0 {
+			for _, dm := range defaults {
+				add(dm)
 			}
 		} else {
 			if fetchErrors[i] != nil {
@@ -625,4 +633,75 @@ func modelHandler(c *gin.Context) {
 		}
 	}
 	modelError(c, 404, "model not found")
+}
+
+func probeDecisionUpstreamModels(ctx context.Context, up *Upstream, client *http.Client) ([]string, error) {
+	defaults := defaultDecisionModelsForType(up.Type)
+	probeModel := "jev"
+	if len(defaults) > 0 {
+		probeModel = defaults[0]
+	}
+	// If Cloudflare URL already embeds a specific @cf/ model path, preserve it in the list.
+	if up.isCloudflareDecisionUpstream(probeModel) {
+		lower := strings.ToLower(strings.TrimRight(strings.TrimSpace(up.BaseURL), "/"))
+		if idx := strings.Index(lower, "/ai/run/"); idx >= 0 {
+			embedded := strings.TrimSpace(strings.TrimRight(strings.TrimSpace(up.BaseURL), "/")[idx+len("/ai/run/"):])
+			if embedded != "" {
+				probeModel = embedded
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	reqBody, err := buildDecisionClassifierPayload(probeModel, up.isCloudflareDecisionUpstream(probeModel), "hello", defaultClassifierInstructions, defaultAutoRouterTierCriteria())
+	if err != nil {
+		return nil, err
+	}
+	endpoint := up.decisionEndpointURL(probeModel)
+	if endpoint == "" {
+		return nil, fmt.Errorf("invalid decision upstream URL")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("invalid decision probe request")
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	if strings.TrimSpace(up.APIKey) != "" {
+		req.Header.Set("Authorization", "Bearer "+up.APIKey)
+	}
+	if err := up.applyHeaders(req, nil); err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("decision probe timed out or was canceled")
+		}
+		return nil, fmt.Errorf("could not connect to decision upstream API")
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 256<<10))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read decision upstream response")
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("decision upstream returned HTTP %d: %s", resp.StatusCode, truncate(strings.TrimSpace(string(body)), 180))
+	}
+	if _, parseErr := parseDecisionClassifierResponse(body, 0); parseErr != nil {
+		return nil, fmt.Errorf("decision upstream returned unrecognized payload: %w", parseErr)
+	}
+	out := make([]string, 0, len(defaults)+1)
+	seen := make(map[string]bool, len(defaults)+1)
+	if probeModel != "" {
+		seen[probeModel] = true
+		out = append(out, probeModel)
+	}
+	for _, dm := range defaults {
+		if !seen[dm] {
+			seen[dm] = true
+			out = append(out, dm)
+		}
+	}
+	return out, nil
 }

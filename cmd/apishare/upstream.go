@@ -170,6 +170,14 @@ func (u *Upstream) servesModelExplicit(m string) (bool, bool) {
 	}
 	list := strings.TrimSpace(u.Models)
 	if list == "" {
+		if defaults := defaultDecisionModelsForType(u.Type); len(defaults) > 0 {
+			for _, dm := range defaults {
+				if dm == m {
+					return true, true
+				}
+			}
+			return false, false
+		}
 		return true, false
 	}
 	for _, s := range strings.Split(list, ",") {

@@ -478,15 +478,6 @@ body {
   box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
 }
 
-@media (max-width: 980px) {
-  .user-hero-grid, .user-mid-grid, .user-router-grid { grid-template-columns: 1fr; }
-}
-@media (max-width: 640px) {
-  .user-topbar-inner, .user-container { padding-inline: 16px; }
-  .key-limits-bar, .user-form-grid-3, .user-form-grid-2, .user-tiers-grid { grid-template-columns: 1fr; }
-  .search-box input { min-width: 140px; }
-}
-
 /* BYOK & Personal Auto Router */
 .user-router-grid {
   display: grid;
@@ -868,4 +859,263 @@ body {
   margin-top: 2px;
   font-size: 11px;
   color: var(--muted);
+}
+
+.user-grid-span-2 {
+  grid-column: span 2;
+}
+
+.user-model-select-combo {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.user-model-select-combo > select,
+.user-model-select-combo > input {
+  flex: 1 1 135px;
+  min-width: 0;
+}
+
+/* Responsive & Mobile UI Optimizations */
+@media (max-width: 980px) {
+  .user-hero-grid,
+  .user-mid-grid,
+  .user-router-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .user-field input,
+  .user-field select,
+  .user-field textarea,
+  .user-tier-add select,
+  .user-tier-add input,
+  .user-dryrun-input-row input,
+  .search-box input,
+  .logs-filters select {
+    font-size: 16px;
+  }
+}
+
+@media (max-width: 640px) {
+  .user-topbar-inner {
+    padding: 10px 14px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .crumb-sep,
+  .crumb-current,
+  .user-profile-meta small {
+    display: none;
+  }
+
+  .user-topbar-actions {
+    gap: 6px;
+    margin-left: auto;
+  }
+
+  .user-topbar-actions .btn {
+    min-height: 32px;
+    padding: 4px 10px;
+    font-size: 12px;
+  }
+
+  .user-container {
+    padding: 16px 14px;
+  }
+
+  .user-card {
+    padding: 16px 14px;
+    border-radius: 12px;
+  }
+
+  .card-head {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .card-head h2 {
+    flex-wrap: wrap;
+    font-size: 16px;
+  }
+
+  .router-head-actions {
+    width: 100%;
+  }
+
+  .router-head-actions .btn {
+    flex: 1 1 0;
+  }
+
+  .key-box {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 12px;
+  }
+
+  .key-actions {
+    width: 100%;
+  }
+
+  .key-actions .btn {
+    flex: 1 1 auto;
+  }
+
+  .key-limits-bar,
+  .user-form-grid-3,
+  .user-form-grid-2,
+  .user-tiers-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .user-grid-span-2 {
+    grid-column: span 1;
+  }
+
+  .quick-connect-head {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .quick-connect-head .segmented {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .quick-connect-head .segmented button {
+    text-align: center;
+    padding: 5px 4px;
+  }
+
+  .user-router-top-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .user-router-top-bar > .btn {
+    width: 100%;
+  }
+
+  .user-model-select-combo {
+    flex-direction: column;
+  }
+
+  .user-model-select-combo > select,
+  .user-model-select-combo > input {
+    flex: 1 1 auto;
+    width: 100%;
+  }
+
+  .byok-item-top {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .byok-item-actions {
+    width: 100%;
+  }
+
+  .byok-item-actions .btn {
+    flex: 1 1 0;
+  }
+
+  .user-cand-row {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .user-cand-left {
+    flex: 1 1 calc(100% - 84px);
+    flex-wrap: wrap;
+  }
+
+  .user-cand-btns button {
+    width: 28px;
+    height: 28px;
+    font-size: 12px;
+  }
+
+  .user-tier-add {
+    flex-wrap: wrap;
+  }
+
+  .user-tier-add select {
+    flex: 1 1 100%;
+    width: 100%;
+    min-height: 36px;
+  }
+
+  .user-tier-add input {
+    flex: 1 1 140px;
+    min-height: 36px;
+  }
+
+  .user-tier-add button {
+    min-height: 36px;
+  }
+
+  .user-dryrun-input-row {
+    flex-direction: column;
+  }
+
+  .user-dryrun-input-row > .btn {
+    width: 100%;
+  }
+
+  .user-input-action {
+    flex-wrap: wrap;
+  }
+
+  .user-input-action input {
+    flex: 1 1 160px;
+  }
+
+  .user-input-action > .btn {
+    flex: 1 0 auto;
+  }
+
+  .logs-filters {
+    width: 100%;
+  }
+
+  .search-box {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .search-box input {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .logs-filters select,
+  .logs-filters > .btn {
+    flex: 1 1 calc(50% - 5px);
+  }
+
+  .confirm-dialog {
+    width: calc(100% - 20px);
+    max-height: calc(100dvh - 24px);
+    padding: 16px;
+    overflow-y: auto;
+  }
+
+  .dialog-actions {
+    flex-wrap: wrap;
+  }
+
+  .dialog-actions .btn {
+    flex: 1 1 120px;
+  }
+
+  .user-toast {
+    left: 14px;
+    right: 14px;
+    bottom: 16px;
+    text-align: center;
+  }
 }
