@@ -1745,3 +1745,267 @@ func TestSmartRouterV2MultiSignalRatchetModalityAndCompression(t *testing.T) {
 		t.Fatalf("expected latest user message to be preserved after compression")
 	}
 }
+
+func TestSmartRouterV3AutonomousPoolBenchmarkDomainAndBanditLearning(t *testing.T) {
+	setupAutoRouterTestDB(t)
+
+	up := &Upstream{
+		Name:     "V3-Autonomous-Upstream",
+		Type:     "openai",
+		BaseURL:  "http://127.0.0.1:9999",
+		APIKey:   "sk-test",
+		Models:   "qwen-turbo,gemini-2.5-flash,deepseek-reasoner,claude-sonnet-4-5",
+		Priority: 1,
+		Weight:   1,
+		Enabled:  true,
+	}
+	if err := dbInsertUpstream(up); err != nil {
+		t.Fatalf("dbInsertUpstream: %v", err)
+	}
+	invalidateRoutingSnapshot()
+
+	// Configure Smart Router 3.0 in pure Autonomous Pool Mode (no manual Tiers!)
+	cfg := defaultAutoRouterConfig()
+	cfg.Enabled = true
+	cfg.Mode = "live"
+	cfg.Classifier = "heuristic"
+	cfg.StrategyProfile = StrategyBalanced
+	cfg.BanditEnabled = true
+	cfg.SpeculativeCascade = true
+	cfg.Tiers = map[string][]string{} // Empty manual tiers -> Autonomous Pool Mode
+	if err := saveAutoRouterConfig(cfg); err != nil {
+		t.Fatalf("saveAutoRouterConfig: %v", err)
+	}
+
+	ak := ApiKey{
+		ID:      1,
+		Name:    "v3-auto-key",
+		Models:  "auto",
+		Enabled: true,
+	}
+
+	// 1. Simple greeting/translation in Autonomous Pool Mode -> picks fast economical model, NOT expensive flagship
+	crSimple := &canonReq{
+		Model:    "auto",
+		Messages: []canonMsg{{Role: "user", Text: "把 hello world 翻译成中文"}},
+	}
+	decSimple, candsSimple, err := resolveAutoRouteWithConfig(context.Background(), cfg, ak, FormatOpenAIChat, false, http.Header{}, crSimple, true)
+	if err != nil {
+		t.Fatalf("resolveAutoRoute(simple): %v", err)
+	}
+	if !decSimple.AutonomousPool {
+		t.Fatalf("expected AutonomousPool=true when manual Tiers are empty")
+	}
+	if len(candsSimple) == 0 || (candsSimple[0] != "qwen-turbo" && candsSimple[0] != "gemini-2.5-flash") {
+		t.Fatalf("expected simple translation in Autonomous Pool to select fast model (qwen-turbo or gemini-2.5-flash), got %v (steps=%+v)", candsSimple, decSimple.Steps)
+	}
+
+	// 2. Frontend UI / WebDev task -> detects frontend_ui domain and ranks claude-sonnet-4-5 at #1
+	crFrontend := &canonReq{
+		Model: "auto",
+		Messages: []canonMsg{{
+			Role: "user",
+			Text: "请用 React + Tailwind CSS + Framer Motion 設計并实现一个复杂的响应式 Glassmorphism 数据可视化仪表盘组件，包含流畅的暗黑模式过渡动画与多图表联动：\n```tsx\nexport function Dashboard() {}\n```",
+		}},
+	}
+	decFE, candsFE, err := resolveAutoRouteWithConfig(context.Background(), cfg, ak, FormatOpenAIChat, false, http.Header{}, crFrontend, true)
+	if err != nil {
+		t.Fatalf("resolveAutoRoute(frontend): %v", err)
+	}
+	if decFE.PrimaryDomain != DomainFrontendUI {
+		t.Fatalf("expected PrimaryDomain=%s for React/Tailwind UI prompt, got %s", DomainFrontendUI, decFE.PrimaryDomain)
+	}
+	if len(candsFE) == 0 || candsFE[0] != "claude-sonnet-4-5" {
+		t.Fatalf("expected frontend_ui benchmark routing to rank claude-sonnet-4-5 #1, got %v (steps=%+v)", candsFE, decFE.Steps)
+	}
+
+	// 3. Formal Math Reasoning task -> detects reasoning_math domain
+	crMath := &canonReq{
+		Model: "auto",
+		Messages: []canonMsg{{
+			Role: "user",
+			Text: "请用数学归纳法与反证法严格证明：对于任意正整数 n，若 2^n - 1 是素数（梅森素数），则 n 必为素数；并进一步推导模算术下的欧拉定理引理。",
+		}},
+	}
+	decMath, candsMath, err := resolveAutoRouteWithConfig(context.Background(), cfg, ak, FormatOpenAIChat, false, http.Header{}, crMath, true)
+	if err != nil {
+		t.Fatalf("resolveAutoRoute(math): %v", err)
+	}
+	if decMath.PrimaryDomain != DomainReasoningMath {
+		t.Fatalf("expected PrimaryDomain=%s for math proof, got %s", DomainReasoningMath, decMath.PrimaryDomain)
+	}
+	if len(candsMath) == 0 || (candsMath[0] != "deepseek-reasoner" && candsMath[0] != "claude-sonnet-4-5") {
+		t.Fatalf("expected math proof to select top reasoning model, got %v", candsMath)
+	}
+
+	// 4. Online Contextual Bandit Learning: explicit failures + implicit next-turn user frustration demote a failing model
+	for i := 0; i < 4; i++ {
+		recordBanditExplicitOutcome(up.ID, "claude-sonnet-4-5", DomainFrontendUI, false, 4500, 4500, 5000, 0)
+	}
+	// Simulate next-turn user frustration ("不对，还是报错") on a session that previously used claude-sonnet-4-5
+	hdr := http.Header{}
+	hdr.Set("X-Session-Id", "sess-bandit-feedback")
+	skey := scopedSessionKey(ak.ID, sessionKeyFromCanon("/v1/chat/completions", hdr, crFrontend))
+	rememberAutoRouterSessionWithDomain(skey, "claude-sonnet-4-5", TierComplex, DomainFrontendUI, up.ID, "claude-sonnet-4-5")
+
+	crFrustrated := &canonReq{
+		Model:     "auto",
+		SessionID: "sess-bandit-feedback",
+		Messages: []canonMsg{
+			{Role: "user", Text: "请用 React + Tailwind CSS 实现仪表盘组件"},
+			{Role: "assistant", Text: "```tsx\nexport function Dashboard() {}\n```"},
+			{Role: "user", Text: "不对，还是报错，请重新用 React + Tailwind CSS + Framer Motion 完整实现这个复杂的响应式组件"},
+		},
+	}
+	decAfterBandit, candsAfterBandit, err := resolveAutoRouteWithConfig(context.Background(), cfg, ak, FormatOpenAIChat, false, hdr, crFrustrated, true)
+	if err != nil {
+		t.Fatalf("resolveAutoRoute(after bandit demotion): %v", err)
+	}
+	if len(candsAfterBandit) == 0 || candsAfterBandit[0] == "claude-sonnet-4-5" {
+		t.Fatalf("expected Bandit to demote failing claude-sonnet-4-5 and promote healthy rival, got candidates=%v (steps=%+v)", candsAfterBandit, decAfterBandit.Steps)
+	}
+}
+
+func TestSmartRouterV3SpeculativeCascadeZeroDisruptionEscalation(t *testing.T) {
+	setupAutoRouterTestDB(t)
+
+	// Fast upstream: returns a refusal/punt on streaming and non-streaming requests
+	fastServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, _ := io.ReadAll(r.Body)
+		isStream := strings.Contains(string(bodyBytes), `"stream":true`)
+		if isStream {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, "data: {\"id\":\"chatcmpl-fast\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"抱歉，作为一个轻量级模型，我无法解决这个复杂的并发架构问题。\"}}]}\n\n")
+			_, _ = io.WriteString(w, "data: [DONE]\n\n")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"id":"chatcmpl-fast","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"[ESCALATE] 此问题超出当前快模型能力范围"},"finish_reason":"stop"}],"usage":{"prompt_tokens":20,"completion_tokens":12,"total_tokens":32}}`)
+	}))
+	defer fastServer.Close()
+
+	// Strong upstream: returns the complete, high-quality engineering solution
+	strongServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, _ := io.ReadAll(r.Body)
+		isStream := strings.Contains(string(bodyBytes), `"stream":true`)
+		if isStream {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, "data: {\"id\":\"chatcmpl-strong\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"这是为您实现的 Go 无锁并发 Worker Pool 完整代码与死锁根因分析：\\n```go\\nfunc NewPool() {}\\n```\"}}]}\n\n")
+			_, _ = io.WriteString(w, "data: {\"id\":\"chatcmpl-strong\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":25,\"completion_tokens\":40,\"total_tokens\":65}}\n\n")
+			_, _ = io.WriteString(w, "data: [DONE]\n\n")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"id":"chatcmpl-strong","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"这是完整的分布式事务一致性证明与实现方案。"},"finish_reason":"stop"}],"usage":{"prompt_tokens":25,"completion_tokens":36,"total_tokens":61}}`)
+	}))
+	defer strongServer.Close()
+
+	upFast := &Upstream{
+		Name:     "Fast-Probe-Upstream",
+		Type:     "openai",
+		BaseURL:  fastServer.URL + "/v1",
+		APIKey:   "sk-fast",
+		Models:   "gemini-2.5-flash",
+		Priority: 1,
+		Weight:   1,
+		Enabled:  true,
+	}
+	upStrong := &Upstream{
+		Name:     "Strong-Flagship-Upstream",
+		Type:     "openai",
+		BaseURL:  strongServer.URL + "/v1",
+		APIKey:   "sk-strong",
+		Models:   "claude-sonnet-4-5",
+		Priority: 1,
+		Weight:   1,
+		Enabled:  true,
+	}
+	if err := dbInsertUpstream(upFast); err != nil {
+		t.Fatalf("dbInsertUpstream(fast): %v", err)
+	}
+	if err := dbInsertUpstream(upStrong); err != nil {
+		t.Fatalf("dbInsertUpstream(strong): %v", err)
+	}
+	invalidateRoutingSnapshot()
+
+	cfg := defaultAutoRouterConfig()
+	cfg.Enabled = true
+	cfg.Mode = "live"
+	cfg.Classifier = "heuristic"
+	cfg.SpeculativeCascade = true
+	cfg.ResponseHeaders = true
+	cfg.Tiers = map[string][]string{
+		TierMedium:  {"gemini-2.5-flash"},
+		TierComplex: {"claude-sonnet-4-5"},
+	}
+	cfg.CascadeTiers = true
+	if err := saveAutoRouterConfig(cfg); err != nil {
+		t.Fatalf("saveAutoRouterConfig: %v", err)
+	}
+
+	rawKey := "sk-speculative-test-key"
+	ak := &ApiKey{
+		Name:        "speculative-user",
+		Key:         rawKey,
+		QPS:         50,
+		Concurrency: 10,
+		Models:      "auto,gemini-2.5-flash,claude-sonnet-4-5",
+		QuotaUSD:    20.0,
+		Enabled:     true,
+	}
+	if err := dbInsertKey(ak); err != nil {
+		t.Fatalf("dbInsertKey: %v", err)
+	}
+
+	router := newRouter()
+
+	// 1. Streaming SSE request: fast model punts ("抱歉，作为一个轻量级模型，我无法解决..."), gateway must buffer & abort before HTTP 200 and seamlessly stream strong model!
+	streamBody := `{"model":"auto","stream":true,"messages":[{"role":"user","content":"用 Go 写一个带超时控制的 HTTP GET 请求工具函数，支持自定义 Header 并解析 JSON 响应。"}]}`
+	reqStream := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(streamBody))
+	reqStream.Header.Set("Authorization", "Bearer "+rawKey)
+	reqStream.Header.Set("Content-Type", "application/json")
+	wStream := httptest.NewRecorder()
+	router.ServeHTTP(wStream, reqStream)
+
+	if wStream.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on streaming speculative cascade, got %d: %s", wStream.Code, wStream.Body.String())
+	}
+	streamOut := wStream.Body.String()
+	if strings.Contains(streamOut, "抱歉，作为一个轻量级模型") {
+		t.Fatalf("expected fast model punt text to be buffered and discarded before reaching client, got: %s", streamOut)
+	}
+	if !strings.Contains(streamOut, "无锁并发 Worker Pool") {
+		t.Fatalf("expected strong model SSE stream to reach client, got: %s", streamOut)
+	}
+	if gotModel := wStream.Header().Get("X-APISHARE-Router-Model"); gotModel != "claude-sonnet-4-5" {
+		t.Fatalf("expected X-APISHARE-Router-Model=claude-sonnet-4-5 after speculative escalation, got %q", gotModel)
+	}
+	if gotSpec := wStream.Header().Get("X-APISHARE-Router-Speculative"); gotSpec != "refusal_or_punt" {
+		t.Fatalf("expected X-APISHARE-Router-Speculative=refusal_or_punt, got %q", gotSpec)
+	}
+
+	// 2. Non-streaming JSON request: fast model returns "[ESCALATE]", gateway escalates to strong model
+	jsonBody := `{"model":"auto","stream":false,"messages":[{"role":"user","content":"用 Go 写一个带超时控制的 HTTP GET 请求工具函数，支持自定义 Header 并解析 JSON 响应。"}]}`
+	reqJSON := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(jsonBody))
+	reqJSON.Header.Set("Authorization", "Bearer "+rawKey)
+	reqJSON.Header.Set("Content-Type", "application/json")
+	wJSON := httptest.NewRecorder()
+	router.ServeHTTP(wJSON, reqJSON)
+
+	if wJSON.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on non-streaming speculative cascade, got %d: %s", wJSON.Code, wJSON.Body.String())
+	}
+	if strings.Contains(wJSON.Body.String(), "[ESCALATE]") {
+		t.Fatalf("expected [ESCALATE] response to be intercepted and escalated, got: %s", wJSON.Body.String())
+	}
+	if !strings.Contains(wJSON.Body.String(), "分布式事务一致性证明") {
+		t.Fatalf("expected strong model JSON response, got: %s", wJSON.Body.String())
+	}
+	if gotSpec := wJSON.Header().Get("X-APISHARE-Router-Speculative"); gotSpec != "self_escalate_marker" {
+		t.Fatalf("expected X-APISHARE-Router-Speculative=self_escalate_marker, got %q", gotSpec)
+	}
+}

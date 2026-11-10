@@ -284,7 +284,7 @@
 
         <section id="tab-router" class="panel hidden">
           <div class="page-heading">
-            <div><span class="eyebrow">DECISION-MODEL COMPLEXITY ROUTER</span><h1>智能路由</h1><p>基于决策模型（Clef / Jev / SystemOne / OpenAI）与本地启发式规则的四档复杂度路由，支持每档优先级排序与自动绕过 402 额度耗尽模型。</p></div>
+            <div><span class="eyebrow">SMART ROUTER 3.0 · AUTONOMOUS BANDIT &amp; BENCHMARK MATRIX</span><h1>智能路由 3.0</h1><p>免手动分级：结合 6 维公开评测能力矩阵（SWE-bench / WebDev / AIME / BFCL / Arena）、在线上下文 Bandit (Thompson Sampling / UCB) 与投机探针自检升级 (Speculative Cascade) 全自动寻优。</p></div>
             <div class="heading-actions">
               <div class="dash-segmented dash-segmented-small" role="group" aria-label="路由统计周期">
                 <button type="button" class="active" data-router-period="24h" aria-pressed="true" onclick="setRouterStatsPeriod('24h')">近 24H</button>
@@ -302,7 +302,7 @@
               <div class="router-mode-segmented" role="group" aria-label="智能路由运行模式">
                 <button type="button" class="router-mode-btn active" data-mode="off" aria-pressed="true" onclick="setRouterMode('off')"><span class="router-mode-dot"></span>已停用 (Off)</button>
                 <button type="button" class="router-mode-btn" data-mode="shadow" aria-pressed="false" onclick="setRouterMode('shadow')" title="影子对照：评估并记录分档结果，但实际仍转发给兜底默认模型"><span class="router-mode-dot"></span>影子对照 (Shadow)</button>
-                <button type="button" class="router-mode-btn" data-mode="live" aria-pressed="false" onclick="setRouterMode('live')" title="正式生效：按分档优先级选择真实模型并计费"><span class="router-mode-dot"></span>正式生效 (Live)</button>
+                <button type="button" class="router-mode-btn" data-mode="live" aria-pressed="false" onclick="setRouterMode('live')" title="正式生效：按寻优排序选择真实模型并计费"><span class="router-mode-dot"></span>正式生效 (Live)</button>
               </div>
               <label class="router-virtual-model-box" title="客户端请求时填写的虚拟模型名（如 model: auto）">
                 <span>虚拟模型名</span>
@@ -322,12 +322,12 @@
               <div id="routerKpiTotalSub" class="router-kpi-sub">等待加载…</div>
             </article>
             <article class="router-kpi-card router-kpi-card-wide">
-              <div class="router-kpi-head"><span>四档分流占比 (SIMPLE / MEDIUM / COMPLEX / REASONING)</span></div>
+              <div class="router-kpi-head"><span>难度与分流占比 (SIMPLE / MEDIUM / COMPLEX / REASONING)</span></div>
               <div id="routerTierBar" class="router-tier-bar"></div>
               <div id="routerTierLegend" class="router-tier-legend"></div>
             </article>
             <article class="router-kpi-card">
-              <div class="router-kpi-head"><span>快档分流率 &amp; 节省</span><svg class="icon"><use href="#i-dollar"/></svg></div>
+              <div class="router-kpi-head"><span>高性价比分流 &amp; 节省</span><svg class="icon"><use href="#i-dollar"/></svg></div>
               <strong id="routerKpiFastRatio" class="router-kpi-val">—</strong>
               <div id="routerKpiSavedSub" class="router-kpi-sub">—</div>
             </article>
@@ -351,45 +351,79 @@
                   <div class="router-section-heading-main">
                     <span class="section-icon"><svg class="icon"><use href="#i-layers"/></svg></span>
                     <div>
-                      <h2>四档候选模型与优先级排序</h2>
-                      <p>每个档位按 <code>#1 → #2 → #3</code> 优先级依次评估：自动跳过当前密钥额度已耗尽（402）或无健康上游的模型；转发中若首选模型全部上游失败且未响应，自动切换同档下一候选。</p>
+                      <h2>自治模型池与 6 维基准 Bandit 寻优</h2>
+                      <p>无需手动维护四档列表：系统自动从上游绑定的可用模型池中，根据请求所属 6 大专业领域（SWE工程 / 前端UI / 数学推理 / Agent工具 / 写作知识 / 超长上下文）、实时 Bandit 胜率与策略偏好动态计算效用分 $U(m|x)$ 排序。</p>
                     </div>
                   </div>
                   <div class="router-section-heading-actions">
-                    <button type="button" class="btn mini ghost" onclick="autoFillRouterTiersFromUpstreams()" title="从可用模型列表中按特征自动填入四档与默认模型">一键按可用模型智能填充</button>
+                    <button type="button" class="btn mini ghost" onclick="resetAutoRouterBanditState(this)" title="清空在线 Bandit 历史学习权重，恢复评测基准先验">重置 Bandit 记忆</button>
                   </div>
                 </div>
-                <div id="routerTiersContainer" class="router-tiers-stack"></div>
+
+                <div class="form-grid" style="margin-bottom:10px">
+                  <label class="field">
+                    <span>全局路由寻优偏好 (Strategy Profile)</span>
+                    <select id="routerStrategyProfile" onchange="if(routerDraft){routerDraft.strategy_profile=this.value;}renderRouterAutonomousPoolEditor();markRouterDirty(true)">
+                      <option value="balanced">均衡智能寻优 (Balanced · 推荐：按难度动态权衡能力与成本)</option>
+                      <option value="quality_first">质量与评测基准优先 (Quality First · 优先各领域高分旗舰)</option>
+                      <option value="cost_first">极致成本优先 (Cost First · 达标前提下优先低价与命中缓存)</option>
+                      <option value="latency_first">极速低延迟优先 (Latency First · 优先实时首字 TTFT / TPS 最快)</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>兜底默认模型 (Default Model) <span class="optional">可选</span></span>
+                    <div class="router-model-select-row">
+                      <select id="routerDefaultModelSelect" aria-label="从可用模型选择兜底默认模型" onchange="onSelectRouterDefaultModel(this.value)">
+                        <option value="">选择可用模型作为兜底模型…</option>
+                      </select>
+                      <input id="routerDefaultModel" type="text" list="routerAvailableModelsList" placeholder="留空则自动选池内最优模型" spellcheck="false" oninput="routerDraft.default_model=this.value.trim();syncRouterDefaultModelSelect();renderRouterTiersEditor();markRouterDirty(true)">
+                      <span id="routerDefaultModelHealth" class="router-default-health-wrap"></span>
+                    </div>
+                  </label>
+                </div>
+
+                <label class="switch-row compact">
+                  <span><strong>启用在线上下文 Bandit 实时自适应寻优 (Thompson Sampling + UCB)</strong><small>按 <code>(上游, 模型, 领域)</code> 实时学习成功率、首字延迟 TTFT 与用户下一轮追问纠错反馈（如“不对/还是报错”自动扣减上一轮模型胜率）。</small></span>
+                  <input id="routerBanditEnabled" type="checkbox" class="switch-input" checked onchange="if(routerDraft){routerDraft.bandit_enabled=this.checked;}renderRouterAutonomousPoolEditor();markRouterDirty(true)"><span class="switch-track"></span>
+                </label>
+                <label class="switch-row compact">
+                  <span><strong>启用 Speculative Cascade 投机探针自检升级 (Probe &amp; Escalate)</strong><small>边界难度请求先派发高性价比快模型并预检前 ~84 字；若检测到拒答推诿（“抱歉我无法…”）、空输出或 <code>[ESCALATE]</code>，在向客户端发送 HTTP 200 前零感中断并无缝升级至强模型。</small></span>
+                  <input id="routerSpeculativeCascade" type="checkbox" class="switch-input" checked onchange="if(routerDraft){routerDraft.speculative_cascade=this.checked;}markRouterDirty(true)"><span class="switch-track"></span>
+                </label>
+
+                <div id="routerAutonomousPoolContainer" style="margin-top:12px"></div>
+                <div id="routerBanditLeaderboardBox" style="margin-top:10px"></div>
+
+                <details id="routerLegacyTiersDetails" class="router-tier-criteria" style="margin-top:14px">
+                  <summary style="font-weight:600;cursor:pointer">高级模式：传统四档手动候选覆盖 (SIMPLE / MEDIUM / COMPLEX / REASONING · 留空则使用上方全自动模型池)</summary>
+                  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin:8px 0">
+                    <small class="muted">当四档列表全部为空时，系统运行在 Smart Router 3.0 <strong>全自动模型池模式</strong>；若手动填入档位模型，则优先按所填档位池筛选并在同档内结合 Bandit 动态排序。</small>
+                    <div style="display:flex;gap:6px">
+                      <button type="button" class="btn mini ghost" onclick="clearRouterTiersToAutonomousPool()">清空四档（切回全自动模型池）</button>
+                      <button type="button" class="btn mini ghost" onclick="autoFillRouterTiersFromUpstreams()">一键按可用模型填充四档</button>
+                    </div>
+                  </div>
+                  <div id="routerTiersContainer" class="router-tiers-stack"></div>
+                </details>
 
                 <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border,#e5e3df)">
                   <div class="form-grid">
                     <label class="field">
-                      <span>兜底默认模型 (Default Model) <span class="required">*</span></span>
-                      <div class="router-model-select-row">
-                        <select id="routerDefaultModelSelect" aria-label="从可用模型选择兜底默认模型" onchange="onSelectRouterDefaultModel(this.value)">
-                          <option value="">选择可用模型作为兜底模型…</option>
-                        </select>
-                        <input id="routerDefaultModel" type="text" list="routerAvailableModelsList" placeholder="或手动输入模型 ID" spellcheck="false" oninput="routerDraft.default_model=this.value.trim();syncRouterDefaultModelSelect();renderRouterTiersEditor();markRouterDirty(true)">
-                        <span id="routerDefaultModelHealth" class="router-default-health-wrap"></span>
-                      </div>
-                      <small>Shadow 模式下实际使用的模型，以及当所有档位候选模型均不可用时的最终保底模型。</small>
-                    </label>
-                    <label class="field">
                       <span>强制升档关键词 (Escalation Keyword) <span class="optional">可选</span></span>
                       <input id="routerEscalationKeyword" type="text" placeholder="例如：[deep] 或 ultrathink" maxlength="64" spellcheck="false" oninput="markRouterDirty(true)">
-                      <small>用户消息包含此关键词时跳过分类器，直接路由至 REASONING 档。</small>
+                      <small>用户消息包含此关键词时直接拉满任务难度地板 $D(x)$ 并路由至高阶推理模型。</small>
                     </label>
                   </div>
                   <label class="switch-row compact">
-                    <span><strong>允许同级耗尽时向更高档位顺延 (Cascade Tiers)</strong><small>若当前档位（如 SIMPLE）所有候选模型均无可用上游或额度耗尽，依次尝试 MEDIUM → COMPLEX → REASONING → 默认模型。</small></span>
+                    <span><strong>允许同级耗尽时向更高档位顺延 (Cascade Tiers)</strong><small>手动四档模式下若当前档位候选均不可用，依次尝试更高档位。</small></span>
                     <input id="routerCascadeTiers" type="checkbox" class="switch-input" checked onchange="markRouterDirty(true)"><span class="switch-track"></span>
                   </label>
                   <label class="switch-row compact">
-                    <span><strong>密钥绑定 <code>auto</code> 时允许路由至任意候选模型</strong><small>推荐开启：API 密钥只需勾选绑定虚拟模型 <code>auto</code>，即可路由至档位池内的真实模型，同时严格检查该密钥的共享额度与模型独立额度（防 402）。</small></span>
+                    <span><strong>密钥绑定 <code>auto</code> 时允许路由至任意候选模型</strong><small>推荐开启：API 密钥只需勾选绑定虚拟模型 <code>auto</code>，即可路由至池内真实模型，同时严格检查该密钥的共享额度与模型独立额度（防 402）。</small></span>
                     <input id="routerAllowUnlisted" type="checkbox" class="switch-input" checked onchange="markRouterDirty(true)"><span class="switch-track"></span>
                   </label>
                   <label class="switch-row compact">
-                    <span><strong>附加智能路由调试响应头</strong><small>在响应中返回 <code>X-APISHARE-Router-Tier</code>、<code>X-APISHARE-Router-Model</code>、<code>X-APISHARE-Router-Cause</code> 等标头。</small></span>
+                    <span><strong>附加智能路由调试响应头</strong><small>在响应中返回 <code>X-APISHARE-Router-Domain</code>、<code>X-APISHARE-Router-Difficulty</code>、<code>X-APISHARE-Router-Model</code>、<code>X-APISHARE-Router-Speculative</code> 等标头。</small></span>
                     <input id="routerResponseHeaders" type="checkbox" class="switch-input" checked onchange="markRouterDirty(true)"><span class="switch-track"></span>
                   </label>
                 </div>

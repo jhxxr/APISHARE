@@ -918,8 +918,10 @@
     }
 
     if ($("#userRouterEnabled")) $("#userRouterEnabled").checked = Boolean(v.enabled);
+    if ($("#userRouterSpeculativeCascade")) $("#userRouterSpeculativeCascade").checked = v.speculative_cascade !== false;
     if ($("#userRouterVirtualModel")) $("#userRouterVirtualModel").value = v.virtual_model || "my-auto";
     if ($("#siteVirtualModelCode")) $("#siteVirtualModelCode").textContent = v.site_virtual_model || "auto";
+    if ($("#userRouterStrategyProfile")) $("#userRouterStrategyProfile").value = v.strategy_profile || "balanced";
     if ($("#userRouterChannelPref")) $("#userRouterChannelPref").value = v.channel_preference || "personal_first";
     if ($("#userRouterDefaultModel")) $("#userRouterDefaultModel").value = v.default_model || "";
 
@@ -1310,6 +1312,14 @@
     toast("已按模型特征自动排布四档候选，请点击「保存路由策略」生效");
   }
 
+  function clearUserTiersToAutonomous() {
+    USER_TIER_META.forEach(({ id }) => {
+      state.routerTiers[id] = [];
+    });
+    renderUserTiersEditor();
+    toast("已清空手动四档列表，私人路由将按 Smart Router 3.0 全自动模型池寻优");
+  }
+
   function collectUserRouterPayload() {
     const src = $("#userClassifierSource")?.value || "heuristic";
     const classifierModel = src === "user_upstream"
@@ -1319,6 +1329,8 @@
     return {
       enabled: Boolean($("#userRouterEnabled")?.checked),
       virtual_model: ($("#userRouterVirtualModel")?.value || "my-auto").trim(),
+      strategy_profile: $("#userRouterStrategyProfile")?.value || "balanced",
+      speculative_cascade: $("#userRouterSpeculativeCascade") ? Boolean($("#userRouterSpeculativeCascade").checked) : true,
       channel_preference: $("#userRouterChannelPref")?.value || "personal_first",
       default_model: ($("#userRouterDefaultModel")?.value || "").trim(),
       classifier_source: src,
@@ -1403,17 +1415,20 @@
               : s.status === "standby"
               ? `<span class="muted">顺位备选 #${s.priority} (${esc(s.upstream_name || "")})</span>`
               : `<span style="color:var(--red)">跳过 #${s.priority} (${esc(s.reason || "不可用")})</span>`;
+            const utilText = s.utility_score ? ` <small class="muted">[U=${Number(s.utility_score).toFixed(1)} · 能力=${Number(s.capability_score || 0).toFixed(0)}]</small>` : "";
             return `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px dashed var(--border)">
-              <span><code>[${esc(s.source_tier)}]</code> <strong>${esc(s.model)}</strong></span>
+              <span><code>[${esc(s.source_tier)}]</code> <strong>${esc(s.model)}</strong>${utilText}</span>
               ${stText}
             </div>`;
           }).join("")
         : `<div class="muted">当前档位未找到可用候选模型${data.quota_error ? ` (${esc(data.quota_error)})` : ""}</div>`;
 
       if (out) {
+        const domHint = dec.primary_domain ? ` · 领域: <code>${esc(dec.primary_domain)}</code>` : "";
+        const diffHint = dec.required_difficulty ? ` · D(x)=<code>${Number(dec.required_difficulty).toFixed(0)}</code>` : "";
         out.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
           <div>
-            <span>判定档位: <span class="user-tier-badge ${esc(dec.tier || "DEFAULT")}">${esc(dec.tier || "DEFAULT")}</span></span>
+            <span>判定难度: <span class="user-tier-badge ${esc(dec.tier || "DEFAULT")}">${esc(dec.tier || "DEFAULT")}</span>${domHint}${diffHint}</span>
             <span style="margin-left:8px">最终命中模型: <strong><code>${esc(dec.selected_model || "无可用模型")}</code></strong></span>
             ${dec.selected_thinking ? `<span style="margin-left:6px" class="muted">(思考: <code>${esc(dec.selected_thinking)}</code>)</span>` : ""}
           </div>
@@ -1533,6 +1548,7 @@
       }
     });
     $("#userUpstreamClassifierModel")?.addEventListener("input", () => populateUserUpstreamClassifierModelSelect());
+    $("#clearUserTiersBtn")?.addEventListener("click", clearUserTiersToAutonomous);
     $("#autoFillUserTiersBtn")?.addEventListener("click", autoFillUserTiers);
     $("#saveUserRouterBtn")?.addEventListener("click", saveUserRouter);
     $("#copyUserRouterCmdBtn")?.addEventListener("click", copyUserRouterCommand);

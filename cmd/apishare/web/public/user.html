@@ -213,12 +213,13 @@
         <article class="user-card personal-router-panel">
           <div class="card-head">
             <div>
-              <span class="eyebrow">PERSONAL AUTO ROUTER</span>
+              <span class="eyebrow">PERSONAL SMART ROUTER 3.0</span>
               <h2>我的私人智能路由 <span id="userRouterStatusBadge" class="status-pill off">未启用</span></h2>
-              <p class="card-sub">自定义专属路由模型名（如 <code>my-auto</code>，与站点公共 <code>auto</code> 区分），混合编排你的自带模型与站点模型。</p>
+              <p class="card-sub">自定义专属路由模型名（如 <code>my-auto</code>），结合 6 维公开评测能力矩阵、在线 Bandit 与投机探针自检升级，全自动寻优你的自带模型与站点模型。</p>
             </div>
             <div class="router-head-actions">
-              <button id="autoFillUserTiersBtn" type="button" class="btn ghost mini" title="根据我的渠道模型与站点绑定模型自动填充四档">一键智能填充</button>
+              <button id="clearUserTiersBtn" type="button" class="btn ghost mini" title="清空手动四档，切回 Smart Router 3.0 全自动模型池寻优">全自动池模式</button>
+              <button id="autoFillUserTiersBtn" type="button" class="btn ghost mini" title="根据我的渠道模型与站点绑定模型自动填充四档">一键填充四档</button>
               <button id="saveUserRouterBtn" type="button" class="btn primary mini">保存路由策略</button>
             </div>
           </div>
@@ -228,6 +229,10 @@
               <label class="user-switch-row">
                 <input id="userRouterEnabled" type="checkbox">
                 <span><strong>启用私人智能路由</strong><small id="userRouterVirtualHint">启用后可在客户端填写下方私人模型名发起请求</small></span>
+              </label>
+              <label class="user-switch-row">
+                <input id="userRouterSpeculativeCascade" type="checkbox" checked>
+                <span><strong>投机探针自检升级</strong><small>快模型拒答/推诿时零感无缝升级强模型</small></span>
               </label>
               <button id="copyUserRouterCmdBtn" type="button" class="btn ghost mini">复制调用示例</button>
             </div>
@@ -239,6 +244,16 @@
                 <small id="userRouterNameNote">不能与站点公共模型 <code id="siteVirtualModelCode">auto</code> 同名</small>
               </label>
               <label class="user-field">
+                <span>全局寻优偏好 (Strategy)</span>
+                <select id="userRouterStrategyProfile">
+                  <option value="balanced">均衡智能寻优 (Balanced · 推荐)</option>
+                  <option value="quality_first">质量与评测基准优先 (Quality First)</option>
+                  <option value="cost_first">极致成本优先 (Cost First)</option>
+                  <option value="latency_first">极速低延迟优先 (Latency First)</option>
+                </select>
+                <small>全自动模型池下按任务 6 维领域需求与偏好打分排序</small>
+              </label>
+              <label class="user-field">
                 <span>同名模型渠道优先级</span>
                 <select id="userRouterChannelPref">
                   <option value="personal_first">优先我的自带渠道 → 失败回退站点模型</option>
@@ -247,15 +262,16 @@
                 </select>
                 <small>命中自带渠道时不扣站点额度；命中站点模型时自动跳过 402 耗尽模型</small>
               </label>
+            </div>
+            <div class="user-form-grid-2" style="margin-top:8px">
               <label class="user-field">
-                <span>兜底默认模型 (Default)</span>
+                <span>兜底默认模型 (Default · 可选)</span>
                 <div class="user-model-select-combo">
                   <select id="userRouterDefaultModelSelect" aria-label="从可用模型选择兜底默认模型">
-                    <option value="">选择可用模型…</option>
+                    <option value="">自动从模型池寻优…</option>
                   </select>
-                  <input id="userRouterDefaultModel" type="text" list="userAllCandidateModelsList" placeholder="或手动输入模型名">
+                  <input id="userRouterDefaultModel" type="text" list="userAllCandidateModelsList" placeholder="留空则全自动寻优">
                 </div>
-                <small>当命中档位无可用候选时的最终保底模型</small>
               </label>
             </div>
 

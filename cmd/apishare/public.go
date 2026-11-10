@@ -81,6 +81,10 @@ func registerPublic(r *gin.Engine) {
 		}
 		serveAdminFile(c, sub, "index.html")
 	})
+	r.GET("/public/rankings/", func(c *gin.Context) {
+		serveAdminFile(c, sub, "rankings.html")
+	})
+	r.GET("/api/public/rankings", publicRankingsHandler)
 	r.GET("/public/static/*filepath", func(c *gin.Context) {
 		name := strings.TrimPrefix(c.Param("filepath"), "/")
 		// The station is archived in Git and no longer served.
@@ -199,38 +203,11 @@ func publicRows(tx *sql.Tx, query string, scan func(*sql.Rows) error, args ...an
 	}
 	return rows.Err()
 }
-func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error) {
-	now = now.In(beijingLocation)
-	bucketSize := time.Hour
-	switch interval {
-	case "auto":
-	case "hour":
-	case "minute":
-		bucketSize = time.Minute
-	default:
-		return nil, fmt.Errorf("unsupported public history interval: %q", interval)
-	}
-	// Manual resolutions cover a rolling 24 hours; automatic mode chooses a
-	// separate window per model below. Request timestamps are stored to seconds.
-	windowEnd := now.Truncate(time.Second)
-	historyStart := windowEnd.Add(-24 * time.Hour)
-	bucketCount := int(24 * time.Hour / bucketSize)
-	newHistory := func() []PublicInterval {
-		history := make([]PublicInterval, bucketCount)
-		for i := range history {
-			start := historyStart.Add(time.Duration(i) * bucketSize)
-			history[i].Start = start.Format(time.RFC3339)
-			history[i].End = start.Add(bucketSize).Format(time.RFC3339)
-		}
-		return history
-	}
-	snapshot, err := getRoutingSnapshot()
-	if err != nil {
-		return nil, err
-	}
-	catalog := make(map[string]string)
-	wildcard := false
-	loading := false
+
+// Share model discovery with the rankings page, including uncatalogued models
+// with no calls yet. Wildcard discovery stays asynchronous for public visitors.
+func publicModelCatalog(snapshot *routingSnapshot) (catalog map[string]string, wildcard, loading bool) {
+	catalog = make(map[string]string)
 	for _, u := range snapshot.upstreams {
 		if !u.Enabled || u.Weight <= 0 {
 			continue
@@ -263,6 +240,39 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 			}
 		}
 	}
+	return catalog, wildcard, loading
+}
+
+func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error) {
+	now = now.In(beijingLocation)
+	bucketSize := time.Hour
+	switch interval {
+	case "auto":
+	case "hour":
+	case "minute":
+		bucketSize = time.Minute
+	default:
+		return nil, fmt.Errorf("unsupported public history interval: %q", interval)
+	}
+	// Manual resolutions cover a rolling 24 hours; automatic mode chooses a
+	// separate window per model below. Request timestamps are stored to seconds.
+	windowEnd := now.Truncate(time.Second)
+	historyStart := windowEnd.Add(-24 * time.Hour)
+	bucketCount := int(24 * time.Hour / bucketSize)
+	newHistory := func() []PublicInterval {
+		history := make([]PublicInterval, bucketCount)
+		for i := range history {
+			start := historyStart.Add(time.Duration(i) * bucketSize)
+			history[i].Start = start.Format(time.RFC3339)
+			history[i].End = start.Add(bucketSize).Format(time.RFC3339)
+		}
+		return history
+	}
+	snapshot, err := getRoutingSnapshot()
+	if err != nil {
+		return nil, err
+	}
+	catalog, wildcard, loading := publicModelCatalog(snapshot)
 	result := &PublicOverview{UpdatedAt: now.Format(time.RFC3339), WindowDays: 30, ModelsLoading: loading,
 		HistoryInterval: interval, HistoryWindowMinutes: int(bucketSize/time.Minute) * bucketCount,
 		Daily: make([]PublicDay, 30), Usage: []PublicUsage{}, Models: []PublicModel{}}

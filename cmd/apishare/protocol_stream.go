@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 )
@@ -1008,26 +1009,72 @@ func relayProtocolSSE(c *gin.Context, resp *http.Response, format clientFormat, 
 	}
 	w.reasoningScope = responseReplayScope{task.apiKeyID, info.UpstreamID, task.model, info.UpstreamModel}
 	d := newProtocolDecoder(format)
+	speculative := task != nil && task.speculativeProbe
+	var pendingDeltas []streamDelta
+	sawTool := false
+	flushPending := func() error {
+		for _, pd := range pendingDeltas {
+			if err := w.push(c, pd, info.protocolUsage()); err != nil {
+				return err
+			}
+		}
+		pendingDeltas = nil
+		return nil
+	}
 	err := readSSEFrames(resp.Body, func(payload string) (bool, error) {
 		deltas, u, err := d.decode(payload)
 		info.mergeUsage(u)
 		if err != nil {
 			return false, err
 		}
+		isStop := payload == "[DONE]" || (format == FormatAnthropic && d.terminal) || (format == FormatOpenAIResponse && d.terminal)
 		for _, delta := range deltas {
 			if delta.Block.Text != "" {
 				info.markFirstToken()
 			}
+			if delta.Block.Kind == "tool_call" || delta.Block.Call.Name != "" || delta.Block.Call.Arguments != "" {
+				sawTool = true
+			}
 			info.OutputText.WriteString(delta.Block.Text)
 			info.OutputText.WriteString(delta.Block.Call.Arguments)
+			if speculative && !w.started {
+				pendingDeltas = append(pendingDeltas, delta)
+				if !sawTool {
+					if esc, reason := shouldEscalateSpeculativeOutput(info.OutputText.String(), sawTool, false); esc {
+						return false, fmt.Errorf("%w: speculative_probe:%s", errAutoRouterModelIncompatible, reason)
+					}
+				}
+				if sawTool || utf8.RuneCountInString(info.OutputText.String()) >= 84 {
+					if err := flushPending(); err != nil {
+						return false, err
+					}
+				}
+				continue
+			}
 			if err := w.push(c, delta, info.protocolUsage()); err != nil {
 				return false, err
 			}
 		}
-		return payload == "[DONE]" || (format == FormatAnthropic && d.terminal) || (format == FormatOpenAIResponse && d.terminal), nil
+		if isStop && speculative && !w.started {
+			if esc, reason := shouldEscalateSpeculativeOutput(info.OutputText.String(), sawTool, true); esc {
+				return false, fmt.Errorf("%w: speculative_probe:%s", errAutoRouterModelIncompatible, reason)
+			}
+			if err := flushPending(); err != nil {
+				return false, err
+			}
+		}
+		return isStop, nil
 	})
 	if err == nil && !d.terminal {
 		err = io.ErrUnexpectedEOF
+	}
+	if err == nil && speculative && !w.started {
+		if esc, reason := shouldEscalateSpeculativeOutput(info.OutputText.String(), sawTool, true); esc {
+			err = fmt.Errorf("%w: speculative_probe:%s", errAutoRouterModelIncompatible, reason)
+		}
+		if err == nil {
+			err = flushPending()
+		}
 	}
 	if err == nil {
 		err = w.finish(c, info.protocolUsage(), d.finish, d.stopSequence)

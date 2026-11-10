@@ -48,37 +48,44 @@ func normalizeTierName(raw string) string {
 }
 
 type AutoRouterConfig struct {
-	userExternal                 bool                // User-owned classifiers must not inherit site credentials or network access.
-	Enabled                      bool                `json:"enabled"`
-	Mode                         string              `json:"mode"` // "off" | "shadow" | "live"
-	VirtualModel                 string              `json:"virtual_model"`
-	Classifier                   string              `json:"classifier"` // "cloudflare" | "jev" | "systemone" | "openai_chat" | "gateway_upstream" | "heuristic"
-	ClassifierModel              string              `json:"classifier_model"`
-	CloudflareAccountID          string              `json:"cloudflare_account_id"`
-	EndpointURL                  string              `json:"endpoint_url"`
-	APIKey                       string              `json:"api_key,omitempty"`
-	ProxyID                      int64               `json:"proxy_id"`
-	ClassifierTimeoutMS          int                 `json:"classifier_timeout_ms"`
-	ClassifierFallback           string              `json:"classifier_fallback"` // "heuristic" | "default_model"
-	ClassifierInstructions       string              `json:"classifier_instructions"`
-	MinConfidence                float64             `json:"min_confidence"`
-	ContextUserTurns             int                 `json:"context_user_turns"`
-	SkipShortChars               int                 `json:"skip_short_chars"`
-	LongContextThreshold         int                 `json:"long_context_threshold"`
-	RouteHousekeeping            bool                `json:"route_housekeeping"`
-	SessionMode                  string              `json:"session_mode"` // "user_turn" | "session_lock" | "every_turn"
-	CascadeTiers                 bool                `json:"cascade_tiers"`
-	AllowUnlistedTargetModels    bool                `json:"allow_unlisted_target_models"`
-	DefaultModel                 string              `json:"default_model"`
-	Tiers                        map[string][]string `json:"tiers"`
-	TierThinking                 map[string]string   `json:"tier_thinking"`
-	TierCriteria                 map[string]string   `json:"tier_criteria"`
-	ModelContextLimits           map[string]int      `json:"model_context_limits,omitempty"`
-	ResponseHeaders              bool                `json:"response_headers"`
-	EscalationKeyword            string              `json:"escalation_keyword"`
-	AllowUserAutoRouter          bool                `json:"allow_user_auto_router"`
-	ShareSiteClassifierWithUsers bool                `json:"share_site_classifier_with_users"`
-	SharedClassifierModels       []string            `json:"shared_classifier_models"`
+	userExternal                 bool                             // User-owned classifiers must not inherit site credentials or network access.
+	Enabled                      bool                             `json:"enabled"`
+	Mode                         string                           `json:"mode"` // "off" | "shadow" | "live"
+	VirtualModel                 string                           `json:"virtual_model"`
+	StrategyProfile              string                           `json:"strategy_profile"` // "balanced" | "quality_first" | "cost_first" | "latency_first"
+	ModelPool                    []string                         `json:"model_pool,omitempty"`
+	ExcludedModels               []string                         `json:"excluded_models,omitempty"`
+	BanditEnabled                bool                             `json:"bandit_enabled"`
+	SpeculativeCascade           bool                             `json:"speculative_cascade"`
+	SpeculativeTTFTMS            int                              `json:"speculative_ttft_ms,omitempty"`
+	ModelCapabilities            map[string]ModelCapabilityVector `json:"model_capabilities,omitempty"`
+	Classifier                   string                           `json:"classifier"` // "cloudflare" | "jev" | "systemone" | "openai_chat" | "gateway_upstream" | "heuristic"
+	ClassifierModel              string                           `json:"classifier_model"`
+	CloudflareAccountID          string                           `json:"cloudflare_account_id"`
+	EndpointURL                  string                           `json:"endpoint_url"`
+	APIKey                       string                           `json:"api_key,omitempty"`
+	ProxyID                      int64                            `json:"proxy_id"`
+	ClassifierTimeoutMS          int                              `json:"classifier_timeout_ms"`
+	ClassifierFallback           string                           `json:"classifier_fallback"` // "heuristic" | "default_model"
+	ClassifierInstructions       string                           `json:"classifier_instructions"`
+	MinConfidence                float64                          `json:"min_confidence"`
+	ContextUserTurns             int                              `json:"context_user_turns"`
+	SkipShortChars               int                              `json:"skip_short_chars"`
+	LongContextThreshold         int                              `json:"long_context_threshold"`
+	RouteHousekeeping            bool                             `json:"route_housekeeping"`
+	SessionMode                  string                           `json:"session_mode"` // "user_turn" | "session_lock" | "every_turn"
+	CascadeTiers                 bool                             `json:"cascade_tiers"`
+	AllowUnlistedTargetModels    bool                             `json:"allow_unlisted_target_models"`
+	DefaultModel                 string                           `json:"default_model"`
+	Tiers                        map[string][]string              `json:"tiers"`
+	TierThinking                 map[string]string                `json:"tier_thinking"`
+	TierCriteria                 map[string]string                `json:"tier_criteria"`
+	ModelContextLimits           map[string]int                   `json:"model_context_limits,omitempty"`
+	ResponseHeaders              bool                             `json:"response_headers"`
+	EscalationKeyword            string                           `json:"escalation_keyword"`
+	AllowUserAutoRouter          bool                             `json:"allow_user_auto_router"`
+	ShareSiteClassifierWithUsers bool                             `json:"share_site_classifier_with_users"`
+	SharedClassifierModels       []string                         `json:"shared_classifier_models"`
 }
 
 type routerDecisionDetails struct {
@@ -86,6 +93,13 @@ type routerDecisionDetails struct {
 	SelectedModel         string                `json:"selected_model,omitempty"`
 	SelectedSourceTier    string                `json:"selected_source_tier,omitempty"`
 	SelectedThinking      string                `json:"selected_thinking,omitempty"`
+	StrategyProfile       string                `json:"strategy_profile,omitempty"`
+	PrimaryDomain         string                `json:"primary_domain,omitempty"`
+	RequiredDifficulty    float64               `json:"required_difficulty,omitempty"`
+	DomainWeights         map[string]float64    `json:"domain_weights,omitempty"`
+	AutonomousPool        bool                  `json:"autonomous_pool,omitempty"`
+	SpeculativeEscalated  bool                  `json:"speculative_escalated,omitempty"`
+	SpeculativeReason     string                `json:"speculative_reason,omitempty"`
 	EstimatedInputTokens  int                   `json:"estimated_input_tokens,omitempty"`
 	ContextUpgraded       bool                  `json:"context_upgraded,omitempty"`
 	DegradedToDefault     bool                  `json:"degraded_to_default,omitempty"`
@@ -171,6 +185,15 @@ func (d *routerDecisionDetails) markRuntimeFailover(failedModel string, failErr 
 	if failErr != nil {
 		errReason = failErr.Error()
 	}
+	if strings.Contains(errReason, "speculative_probe:") {
+		d.SpeculativeEscalated = true
+		if idx := strings.Index(errReason, "speculative_probe:"); idx >= 0 {
+			d.SpeculativeReason = strings.TrimSpace(errReason[idx+len("speculative_probe:"):])
+		}
+		if !strings.Contains(d.Cause, "+speculative_escalated") {
+			d.Cause += "+speculative_escalated"
+		}
+	}
 	for i := range d.Steps {
 		if d.Steps[i].Model == failedModel {
 			d.Steps[i].Status = "failed"
@@ -186,15 +209,18 @@ func (d *routerDecisionDetails) markRuntimeFailover(failedModel string, failErr 
 }
 
 type routerCandidateStep struct {
-	Priority     int    `json:"priority"`
-	Model        string `json:"model"`
-	SourceTier   string `json:"source_tier"`
-	Status       string `json:"status"` // "selected" | "standby" | "skipped" | "failed"
-	Reason       string `json:"reason,omitempty"`
-	Thinking     string `json:"thinking,omitempty"`
-	ContextLimit int    `json:"context_limit,omitempty"`
-	UpstreamID   int64  `json:"upstream_id,omitempty"`
-	UpstreamName string `json:"upstream_name,omitempty"`
+	Priority        int     `json:"priority"`
+	Model           string  `json:"model"`
+	SourceTier      string  `json:"source_tier"`
+	Status          string  `json:"status"` // "selected" | "standby" | "skipped" | "failed"
+	Reason          string  `json:"reason,omitempty"`
+	Thinking        string  `json:"thinking,omitempty"`
+	ContextLimit    int     `json:"context_limit,omitempty"`
+	CapabilityScore float64 `json:"capability_score,omitempty"`
+	BanditWinRate   float64 `json:"bandit_win_rate,omitempty"`
+	UtilityScore    float64 `json:"utility_score,omitempty"`
+	UpstreamID      int64   `json:"upstream_id,omitempty"`
+	UpstreamName    string  `json:"upstream_name,omitempty"`
 }
 
 func defaultAutoRouterTierCriteria() map[string]string {
@@ -274,6 +300,13 @@ func defaultAutoRouterConfig() AutoRouterConfig {
 		Enabled:                      false,
 		Mode:                         "off",
 		VirtualModel:                 "auto",
+		StrategyProfile:              StrategyBalanced,
+		ModelPool:                    []string{},
+		ExcludedModels:               []string{},
+		BanditEnabled:                true,
+		SpeculativeCascade:           true,
+		SpeculativeTTFTMS:            2500,
+		ModelCapabilities:            map[string]ModelCapabilityVector{},
 		Classifier:                   "cloudflare",
 		ClassifierModel:              defaultClefFlashModel,
 		ClassifierTimeoutMS:          1500,
@@ -323,6 +356,23 @@ func normalizeModelSlice(items []string) []string {
 		}
 	}
 	return out
+}
+
+func routerModelExclusionFilter(models []string) func(string) bool {
+	excluded := make(map[string]bool, len(models)*2)
+	for _, model := range models {
+		if raw := strings.ToLower(strings.TrimSpace(model)); raw != "" {
+			excluded[raw] = true
+			if base := strings.ToLower(strings.TrimSpace(parseRouterModelSpec(model).BaseModel)); base != "" {
+				excluded[base] = true
+			}
+		}
+	}
+	return func(model string) bool {
+		raw := strings.ToLower(strings.TrimSpace(model))
+		base := strings.ToLower(strings.TrimSpace(parseRouterModelSpec(model).BaseModel))
+		return excluded[raw] || (base != "" && excluded[base])
+	}
 }
 
 func normalizeAutoRouterConfig(cfg *AutoRouterConfig) error {
@@ -440,6 +490,32 @@ func normalizeAutoRouterConfig(cfg *AutoRouterConfig) error {
 		return errors.New("会话分档模式仅支持 user_turn、session_lock 或 every_turn")
 	}
 
+	cfg.StrategyProfile = normalizeStrategyProfile(cfg.StrategyProfile)
+	cfg.ModelPool = normalizeModelSlice(cfg.ModelPool)
+	filteredPool := make([]string, 0, len(cfg.ModelPool))
+	for _, m := range cfg.ModelPool {
+		if m != cfg.VirtualModel && parseRouterModelSpec(m).BaseModel != cfg.VirtualModel {
+			filteredPool = append(filteredPool, m)
+		}
+	}
+	cfg.ModelPool = filteredPool
+	cfg.ExcludedModels = normalizeModelSlice(cfg.ExcludedModels)
+	if cfg.SpeculativeTTFTMS <= 0 {
+		cfg.SpeculativeTTFTMS = 2500
+	} else if cfg.SpeculativeTTFTMS < 300 {
+		cfg.SpeculativeTTFTMS = 300
+	} else if cfg.SpeculativeTTFTMS > 30000 {
+		cfg.SpeculativeTTFTMS = 30000
+	}
+	normCaps := make(map[string]ModelCapabilityVector, len(cfg.ModelCapabilities))
+	for k, v := range cfg.ModelCapabilities {
+		k = strings.ToLower(strings.TrimSpace(k))
+		if k != "" {
+			normCaps[k] = v
+		}
+	}
+	cfg.ModelCapabilities = normCaps
+
 	cfg.DefaultModel = strings.TrimSpace(cfg.DefaultModel)
 	if cfg.DefaultModel == cfg.VirtualModel || parseRouterModelSpec(cfg.DefaultModel).BaseModel == cfg.VirtualModel {
 		return errors.New("默认兜底模型不能与虚拟路由模型同名")
@@ -475,7 +551,7 @@ func normalizeAutoRouterConfig(cfg *AutoRouterConfig) error {
 	cfg.SharedClassifierModels = normalizeModelSlice(cfg.SharedClassifierModels)
 
 	if cfg.Enabled {
-		totalCandidates := 0
+		totalCandidates := len(cfg.ModelPool)
 		for _, list := range cfg.Tiers {
 			totalCandidates += len(list)
 		}
@@ -484,7 +560,7 @@ func normalizeAutoRouterConfig(cfg *AutoRouterConfig) error {
 			if len(boundModels) > 0 {
 				cfg.DefaultModel = boundModels[0]
 			} else {
-				return errors.New("启用智能路由前，请至少配置默认兜底模型或一个档位的候选模型")
+				return errors.New("启用智能路由前，请至少绑定可用上游模型、配置模型池或默认兜底模型")
 			}
 		}
 	}
@@ -517,6 +593,7 @@ func loadAutoRouterCache() error {
 	autoRouterState.loaded = true
 	autoRouterState.cfg = cfg
 	autoRouterState.Unlock()
+	loadAutoRouterBanditCache()
 	return nil
 }
 
@@ -557,6 +634,12 @@ func saveAutoRouterConfig(cfg AutoRouterConfig) error {
 
 func cloneAutoRouterConfig(src AutoRouterConfig) AutoRouterConfig {
 	dst := src
+	dst.ModelPool = append([]string(nil), src.ModelPool...)
+	dst.ExcludedModels = append([]string(nil), src.ExcludedModels...)
+	dst.ModelCapabilities = make(map[string]ModelCapabilityVector, len(src.ModelCapabilities))
+	for k, v := range src.ModelCapabilities {
+		dst.ModelCapabilities[k] = v
+	}
 	dst.Tiers = make(map[string][]string, len(src.Tiers))
 	for k, v := range src.Tiers {
 		dst.Tiers[k] = append([]string(nil), v...)
@@ -587,6 +670,7 @@ func isAutoRouterModel(model string) bool {
 type autoRouterSessionEntry struct {
 	model         string
 	tier          string
+	domain        string
 	upstreamID    int64
 	upstreamModel string
 	expiresAt     time.Time
@@ -604,8 +688,13 @@ func lookupAutoRouterSession(sessionKey string) (model, tier string, ok bool) {
 }
 
 func lookupAutoRouterSessionFull(sessionKey string) (model, tier string, upstreamID int64, upstreamModel string, ok bool) {
+	model, tier, _, upstreamID, upstreamModel, ok = lookupAutoRouterSessionWithDomain(sessionKey)
+	return model, tier, upstreamID, upstreamModel, ok
+}
+
+func lookupAutoRouterSessionWithDomain(sessionKey string) (model, tier, domain string, upstreamID int64, upstreamModel string, ok bool) {
 	if sessionKey == "" {
-		return "", "", 0, "", false
+		return "", "", "", 0, "", false
 	}
 	now := time.Now()
 	autoRouterSessions.Lock()
@@ -613,16 +702,16 @@ func lookupAutoRouterSessionFull(sessionKey string) (model, tier string, upstrea
 	if autoRouterSessions.database != db {
 		autoRouterSessions.database = db
 		autoRouterSessions.entries = make(map[string]autoRouterSessionEntry)
-		return "", "", 0, "", false
+		return "", "", "", 0, "", false
 	}
 	entry, exists := autoRouterSessions.entries[sessionKey]
 	if !exists || now.After(entry.expiresAt) {
 		delete(autoRouterSessions.entries, sessionKey)
-		return "", "", 0, "", false
+		return "", "", "", 0, "", false
 	}
 	entry.expiresAt = now.Add(affinityTTL())
 	autoRouterSessions.entries[sessionKey] = entry
-	return entry.model, entry.tier, entry.upstreamID, entry.upstreamModel, true
+	return entry.model, entry.tier, entry.domain, entry.upstreamID, entry.upstreamModel, true
 }
 
 func rememberAutoRouterSession(sessionKey, model, tier string) {
@@ -630,6 +719,10 @@ func rememberAutoRouterSession(sessionKey, model, tier string) {
 }
 
 func rememberAutoRouterSessionFull(sessionKey, model, tier string, upstreamID int64, upstreamModel string) {
+	rememberAutoRouterSessionWithDomain(sessionKey, model, tier, "", upstreamID, upstreamModel)
+}
+
+func rememberAutoRouterSessionWithDomain(sessionKey, model, tier, domain string, upstreamID int64, upstreamModel string) {
 	if sessionKey == "" || model == "" {
 		return
 	}
@@ -653,6 +746,7 @@ func rememberAutoRouterSessionFull(sessionKey, model, tier string, upstreamID in
 	autoRouterSessions.entries[sessionKey] = autoRouterSessionEntry{
 		model:         model,
 		tier:          tier,
+		domain:        domain,
 		upstreamID:    upstreamID,
 		upstreamModel: upstreamModel,
 		expiresAt:     now.Add(affinityTTL()),
@@ -732,8 +826,10 @@ func resolveAutoRouteWithConfig(
 		reqModel = cr.Model
 	}
 	estimatedTokens := estimateRequestContextTokens(cr)
+	strategyProfile := normalizeStrategyProfile(cfg.StrategyProfile)
 	decision = &routerDecisionDetails{
 		RequestedModel:       reqModel,
+		StrategyProfile:      strategyProfile,
 		EstimatedInputTokens: estimatedTokens,
 		Shadow:               cfg.Mode == "shadow",
 	}
@@ -746,21 +842,34 @@ func resolveAutoRouteWithConfig(
 
 	// Compute session key for multi-turn agent consistency
 	var rSessionKey string
-	var prevSessionModel, prevSessionTier string
+	var prevSessionModel, prevSessionTier, prevSessionDomain string
+	var prevUpstreamID int64
 	var hasPrevSession bool
 	if cr != nil && cfg.SessionMode != "every_turn" {
 		endpoint := nativeEndpoint(format, cr)
 		rSessionKey = scopedSessionKey(ak.ID, sessionKeyFromCanon(endpoint, headers, cr))
 		if rSessionKey != "" {
-			prevSessionModel, prevSessionTier, hasPrevSession = lookupAutoRouterSession(rSessionKey)
+			prevSessionModel, prevSessionTier, prevSessionDomain, prevUpstreamID, _, hasPrevSession = lookupAutoRouterSessionWithDomain(rSessionKey)
 		}
 	}
 
 	// Extract full-conversation structural, modality, and retry/follow-up signals
 	sig := analyzeRequestSignals(cr, lastUser, stateText, prevSessionTier)
 
+	// Online Contextual Bandit: Implicit Next-Turn User Satisfaction Feedback
+	// If the user expresses frustration/retry on the turn immediately following prevSessionModel,
+	// retroactively penalize that arm; if it's a smooth continuation/tool-loop, reward it.
+	if cfg.BanditEnabled && hasPrevSession && prevSessionModel != "" && !bypassBreaker {
+		if sig.IsFrustrationOrRetry {
+			recordBanditImplicitFeedback(prevUpstreamID, prevSessionModel, prevSessionDomain, true)
+		} else if sig.IsToolLoop || sig.IsFollowUpDirective {
+			recordBanditImplicitFeedback(prevUpstreamID, prevSessionModel, prevSessionDomain, false)
+		}
+	}
+
 	// 1. Determine target tier (with Session Ratchet & Prompt-Cache Affinity)
 	var chosenTier string
+	var clfResult *classifierDecisionResult
 	if hasPrevSession {
 		wantSticky := cfg.SessionMode == "session_lock" ||
 			(cfg.SessionMode == "user_turn" && (sig.IsToolLoop || sig.IsFollowUpDirective || (estimatedTokens >= 6000 && tierRank(prevSessionTier) >= tierRank(TierComplex) && !sig.IsFrustrationOrRetry)))
@@ -822,6 +931,7 @@ func resolveAutoRouteWithConfig(
 		} else {
 			res, err := classifyWithDecisionModel(ctx, cfg, sig.EnrichedState, bypassBreaker)
 			if err == nil && res != nil {
+				clfResult = res
 				chosenTier = res.Tier
 				// Probability Margin Fusion: if classifier is nearly tied (<0.12 margin) with a higher
 				// tier while technical/code/tool signals exist, prefer the safer higher tier.
@@ -900,56 +1010,158 @@ func resolveAutoRouteWithConfig(
 		decision.Cause += "+escalated"
 	}
 
-	// 2. Build priority-ordered candidate list (with Prompt-Cache Affinity & Context Sweet-Spot Re-ranking)
+	// 1b. Compute 6-Dimensional Benchmark Demand Profile & Required Difficulty Floor D(x)
+	demand := profileRequestDemand(cr, lastUser, stateText, sig, estimatedTokens, clfResult)
+	switch {
+	case decision.Cause == "housekeeping" || decision.Cause == "short_circuit":
+		if demand.RequiredDifficulty > 24.0 {
+			demand.RequiredDifficulty = 24.0
+		}
+		demand.EquivalentTier = TierSimple
+	case chosenTier == TierReasoning && demand.RequiredDifficulty < 76.0:
+		demand.RequiredDifficulty = 78.0
+		demand.EquivalentTier = TierReasoning
+	case chosenTier == TierComplex && demand.RequiredDifficulty < 62.0:
+		demand.RequiredDifficulty = 65.0
+		demand.EquivalentTier = TierComplex
+	}
+	decision.PrimaryDomain = demand.PrimaryDomain
+	decision.RequiredDifficulty = demand.RequiredDifficulty
+	decision.DomainWeights = demand.Weights
+
+	// 2. Build priority-ordered candidate list:
+	//    - Autonomous Pool Mode (Smart Router 3.0 default when no manual Tiers are configured):
+	//      Automatically gathers all models from cfg.ModelPool or bound upstreams (minus ExcludedModels)
+	//      and ranks them via 6D Benchmark Capability Match + Online Contextual Bandit + Strategy Profile.
+	//    - Legacy Manual Tiers Mode (when cfg.Tiers has configured models):
+	//      Uses orderedCascadeTiers, enhanced with intra-tier Bandit/Domain utility ranking when active.
 	type rawCandidate struct {
 		model      string
 		sourceTier string
+		utility    candidateUtilityBreakdown
 	}
 	var ordered []rawCandidate
 	seen := make(map[string]bool)
-	addRaw := func(m, srcTier string) {
+	isExcluded := routerModelExclusionFilter(cfg.ExcludedModels)
+
+	evalUtility := func(m string, stochastic bool) candidateUtilityBreakdown {
+		cLim := effectiveModelContextLimit(m, cfg.ModelContextLimits)
+		isCacheHit := hasPrevSession && strings.EqualFold(parseRouterModelSpec(m).BaseModel, parseRouterModelSpec(prevSessionModel).BaseModel)
+		var upID int64
+		if up, _, err := pickUpstreamForRouterCandidate(format, m, nil, nativeOnly, cr); err == nil && up != nil {
+			upID = up.ID
+		}
+		return scoreCandidateUtility(upID, m, demand, strategyProfile, isCacheHit, estimatedTokens, cLim, cfg.ModelCapabilities, cfg.BanditEnabled, stochastic)
+	}
+
+	addRaw := func(m, srcTier string, u candidateUtilityBreakdown) {
 		m = strings.TrimSpace(m)
-		if m == "" || m == cfg.VirtualModel || parseRouterModelSpec(m).BaseModel == cfg.VirtualModel || seen[m] {
+		if m == "" || m == cfg.VirtualModel || parseRouterModelSpec(m).BaseModel == cfg.VirtualModel || seen[m] || isExcluded(m) {
 			return
 		}
 		seen[m] = true
-		ordered = append(ordered, rawCandidate{model: m, sourceTier: srcTier})
+		ordered = append(ordered, rawCandidate{model: m, sourceTier: srcTier, utility: u})
 	}
 
-	// If session_affinity matched a specific model, place it at Priority #1
-	if decision.Cause == "session_affinity" && decision.SelectedModel != "" {
-		addRaw(decision.SelectedModel, chosenTier)
+	totalTierModels := 0
+	for _, list := range cfg.Tiers {
+		totalTierModels += len(list)
 	}
-	for _, t := range orderedCascadeTiers(chosenTier, cfg.CascadeTiers) {
-		tierList := cfg.Tiers[t]
-		// Intra-tier smart ordering:
-		// 1. If prevSessionModel belongs to this tier and conversation is warm (>=4k tokens),
-		//    promote it to the front of this tier to preserve Prompt Cache (KV cache hit).
-		// 2. If a candidate is in the >82% context utilization danger zone while another
-		//    candidate in the same tier has comfortable headroom (<55%), prefer comfortable headroom.
-		if len(tierList) > 1 && estimatedTokens >= 4000 {
-			reordered := make([]string, 0, len(tierList))
-			var dangerZone []string
-			for _, m := range tierList {
-				if hasPrevSession && strings.EqualFold(parseRouterModelSpec(m).BaseModel, parseRouterModelSpec(prevSessionModel).BaseModel) {
-					reordered = append([]string{m}, reordered...)
-					continue
+
+	if totalTierModels == 0 {
+		// Autonomous Pool Mode (no manual 4-tier classification needed)
+		decision.AutonomousPool = true
+		pool := append([]string(nil), cfg.ModelPool...)
+		if len(pool) == 0 {
+			boundModels, _ := collectGatewayUpstreamBoundModels(ctx, cfg.VirtualModel)
+			pool = append(pool, boundModels...)
+		}
+		if cfg.DefaultModel != "" {
+			pool = append(pool, cfg.DefaultModel)
+		}
+		pool = normalizeModelSlice(pool)
+
+		scoredPool := make([]rawCandidate, 0, len(pool))
+		for _, m := range pool {
+			if m == "" || m == cfg.VirtualModel || parseRouterModelSpec(m).BaseModel == cfg.VirtualModel || isExcluded(m) {
+				continue
+			}
+			u := evalUtility(m, !bypassBreaker && cfg.BanditEnabled)
+			scoredPool = append(scoredPool, rawCandidate{
+				model:      m,
+				sourceTier: chosenTier,
+				utility:    u,
+			})
+		}
+
+		sort.SliceStable(scoredPool, func(i, j int) bool {
+			// Preserve sticky session model at #1 if it is still healthy in Bandit
+			if decision.Cause == "session_affinity" && decision.SelectedModel != "" {
+				if scoredPool[i].model == decision.SelectedModel && scoredPool[i].utility.BanditWinRate >= 0.45 {
+					return true
 				}
-				cLim := effectiveModelContextLimit(m, cfg.ModelContextLimits)
-				if cLim > 0 && estimatedTokens <= cLim && float64(estimatedTokens)/float64(cLim) > 0.82 {
-					dangerZone = append(dangerZone, m)
-				} else {
-					reordered = append(reordered, m)
+				if scoredPool[j].model == decision.SelectedModel && scoredPool[j].utility.BanditWinRate >= 0.45 {
+					return false
 				}
 			}
-			tierList = append(reordered, dangerZone...)
+			if scoredPool[i].utility.UtilityScore != scoredPool[j].utility.UtilityScore {
+				return scoredPool[i].utility.UtilityScore > scoredPool[j].utility.UtilityScore
+			}
+			return scoredPool[i].utility.CapabilityScore > scoredPool[j].utility.CapabilityScore
+		})
+
+		for _, item := range scoredPool {
+			addRaw(item.model, item.sourceTier, item.utility)
 		}
-		for _, m := range tierList {
-			addRaw(m, t)
+	} else {
+		// Legacy / Hybrid Tier Mode
+		if decision.Cause == "session_affinity" && decision.SelectedModel != "" {
+			addRaw(decision.SelectedModel, chosenTier, evalUtility(decision.SelectedModel, false))
 		}
-	}
-	if cfg.DefaultModel != "" {
-		addRaw(cfg.DefaultModel, TierDefault)
+		for _, t := range orderedCascadeTiers(chosenTier, cfg.CascadeTiers) {
+			tierList := append([]string(nil), cfg.Tiers[t]...)
+			if len(tierList) > 1 && cfg.BanditEnabled && cfg.Mode != "shadow" && hasAnyBanditHistoryForModels(tierList, demand.PrimaryDomain) {
+				// Dynamic intra-tier Bandit & 6D capability re-ranking
+				scored := make([]rawCandidate, 0, len(tierList))
+				for _, m := range tierList {
+					scored = append(scored, rawCandidate{
+						model:      m,
+						sourceTier: t,
+						utility:    evalUtility(m, !bypassBreaker),
+					})
+				}
+				sort.SliceStable(scored, func(i, j int) bool {
+					return scored[i].utility.UtilityScore > scored[j].utility.UtilityScore
+				})
+				for _, sc := range scored {
+					addRaw(sc.model, t, sc.utility)
+				}
+				continue
+			}
+			if len(tierList) > 1 && estimatedTokens >= 4000 {
+				reordered := make([]string, 0, len(tierList))
+				var dangerZone []string
+				for _, m := range tierList {
+					if hasPrevSession && strings.EqualFold(parseRouterModelSpec(m).BaseModel, parseRouterModelSpec(prevSessionModel).BaseModel) {
+						reordered = append([]string{m}, reordered...)
+						continue
+					}
+					cLim := effectiveModelContextLimit(m, cfg.ModelContextLimits)
+					if cLim > 0 && estimatedTokens <= cLim && float64(estimatedTokens)/float64(cLim) > 0.82 {
+						dangerZone = append(dangerZone, m)
+					} else {
+						reordered = append(reordered, m)
+					}
+				}
+				tierList = append(reordered, dangerZone...)
+			}
+			for _, m := range tierList {
+				addRaw(m, t, evalUtility(m, false))
+			}
+		}
+		if cfg.DefaultModel != "" {
+			addRaw(cfg.DefaultModel, TierDefault, evalUtility(cfg.DefaultModel, false))
+		}
 	}
 
 	// 3. Filter candidates in priority order
@@ -959,11 +1171,18 @@ func resolveAutoRouteWithConfig(
 	for idx, item := range ordered {
 		ctxLimit := effectiveModelContextLimit(item.model, cfg.ModelContextLimits)
 		usableCap := effectiveContextCapacityForRequest(ctxLimit, estimatedTokens)
+		u := item.utility
+		if u.RawModel == "" {
+			u = evalUtility(item.model, false)
+		}
 		step := routerCandidateStep{
-			Priority:     idx + 1,
-			Model:        item.model,
-			SourceTier:   item.sourceTier,
-			ContextLimit: ctxLimit,
+			Priority:        idx + 1,
+			Model:           item.model,
+			SourceTier:      item.sourceTier,
+			ContextLimit:    ctxLimit,
+			CapabilityScore: u.CapabilityScore,
+			BanditWinRate:   u.BanditWinRate,
+			UtilityScore:    u.UtilityScore,
 		}
 		if !cfg.AllowUnlistedTargetModels && ak.ID > 0 && !allowsRouterCandidate(ak, item.model) {
 			step.Status = "skipped"
@@ -1082,6 +1301,15 @@ func applyAutoRouterHeaders(c *gin.Context, cfg AutoRouterConfig, decision *rout
 	if decision.Tier != "" {
 		h.Set("X-APISHARE-Router-Tier", decision.Tier)
 	}
+	if decision.PrimaryDomain != "" {
+		h.Set("X-APISHARE-Router-Domain", decision.PrimaryDomain)
+	}
+	if decision.RequiredDifficulty > 0 {
+		h.Set("X-APISHARE-Router-Difficulty", strconv.FormatFloat(decision.RequiredDifficulty, 'f', 1, 64))
+	}
+	if decision.StrategyProfile != "" {
+		h.Set("X-APISHARE-Router-Strategy", decision.StrategyProfile)
+	}
 	if decision.SelectedModel != "" {
 		h.Set("X-APISHARE-Router-Model", decision.SelectedModel)
 	}
@@ -1090,6 +1318,13 @@ func applyAutoRouterHeaders(c *gin.Context, cfg AutoRouterConfig, decision *rout
 	}
 	if decision.Cause != "" {
 		h.Set("X-APISHARE-Router-Cause", decision.Cause)
+	}
+	if decision.SpeculativeEscalated {
+		reason := decision.SpeculativeReason
+		if reason == "" {
+			reason = "escalated"
+		}
+		h.Set("X-APISHARE-Router-Speculative", reason)
 	}
 	if decision.ClassifierMS > 0 {
 		h.Set("X-APISHARE-Router-Latency-MS", strconv.FormatInt(decision.ClassifierMS, 10))
@@ -1111,20 +1346,25 @@ func applyAutoRouterHeaders(c *gin.Context, cfg AutoRouterConfig, decision *rout
 // ---------- Admin API Routes (#tab-router) ----------
 
 type autoRouterModelHealth struct {
-	Model            string   `json:"model"`
-	BaseModel        string   `json:"base_model,omitempty"`
-	Family           string   `json:"family"`
-	HealthyCount     int      `json:"healthy_count"`
-	TotalCount       int      `json:"total_count"`
-	UpstreamNames    []string `json:"upstream_names"`
-	Status           string   `json:"status"` // "healthy" | "cooling" | "missing"
-	PriceIn          float64  `json:"price_in"`
-	PriceOut         float64  `json:"price_out"`
-	ContextLimit     int      `json:"context_limit"`
-	ContextSource    string   `json:"context_source,omitempty"`
-	MaxOutput        int      `json:"max_output"`
-	SupportsThinking bool     `json:"supports_thinking"`
-	Efforts          []string `json:"efforts,omitempty"`
+	Model            string                `json:"model"`
+	BaseModel        string                `json:"base_model,omitempty"`
+	Family           string                `json:"family"`
+	HealthyCount     int                   `json:"healthy_count"`
+	TotalCount       int                   `json:"total_count"`
+	UpstreamNames    []string              `json:"upstream_names"`
+	Status           string                `json:"status"` // "healthy" | "cooling" | "missing"
+	PriceIn          float64               `json:"price_in"`
+	PriceOut         float64               `json:"price_out"`
+	ContextLimit     int                   `json:"context_limit"`
+	ContextSource    string                `json:"context_source,omitempty"`
+	MaxOutput        int                   `json:"max_output"`
+	SupportsThinking bool                  `json:"supports_thinking"`
+	Efforts          []string              `json:"efforts,omitempty"`
+	Capabilities     ModelCapabilityVector `json:"capabilities"`
+	BanditWinRate    float64               `json:"bandit_win_rate,omitempty"`
+	BanditCalls      int64                 `json:"bandit_calls,omitempty"`
+	EWMATTFTMS       float64               `json:"ewma_ttft_ms,omitempty"`
+	EWMATPS          float64               `json:"ewma_tps,omitempty"`
 }
 
 type autoRouterUpstreamModelGroup struct {
@@ -1244,6 +1484,11 @@ func buildAutoRouterModelHealthMap(ctx context.Context, cfg AutoRouterConfig, av
 	if cfg.DefaultModel != "" {
 		candidates[cfg.DefaultModel] = true
 	}
+	for _, m := range cfg.ModelPool {
+		if m != "" {
+			candidates[m] = true
+		}
+	}
 	for _, list := range cfg.Tiers {
 		for _, m := range list {
 			if m != "" {
@@ -1267,6 +1512,7 @@ func buildAutoRouterModelHealthMap(ctx context.Context, cfg AutoRouterConfig, av
 		}
 		tCap := classifyModelThinkingCapability(nil, baseModel)
 		ctxLimit, ctxSource := effectiveModelContextLimitWithSource(model, cfg.ModelContextLimits)
+		bWin, bCalls, bTTFT, bTPS := summarizeModelBanditStats(baseModel)
 		info := autoRouterModelHealth{
 			Model:            model,
 			BaseModel:        baseModel,
@@ -1277,6 +1523,11 @@ func buildAutoRouterModelHealthMap(ctx context.Context, cfg AutoRouterConfig, av
 			MaxOutput:        modelMaxOutputLimit(baseModel),
 			SupportsThinking: tCap.SupportsThinking,
 			Efforts:          tCap.Efforts,
+			Capabilities:     resolveModelCapabilityVector(model, cfg.ModelCapabilities),
+			BanditWinRate:    bWin,
+			BanditCalls:      bCalls,
+			EWMATTFTMS:       bTTFT,
+			EWMATPS:          bTPS,
 		}
 		price, _, _ := lookupRelayPrice(baseModel, "")
 		info.PriceIn = price.In
@@ -1336,6 +1587,14 @@ func buildAutoRouterConfigView(ctx context.Context, cfg AutoRouterConfig) gin.H 
 		"enabled":                          cfg.Enabled,
 		"mode":                             cfg.Mode,
 		"virtual_model":                    cfg.VirtualModel,
+		"strategy_profile":                 normalizeStrategyProfile(cfg.StrategyProfile),
+		"model_pool":                       cfg.ModelPool,
+		"excluded_models":                  cfg.ExcludedModels,
+		"bandit_enabled":                   cfg.BanditEnabled,
+		"speculative_cascade":              cfg.SpeculativeCascade,
+		"speculative_ttft_ms":              cfg.SpeculativeTTFTMS,
+		"model_capabilities":               cfg.ModelCapabilities,
+		"bandit_leaderboard":               snapshotBanditLeaderboard(),
 		"classifier":                       cfg.Classifier,
 		"classifier_provider":              provider,
 		"classifier_model":                 cfg.ClassifierModel,
@@ -1393,39 +1652,58 @@ func registerAutoRouterAdminRoutes(auth *gin.RouterGroup) {
 		c.JSON(http.StatusOK, buildAutoRouterConfigView(c.Request.Context(), cfg))
 	})
 
+	auth.POST("/auto-router/bandit/reset", func(c *gin.Context) {
+		if db != nil {
+			if err := settingsSet(banditSettingsKey, ""); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "清空 Bandit 记忆失败，请稍后重试"})
+				return
+			}
+		}
+		resetAutoRouterBandit()
+		invalidatePublicOverviews()
+		c.JSON(http.StatusOK, buildAutoRouterConfigView(c.Request.Context(), getAutoRouterConfig()))
+	})
+
 	auth.PUT("/auto-router/config", func(c *gin.Context) {
 		var req struct {
-			Mode                         *string              `json:"mode"`
-			Enabled                      *bool                `json:"enabled"`
-			VirtualModel                 *string              `json:"virtual_model"`
-			Classifier                   *string              `json:"classifier"`
-			ClassifierModel              *string              `json:"classifier_model"`
-			CloudflareAccountID          *string              `json:"cloudflare_account_id"`
-			EndpointURL                  *string              `json:"endpoint_url"`
-			APIKey                       *string              `json:"api_key"`
-			ClearAPIKey                  *bool                `json:"clear_api_key"`
-			ProxyID                      *int64               `json:"proxy_id"`
-			ClassifierTimeoutMS          *int                 `json:"classifier_timeout_ms"`
-			ClassifierFallback           *string              `json:"classifier_fallback"`
-			ClassifierInstructions       *string              `json:"classifier_instructions"`
-			MinConfidence                *float64             `json:"min_confidence"`
-			ContextUserTurns             *int                 `json:"context_user_turns"`
-			SkipShortChars               *int                 `json:"skip_short_chars"`
-			LongContextThreshold         *int                 `json:"long_context_threshold"`
-			RouteHousekeeping            *bool                `json:"route_housekeeping"`
-			SessionMode                  *string              `json:"session_mode"`
-			CascadeTiers                 *bool                `json:"cascade_tiers"`
-			AllowUnlistedTargetModels    *bool                `json:"allow_unlisted_target_models"`
-			DefaultModel                 *string              `json:"default_model"`
-			Tiers                        *map[string][]string `json:"tiers"`
-			TierThinking                 *map[string]string   `json:"tier_thinking"`
-			TierCriteria                 *map[string]string   `json:"tier_criteria"`
-			ModelContextLimits           *map[string]int      `json:"model_context_limits"`
-			ResponseHeaders              *bool                `json:"response_headers"`
-			EscalationKeyword            *string              `json:"escalation_keyword"`
-			AllowUserAutoRouter          *bool                `json:"allow_user_auto_router"`
-			ShareSiteClassifierWithUsers *bool                `json:"share_site_classifier_with_users"`
-			SharedClassifierModels       *[]string            `json:"shared_classifier_models"`
+			Mode                         *string                           `json:"mode"`
+			Enabled                      *bool                             `json:"enabled"`
+			VirtualModel                 *string                           `json:"virtual_model"`
+			StrategyProfile              *string                           `json:"strategy_profile"`
+			ModelPool                    *[]string                         `json:"model_pool"`
+			ExcludedModels               *[]string                         `json:"excluded_models"`
+			BanditEnabled                *bool                             `json:"bandit_enabled"`
+			SpeculativeCascade           *bool                             `json:"speculative_cascade"`
+			SpeculativeTTFTMS            *int                              `json:"speculative_ttft_ms"`
+			ModelCapabilities            *map[string]ModelCapabilityVector `json:"model_capabilities"`
+			Classifier                   *string                           `json:"classifier"`
+			ClassifierModel              *string                           `json:"classifier_model"`
+			CloudflareAccountID          *string                           `json:"cloudflare_account_id"`
+			EndpointURL                  *string                           `json:"endpoint_url"`
+			APIKey                       *string                           `json:"api_key"`
+			ClearAPIKey                  *bool                             `json:"clear_api_key"`
+			ProxyID                      *int64                            `json:"proxy_id"`
+			ClassifierTimeoutMS          *int                              `json:"classifier_timeout_ms"`
+			ClassifierFallback           *string                           `json:"classifier_fallback"`
+			ClassifierInstructions       *string                           `json:"classifier_instructions"`
+			MinConfidence                *float64                          `json:"min_confidence"`
+			ContextUserTurns             *int                              `json:"context_user_turns"`
+			SkipShortChars               *int                              `json:"skip_short_chars"`
+			LongContextThreshold         *int                              `json:"long_context_threshold"`
+			RouteHousekeeping            *bool                             `json:"route_housekeeping"`
+			SessionMode                  *string                           `json:"session_mode"`
+			CascadeTiers                 *bool                             `json:"cascade_tiers"`
+			AllowUnlistedTargetModels    *bool                             `json:"allow_unlisted_target_models"`
+			DefaultModel                 *string                           `json:"default_model"`
+			Tiers                        *map[string][]string              `json:"tiers"`
+			TierThinking                 *map[string]string                `json:"tier_thinking"`
+			TierCriteria                 *map[string]string                `json:"tier_criteria"`
+			ModelContextLimits           *map[string]int                   `json:"model_context_limits"`
+			ResponseHeaders              *bool                             `json:"response_headers"`
+			EscalationKeyword            *string                           `json:"escalation_keyword"`
+			AllowUserAutoRouter          *bool                             `json:"allow_user_auto_router"`
+			ShareSiteClassifierWithUsers *bool                             `json:"share_site_classifier_with_users"`
+			SharedClassifierModels       *[]string                         `json:"shared_classifier_models"`
 		}
 		if err := c.BindJSON(&req); err != nil {
 			return
@@ -1445,6 +1723,27 @@ func registerAutoRouterAdminRoutes(auth *gin.RouterGroup) {
 		}
 		if req.VirtualModel != nil {
 			cfg.VirtualModel = *req.VirtualModel
+		}
+		if req.StrategyProfile != nil {
+			cfg.StrategyProfile = *req.StrategyProfile
+		}
+		if req.ModelPool != nil {
+			cfg.ModelPool = *req.ModelPool
+		}
+		if req.ExcludedModels != nil {
+			cfg.ExcludedModels = *req.ExcludedModels
+		}
+		if req.BanditEnabled != nil {
+			cfg.BanditEnabled = *req.BanditEnabled
+		}
+		if req.SpeculativeCascade != nil {
+			cfg.SpeculativeCascade = *req.SpeculativeCascade
+		}
+		if req.SpeculativeTTFTMS != nil {
+			cfg.SpeculativeTTFTMS = *req.SpeculativeTTFTMS
+		}
+		if req.ModelCapabilities != nil {
+			cfg.ModelCapabilities = *req.ModelCapabilities
 		}
 		if req.Classifier != nil {
 			cfg.Classifier = *req.Classifier

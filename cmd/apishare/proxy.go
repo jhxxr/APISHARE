@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"apishare/internal/cliproxy"
 	"github.com/gin-gonic/gin"
@@ -123,6 +124,8 @@ type relayTask struct {
 	prevUpstreamID            int64
 	prevUpstreamModel         string
 	hasMoreCandidates         bool
+	speculativeProbe          bool
+	primaryDomain             string
 }
 
 func (t *relayTask) isAutoRouted() bool {
@@ -236,6 +239,10 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 		var rSessionKey string
 		var routerTierThinking map[string]string
 		var routerModelContextLimits map[string]int
+		var routerSpeculativeCascade bool
+		var routerBanditEnabled bool
+		var routerModelCaps map[string]ModelCapabilityVector
+		var routerDemand TaskDemandProfile
 		userSub := userSubForKey(ak)
 
 		switch {
@@ -253,6 +260,9 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			routerDefaultModel = rcfg.DefaultModel
 			routerTierThinking = rcfg.TierThinking
 			routerModelContextLimits = rcfg.ModelContextLimits
+			routerSpeculativeCascade = rcfg.SpeculativeCascade
+			routerBanditEnabled = rcfg.BanditEnabled
+			routerModelCaps = rcfg.ModelCapabilities
 			endpointForKey := nativeEndpoint(format, cr)
 			rSessionKey = scopedSessionKey(ak.ID, sessionKeyFromCanon(endpointForKey, c.Request.Header, cr))
 			dec, cands, quotaErr := resolveAutoRoute(c.Request.Context(), ak, format, nativeOnly, c.Request.Header, cr)
@@ -266,6 +276,12 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			}
 			stepTierMap := make(map[string]string)
 			if dec != nil {
+				routerDemand = TaskDemandProfile{
+					PrimaryDomain:      dec.PrimaryDomain,
+					RequiredDifficulty: dec.RequiredDifficulty,
+					Weights:            dec.DomainWeights,
+					EquivalentTier:     dec.Tier,
+				}
 				for _, st := range dec.Steps {
 					if st.Model != "" && stepTierMap[st.Model] == "" {
 						stepTierMap[st.Model] = st.SourceTier
@@ -289,6 +305,8 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			ucfg := getUserAutoRouterConfig(userSub)
 			routerDefaultModel = ucfg.DefaultModel
 			routerTierThinking = ucfg.TierThinking
+			routerSpeculativeCascade = ucfg.SpeculativeCascade
+			routerBanditEnabled = ucfg.BanditEnabled
 			endpointForKey := nativeEndpoint(format, cr)
 			rSessionKey = "user:" + userSub + ":" + scopedSessionKey(ak.ID, sessionKeyFromCanon(endpointForKey, c.Request.Header, cr))
 			dec, uTargets, quotaErr := resolveUserAutoRoute(c.Request.Context(), ak, format, nativeOnly, c.Request.Header, cr, false)
@@ -301,8 +319,25 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 				targets = []userRouteTarget{{Model: cr.Model, PreferBYOK: true, AllowBYOK: true}}
 			}
 			routerDecision = dec
+			if dec != nil {
+				routerDemand = TaskDemandProfile{
+					PrimaryDomain:      dec.PrimaryDomain,
+					RequiredDifficulty: dec.RequiredDifficulty,
+					Weights:            dec.DomainWeights,
+					EquivalentTier:     dec.Tier,
+				}
+			}
 			c.Header("X-APISHARE-Router-Tier", routerDecision.Tier)
 			c.Header("X-APISHARE-Router-Cause", routerDecision.Cause)
+			if routerDecision.PrimaryDomain != "" {
+				c.Header("X-APISHARE-Router-Domain", routerDecision.PrimaryDomain)
+			}
+			if routerDecision.RequiredDifficulty > 0 {
+				c.Header("X-APISHARE-Router-Difficulty", strconv.FormatFloat(routerDecision.RequiredDifficulty, 'f', 1, 64))
+			}
+			if routerDecision.StrategyProfile != "" {
+				c.Header("X-APISHARE-Router-Strategy", routerDecision.StrategyProfile)
+			}
 			if routerDecision.SelectedModel != "" {
 				c.Header("X-APISHARE-Router-Model", routerDecision.SelectedModel)
 			}
@@ -357,6 +392,12 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 		if routerDecision != nil {
 			estimatedInputTokens = routerDecision.EstimatedInputTokens
 		}
+		targetModelStrings := make([]string, len(targets))
+		for k, tg := range targets {
+			targetModelStrings[k] = tg.Model
+		}
+		enableFirstProbe := routerDecision != nil && !routerDecision.Shadow &&
+			shouldEnableSpeculativeProbe(routerSpeculativeCascade, targetModelStrings, routerDemand, routerModelCaps)
 
 		for candIdx, target := range targets {
 			candRawModel := target.Model
@@ -401,6 +442,7 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			if routerTierThinking != nil && sourceTier != "" {
 				tierThinkingPolicy = routerTierThinking[sourceTier]
 			}
+			hasMore := candIdx+1 < len(targets)
 			task = &relayTask{
 				client:               requestClientFor(c),
 				format:               format,
@@ -420,7 +462,9 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 				modelContextLimits:   routerModelContextLimits,
 				prevUpstreamID:       prevSessionUpID,
 				prevUpstreamModel:    prevSessionUpModel,
-				hasMoreCandidates:    candIdx+1 < len(targets),
+				hasMoreCandidates:    hasMore,
+				speculativeProbe:     candIdx == 0 && hasMore && enableFirstProbe,
+				primaryDomain:        routerDemand.PrimaryDomain,
 			}
 
 			// Routing affinity is also scoped by gateway key: identical opening
@@ -468,6 +512,14 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 					continue
 				}
 				upstreamAttempted = true
+				if routerDecision != nil && routerBanditEnabled {
+					if attemptErr != nil && strings.Contains(attemptErr.Error(), "speculative_probe:") {
+						recordBanditSpeculativeEscalation(up.ID, candRawModel, task.primaryDomain)
+					} else {
+						okCall := attemptErr == nil && info.Status >= 200 && info.Status < 300
+						recordBanditExplicitOutcome(up.ID, candRawModel, task.primaryDomain, okCall, info.FirstTokenMS, info.LatencyMS, info.elapsedMS(), info.CompletionTok)
+					}
+				}
 				if wrote || errors.Is(attemptErr, errDownstreamWrite) || errors.Is(attemptErr, errAutoRouterModelIncompatible) {
 					break
 				}
@@ -479,7 +531,7 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 
 			if wrote || errors.Is(attemptErr, errDownstreamWrite) || c.Request.Context().Err() != nil {
 				if routerDecision != nil && info.Status >= 200 && info.Status < 300 {
-					rememberAutoRouterSessionFull(rSessionKey, candRawModel, routerDecision.Tier, info.UpstreamID, info.UpstreamModel)
+					rememberAutoRouterSessionWithDomain(rSessionKey, candRawModel, routerDecision.Tier, routerDecision.PrimaryDomain, info.UpstreamID, info.UpstreamModel)
 				}
 				break
 			}
@@ -488,6 +540,10 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 				routerDecision.markRuntimeFailover(candRawModel, attemptErr, nextModel, routerDefaultModel)
 				if !c.Writer.Written() {
 					c.Header("X-APISHARE-Router-Model", nextModel)
+					if routerDecision.SpeculativeEscalated {
+						c.Header("X-APISHARE-Router-Speculative", routerDecision.SpeculativeReason)
+						c.Header("X-APISHARE-Router-Cause", routerDecision.Cause)
+					}
 					if routerDecision.DegradedToDefault {
 						c.Header("X-APISHARE-Router-Degraded", "default")
 					}
@@ -1022,11 +1078,16 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 				info.OutputText.Reset()
 				info.OutputText.WriteString(finalInfo.OutputText.String())
 			}
+			if task.speculativeProbe && !c.Writer.Written() {
+				if esc, reason := shouldEscalateSpeculativeOutput(info.OutputText.String(), nativeBodyHasToolCall(body), true); esc {
+					return info, false, fmt.Errorf("%w: speculative_probe:%s", errAutoRouterModelIncompatible, reason)
+				}
+			}
 			c.Data(http.StatusOK, "application/json", body)
 			return info, true, nil
 		}
 		if task.stream && isSSE {
-			err = relaySSENative(c, resp, task.format, &info, !task.nativeOnly)
+			err = relaySSENative(c, resp, task.format, &info, !task.nativeOnly, task.speculativeProbe)
 			if err != nil && keepalive != nil && keepalive.committed && !keepalive.upstreamError && !errors.Is(err, errDownstreamWrite) && c.Request.Context().Err() == nil {
 				writeMessagesStreamError(c, "upstream stream interrupted")
 			}
@@ -1042,6 +1103,11 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 			}
 		}
 		parseNativeNonStream(task.format, b, &info)
+		if task.speculativeProbe && !c.Writer.Written() {
+			if esc, reason := shouldEscalateSpeculativeOutput(info.OutputText.String(), nativeBodyHasToolCall(b), true); esc {
+				return info, false, fmt.Errorf("%w: speculative_probe:%s", errAutoRouterModelIncompatible, reason)
+			}
+		}
 		if task.stream && !task.nativeOnly {
 			// The upstream answered with a single JSON body; the client still gets
 			// SSE, so the first token time is when that delivery starts.
@@ -1077,6 +1143,11 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	if err := validateStructuredOutput(task.canon.OutputFormat, result); err != nil {
 		return info, false, err
 	}
+	if task.speculativeProbe && !c.Writer.Written() {
+		if esc, reason := shouldEscalateSpeculativeOutput(info.OutputText.String(), canonResponseHasToolCall(result), true); esc {
+			return info, false, fmt.Errorf("%w: speculative_probe:%s", errAutoRouterModelIncompatible, reason)
+		}
+	}
 	if task.stream {
 		// A JSON-only upstream still returns an SSE envelope to a streaming client.
 		info.markFirstToken()
@@ -1111,13 +1182,37 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	return info, true, nil
 }
 
+func nativeBodyHasToolCall(b []byte) bool {
+	return bytes.Contains(b, []byte(`"tool_calls"`)) ||
+		bytes.Contains(b, []byte(`"tool_use"`)) ||
+		bytes.Contains(b, []byte(`"functionCall"`)) ||
+		bytes.Contains(b, []byte(`"function_call"`))
+}
+
+func canonResponseHasToolCall(r *canonResponse) bool {
+	if r == nil {
+		return false
+	}
+	for _, blk := range r.Blocks {
+		if blk.Kind == "tool_call" || blk.Call.Name != "" || blk.Call.Arguments != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // relaySSENative preserves native frames, but holds initialization events until
 // output starts so an early failure can still fail over without mixing streams.
+// When checkTerminal[1] (speculativeProbe) is true, it also buffers the first ~84
+// runes of output text before committing HTTP 200 headers so refusal/punt responses
+// can transparently escalate to a stronger candidate model with 0 client disruption.
 func relaySSENative(c *gin.Context, resp *http.Response, format clientFormat, info *relayInfo, checkTerminal ...bool) error {
 	verify := len(checkTerminal) == 0 || checkTerminal[0]
+	speculative := len(checkTerminal) > 1 && checkTerminal[1]
 	reader := bufio.NewReaderSize(resp.Body, 1<<16)
 	terminal := false
 	committed := false
+	sawTool := false
 	keepalive := messagesState(c)
 	var data []string
 	var pending, frame strings.Builder
@@ -1149,7 +1244,21 @@ func relaySSENative(c *gin.Context, resp *http.Response, format clientFormat, in
 			if eventErr != nil && !committed {
 				return false, eventErr
 			}
+			if strings.Contains(payload, `"tool_calls"`) || strings.Contains(payload, `"tool_use"`) || strings.Contains(payload, `"functionCall"`) || strings.Contains(payload, `"function_call"`) {
+				sawTool = true
+			}
+			if parsed && recordNativeEventObject(format, event, info) {
+				info.markFirstToken()
+			}
 			output = !committed && (!parsed || !nativeSSEPreludeObject(format, event))
+			if !committed && speculative && !sawTool {
+				if esc, reason := shouldEscalateSpeculativeOutput(info.OutputText.String(), sawTool, done); esc {
+					return false, fmt.Errorf("%w: speculative_probe:%s", errAutoRouterModelIncompatible, reason)
+				}
+				if !done && utf8.RuneCountInString(info.OutputText.String()) < 84 {
+					output = false
+				}
+			}
 			if keepalive != nil && parsed {
 				keepalive.observe(event)
 			}
@@ -1184,9 +1293,6 @@ func relaySSENative(c *gin.Context, resp *http.Response, format clientFormat, in
 			pending.WriteString(frame.String())
 		}
 		frame.Reset()
-		if parsed && recordNativeEventObject(format, event, info) {
-			info.markFirstToken()
-		}
 		// Chat/Gemini finish reasons may precede usage. Only explicit closing
 		// events end the read; waiting for TCP EOF can turn success into timeout.
 		stop := verify && (payload == "[DONE]" || (done && (format == FormatOpenAIResponse || format == FormatAnthropic)))

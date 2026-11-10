@@ -31,6 +31,11 @@ var allowLoopbackUserUpstreamForTest bool
 type UserAutoRouterConfig struct {
 	Enabled                 bool                `json:"enabled"`
 	VirtualModel            string              `json:"virtual_model"`
+	StrategyProfile         string              `json:"strategy_profile"` // "balanced" | "quality_first" | "cost_first" | "latency_first"
+	ModelPool               []string            `json:"model_pool,omitempty"`
+	ExcludedModels          []string            `json:"excluded_models,omitempty"`
+	BanditEnabled           bool                `json:"bandit_enabled"`
+	SpeculativeCascade      bool                `json:"speculative_cascade"`
 	ChannelPreference       string              `json:"channel_preference"`       // "personal_first" | "gateway_first" | "personal_only"
 	ClassifierSource        string              `json:"classifier_source"`        // "gateway_shared" | "user_upstream" | "user_external" | "heuristic"
 	SharedClassifierModel   string              `json:"shared_classifier_model"`  // model ID from siteCfg.SharedClassifierModels or "__site_default__"
@@ -64,6 +69,11 @@ func defaultUserAutoRouterConfig() UserAutoRouterConfig {
 	return UserAutoRouterConfig{
 		Enabled:                false,
 		VirtualModel:           "my-auto",
+		StrategyProfile:        StrategyBalanced,
+		ModelPool:              []string{},
+		ExcludedModels:         []string{},
+		BanditEnabled:          true,
+		SpeculativeCascade:     true,
 		ChannelPreference:      "personal_first",
 		ClassifierSource:       "heuristic",
 		UserClassifierProvider: "cloudflare",
@@ -87,6 +97,8 @@ func defaultUserAutoRouterConfig() UserAutoRouterConfig {
 
 func cloneUserAutoRouterConfig(src UserAutoRouterConfig) UserAutoRouterConfig {
 	dst := src
+	dst.ModelPool = append([]string(nil), src.ModelPool...)
+	dst.ExcludedModels = append([]string(nil), src.ExcludedModels...)
 	dst.Tiers = make(map[string][]string, len(src.Tiers))
 	for k, v := range src.Tiers {
 		dst.Tiers[k] = append([]string(nil), v...)
@@ -550,6 +562,17 @@ func normalizeUserAutoRouterConfig(sub string, ucfg *UserAutoRouterConfig, stric
 		ucfg.LongContextThreshold = 2000000
 	}
 
+	ucfg.StrategyProfile = normalizeStrategyProfile(ucfg.StrategyProfile)
+	rawPool := normalizeModelSlice(ucfg.ModelPool)
+	cleanPool := make([]string, 0, len(rawPool))
+	for _, m := range rawPool {
+		if !strings.EqualFold(m, ucfg.VirtualModel) && !strings.EqualFold(parseRouterModelSpec(m).BaseModel, ucfg.VirtualModel) {
+			cleanPool = append(cleanPool, m)
+		}
+	}
+	ucfg.ModelPool = cleanPool
+	ucfg.ExcludedModels = normalizeModelSlice(ucfg.ExcludedModels)
+
 	ucfg.DefaultModel = strings.TrimSpace(ucfg.DefaultModel)
 	if (strings.EqualFold(ucfg.DefaultModel, ucfg.VirtualModel) || strings.EqualFold(parseRouterModelSpec(ucfg.DefaultModel).BaseModel, ucfg.VirtualModel)) && ucfg.DefaultModel != "" {
 		if strict {
@@ -559,7 +582,7 @@ func normalizeUserAutoRouterConfig(sub string, ucfg *UserAutoRouterConfig, stric
 	}
 
 	normalizedTiers := make(map[string][]string, len(allRouterTiers))
-	totalCandidates := 0
+	totalCandidates := len(ucfg.ModelPool)
 	for _, tier := range allRouterTiers {
 		var list []string
 		if ucfg.Tiers != nil {
@@ -587,7 +610,10 @@ func normalizeUserAutoRouterConfig(sub string, ucfg *UserAutoRouterConfig, stric
 			return errors.New("站点管理员当前已关闭个人自定义智能路由功能")
 		}
 		if ucfg.DefaultModel == "" && totalCandidates == 0 {
-			return errors.New("启用私人智能路由前，请至少配置一个档位的候选模型或默认兜底模型")
+			pModels := userAvailableModels(sub)
+			if len(pModels) == 0 && ucfg.ChannelPreference == "personal_only" {
+				return errors.New("启用仅自带渠道路由前，请至少添加一个可用的个人渠道或配置模型池")
+			}
 		}
 	}
 	return nil
@@ -1235,7 +1261,7 @@ func resolveUserAutoRouteWithConfig(ctx context.Context, sub string, ucfg UserAu
 	case isHousekeepingRequest(cr, latestUser):
 		chosenTier = TierSimple
 		cause = "housekeeping"
-	case hasPrevSession && prevSessionModel != "" && (hasToolResult || sig.IsFollowUpDirective) && !sig.IsFrustrationOrRetry && (sig.StructuralFloor == "" || tierRank(sig.StructuralFloor) <= tierRank(prevSessionTier)):
+	case hasPrevSession && prevSessionModel != "" && !routerModelExclusionFilter(ucfg.ExcludedModels)(prevSessionModel) && (hasToolResult || sig.IsFollowUpDirective) && !sig.IsFrustrationOrRetry && (sig.StructuralFloor == "" || tierRank(sig.StructuralFloor) <= tierRank(prevSessionTier)):
 		ctxLimit := effectiveModelContextLimit(prevSessionModel, nil)
 		usableCap := effectiveContextCapacityForRequest(ctxLimit, estimatedTokens)
 		modOK, _ := modelSupportsRequestModalities(prevSessionModel, sig)
@@ -1335,8 +1361,26 @@ func resolveUserAutoRouteWithConfig(ctx context.Context, sub string, ucfg UserAu
 	}
 	decision.Tier = chosenTier
 	decision.Cause = cause
+	demand := profileRequestDemand(cr, latestUser, stateText, sig, estimatedTokens, nil)
+	switch {
+	case cause == "housekeeping" || cause == "short_circuit":
+		if demand.RequiredDifficulty > 24.0 {
+			demand.RequiredDifficulty = 24.0
+		}
+		demand.EquivalentTier = TierSimple
+	case chosenTier == TierReasoning && demand.RequiredDifficulty < 76.0:
+		demand.RequiredDifficulty = 78.0
+		demand.EquivalentTier = TierReasoning
+	case chosenTier == TierComplex && demand.RequiredDifficulty < 62.0:
+		demand.RequiredDifficulty = 65.0
+		demand.EquivalentTier = TierComplex
+	}
+	decision.StrategyProfile = normalizeStrategyProfile(ucfg.StrategyProfile)
+	decision.PrimaryDomain = demand.PrimaryDomain
+	decision.RequiredDifficulty = demand.RequiredDifficulty
+	decision.DomainWeights = demand.Weights
 
-	targets, steps, skippedCount, quotaErr := selectUserTierTargets(sub, ucfg, ak, format, nativeOnly, cr, chosenTier, estimatedTokens, cause)
+	targets, steps, skippedCount, quotaErr := selectUserTierTargets(ctx, sub, ucfg, ak, format, nativeOnly, cr, chosenTier, estimatedTokens, cause, demand, dryRun)
 	decision.Steps = steps
 	decision.SkippedCandidates = skippedCount
 	if quotaErr != nil {
@@ -1452,32 +1496,102 @@ func evaluateUserCandidateTarget(sub string, ucfg UserAutoRouterConfig, ak ApiKe
 	}
 }
 
-func selectUserTierTargets(sub string, ucfg UserAutoRouterConfig, ak ApiKey, format clientFormat, nativeOnly bool, cr *canonReq, startTier string, estimatedTokens int, cause string) ([]userRouteTarget, []routerCandidateStep, int, error) {
+func selectUserTierTargets(ctx context.Context, sub string, ucfg UserAutoRouterConfig, ak ApiKey, format clientFormat, nativeOnly bool, cr *canonReq, startTier string, estimatedTokens int, cause string, demand TaskDemandProfile, dryRun bool) ([]userRouteTarget, []routerCandidateStep, int, error) {
 	type tierCandidate struct {
 		model      string
 		sourceTier string
+		utility    candidateUtilityBreakdown
 	}
 	seen := make(map[string]bool)
+	isExcluded := routerModelExclusionFilter(ucfg.ExcludedModels)
 	ordered := make([]tierCandidate, 0, 12)
-	addCandidate := func(model, tier string) {
+	evalUtility := func(m string, stochastic bool) candidateUtilityBreakdown {
+		cLim := effectiveModelContextLimit(m, nil)
+		var upID int64
+		if ucfg.BanditEnabled {
+			if target, ok, _ := evaluateUserCandidateTarget(sub, ucfg, ak, format, nativeOnly, cr, m, startTier); ok {
+				if target.PreferBYOK {
+					if up, err := pickUserUpstream(sub, format, m, nil, nativeOnly, cr); err == nil && up != nil {
+						upID = up.ID
+					}
+				} else if up, _, err := pickUpstreamForRouterCandidate(format, m, nil, nativeOnly, cr); err == nil && up != nil {
+					upID = up.ID
+				}
+			}
+		}
+		return scoreCandidateUtility(upID, m, demand, ucfg.StrategyProfile, false, estimatedTokens, cLim, nil, ucfg.BanditEnabled, stochastic)
+	}
+	addCandidate := func(model, tier string, u candidateUtilityBreakdown) {
 		m := strings.TrimSpace(model)
 		spec := parseRouterModelSpec(m)
-		if spec.BaseModel == "" || strings.EqualFold(spec.BaseModel, ucfg.VirtualModel) || seen[m] {
+		if spec.BaseModel == "" || strings.EqualFold(spec.BaseModel, ucfg.VirtualModel) || seen[m] || isExcluded(m) {
 			return
 		}
 		seen[m] = true
-		ordered = append(ordered, tierCandidate{model: m, sourceTier: tier})
+		ordered = append(ordered, tierCandidate{model: m, sourceTier: tier, utility: u})
 	}
 
-	if startTier != TierDefault {
-		for _, t := range orderedCascadeTiers(startTier, ucfg.CascadeTiers) {
-			for _, m := range ucfg.Tiers[t] {
-				addCandidate(m, t)
+	totalTierModels := 0
+	for _, list := range ucfg.Tiers {
+		totalTierModels += len(list)
+	}
+
+	if totalTierModels == 0 {
+		pool := append([]string(nil), ucfg.ModelPool...)
+		if len(pool) == 0 {
+			pool = append(pool, userAvailableModels(sub)...)
+			if ucfg.ChannelPreference != "personal_only" {
+				siteModels := normalizeModelSlice([]string{ak.Models})
+				siteVM := strings.TrimSpace(getAutoRouterConfig().VirtualModel)
+				if siteVM == "" {
+					siteVM = "auto"
+				}
+				if len(siteModels) == 0 && strings.TrimSpace(ak.Models) == "" {
+					siteModels, _ = collectGatewayUpstreamBoundModels(ctx, siteVM)
+				}
+				for _, sm := range siteModels {
+					if sm != siteVM {
+						pool = append(pool, sm)
+					}
+				}
 			}
 		}
-	}
-	if ucfg.DefaultModel != "" {
-		addCandidate(ucfg.DefaultModel, TierDefault)
+		if ucfg.DefaultModel != "" {
+			pool = append(pool, ucfg.DefaultModel)
+		}
+		pool = normalizeModelSlice(pool)
+		scored := make([]tierCandidate, 0, len(pool))
+		for _, m := range pool {
+			spec := parseRouterModelSpec(m)
+			if spec.BaseModel == "" || strings.EqualFold(spec.BaseModel, ucfg.VirtualModel) || isExcluded(m) {
+				continue
+			}
+			scored = append(scored, tierCandidate{
+				model:      m,
+				sourceTier: startTier,
+				utility:    evalUtility(m, !dryRun && ucfg.BanditEnabled),
+			})
+		}
+		sort.SliceStable(scored, func(i, j int) bool {
+			if scored[i].utility.UtilityScore != scored[j].utility.UtilityScore {
+				return scored[i].utility.UtilityScore > scored[j].utility.UtilityScore
+			}
+			return scored[i].utility.CapabilityScore > scored[j].utility.CapabilityScore
+		})
+		for _, sc := range scored {
+			addCandidate(sc.model, sc.sourceTier, sc.utility)
+		}
+	} else {
+		if startTier != TierDefault {
+			for _, t := range orderedCascadeTiers(startTier, ucfg.CascadeTiers) {
+				for _, m := range ucfg.Tiers[t] {
+					addCandidate(m, t, evalUtility(m, false))
+				}
+			}
+		}
+		if ucfg.DefaultModel != "" {
+			addCandidate(ucfg.DefaultModel, TierDefault, evalUtility(ucfg.DefaultModel, false))
+		}
 	}
 
 	steps := make([]routerCandidateStep, 0, len(ordered))
@@ -1496,6 +1610,7 @@ func selectUserTierTargets(sub string, ucfg UserAutoRouterConfig, ak ApiKey, for
 	for idx, item := range ordered {
 		priority := idx + 1
 		ctxLimit := effectiveModelContextLimit(item.model, nil)
+		u := item.utility
 		tPlan := resolveAutoRouterThinking(nil, item.model, item.sourceTier, item.model, ucfg.TierThinking[item.sourceTier], cause, cr)
 		target, ok, reason := evaluateUserCandidateTarget(sub, ucfg, ak, format, nativeOnly, cr, item.model, item.sourceTier)
 		if !ok {
@@ -1507,13 +1622,16 @@ func selectUserTierTargets(sub string, ucfg UserAutoRouterConfig, ak ApiKey, for
 				}
 			}
 			steps = append(steps, routerCandidateStep{
-				Priority:     priority,
-				Model:        item.model,
-				SourceTier:   item.sourceTier,
-				Status:       "skipped",
-				Reason:       reason,
-				Thinking:     tPlan.EffectiveLabel,
-				ContextLimit: ctxLimit,
+				Priority:        priority,
+				Model:           item.model,
+				SourceTier:      item.sourceTier,
+				Status:          "skipped",
+				Reason:          reason,
+				Thinking:        tPlan.EffectiveLabel,
+				ContextLimit:    ctxLimit,
+				CapabilityScore: u.CapabilityScore,
+				BanditWinRate:   u.BanditWinRate,
+				UtilityScore:    u.UtilityScore,
 			})
 			continue
 		}
@@ -1521,13 +1639,16 @@ func selectUserTierTargets(sub string, ucfg UserAutoRouterConfig, ak ApiKey, for
 			skipped++
 			stepIdx := len(steps)
 			steps = append(steps, routerCandidateStep{
-				Priority:     priority,
-				Model:        item.model,
-				SourceTier:   item.sourceTier,
-				Status:       "skipped",
-				Reason:       "context_exceeded",
-				Thinking:     tPlan.EffectiveLabel,
-				ContextLimit: ctxLimit,
+				Priority:        priority,
+				Model:           item.model,
+				SourceTier:      item.sourceTier,
+				Status:          "skipped",
+				Reason:          "context_exceeded",
+				Thinking:        tPlan.EffectiveLabel,
+				ContextLimit:    ctxLimit,
+				CapabilityScore: u.CapabilityScore,
+				BanditWinRate:   u.BanditWinRate,
+				UtilityScore:    u.UtilityScore,
 			})
 			ctxFallbacks = append(ctxFallbacks, contextFallbackItem{
 				stepIdx:  stepIdx,
@@ -1545,13 +1666,16 @@ func selectUserTierTargets(sub string, ucfg UserAutoRouterConfig, ak ApiKey, for
 			upLabel = "我的渠道 (BYOK)"
 		}
 		steps = append(steps, routerCandidateStep{
-			Priority:     priority,
-			Model:        item.model,
-			SourceTier:   item.sourceTier,
-			Status:       status,
-			UpstreamName: upLabel,
-			Thinking:     tPlan.EffectiveLabel,
-			ContextLimit: ctxLimit,
+			Priority:        priority,
+			Model:           item.model,
+			SourceTier:      item.sourceTier,
+			Status:          status,
+			UpstreamName:    upLabel,
+			Thinking:        tPlan.EffectiveLabel,
+			ContextLimit:    ctxLimit,
+			CapabilityScore: u.CapabilityScore,
+			BanditWinRate:   u.BanditWinRate,
+			UtilityScore:    u.UtilityScore,
 		})
 		selected = append(selected, target)
 	}
@@ -1747,6 +1871,9 @@ func buildUserAutoRouterView(ctx context.Context, sub string, ak ApiKey) gin.H {
 	for _, m := range filteredSiteModels {
 		allRelevant[m] = true
 	}
+	for _, m := range ucfg.ModelPool {
+		allRelevant[m] = true
+	}
 	for _, list := range ucfg.Tiers {
 		for _, m := range list {
 			allRelevant[m] = true
@@ -1781,6 +1908,7 @@ func buildUserAutoRouterView(ctx context.Context, sub string, ak ApiKey) gin.H {
 		}
 		profile := classifyModelThinkingCapability(nil, m)
 		ctxLimit, ctxSource := effectiveModelContextLimitWithSource(m, siteCfg.ModelContextLimits)
+		bWin, bCalls, bTTFT, _ := summarizeModelBanditStats(m)
 		candidateStatus[m] = gin.H{
 			"available":         ok,
 			"reason":            reason,
@@ -1792,6 +1920,10 @@ func buildUserAutoRouterView(ctx context.Context, sub string, ak ApiKey) gin.H {
 			"context_source":    ctxSource,
 			"max_output":        modelMaxOutputLimit(m),
 			"supports_thinking": profile.SupportsThinking,
+			"capabilities":      resolveModelCapabilityVector(m, siteCfg.ModelCapabilities),
+			"bandit_win_rate":   bWin,
+			"bandit_calls":      bCalls,
+			"ewma_ttft_ms":      bTTFT,
 		}
 	}
 
@@ -1803,6 +1935,11 @@ func buildUserAutoRouterView(ctx context.Context, sub string, ak ApiKey) gin.H {
 		"shared_classifier_models":         sharedClassifiers,
 		"enabled":                          ucfg.Enabled,
 		"virtual_model":                    ucfg.VirtualModel,
+		"strategy_profile":                 normalizeStrategyProfile(ucfg.StrategyProfile),
+		"model_pool":                       ucfg.ModelPool,
+		"excluded_models":                  ucfg.ExcludedModels,
+		"bandit_enabled":                   ucfg.BanditEnabled,
+		"speculative_cascade":              ucfg.SpeculativeCascade,
 		"channel_preference":               ucfg.ChannelPreference,
 		"classifier_source":                ucfg.ClassifierSource,
 		"shared_classifier_model":          ucfg.SharedClassifierModel,
@@ -2253,6 +2390,11 @@ func registerUserRouterRoutes(userAPI *gin.RouterGroup) {
 		var req struct {
 			Enabled                 *bool                `json:"enabled"`
 			VirtualModel            *string              `json:"virtual_model"`
+			StrategyProfile         *string              `json:"strategy_profile"`
+			ModelPool               *[]string            `json:"model_pool"`
+			ExcludedModels          *[]string            `json:"excluded_models"`
+			BanditEnabled           *bool                `json:"bandit_enabled"`
+			SpeculativeCascade      *bool                `json:"speculative_cascade"`
 			ChannelPreference       *string              `json:"channel_preference"`
 			ClassifierSource        *string              `json:"classifier_source"`
 			SharedClassifierModel   *string              `json:"shared_classifier_model"`
@@ -2284,6 +2426,21 @@ func registerUserRouterRoutes(userAPI *gin.RouterGroup) {
 		}
 		if req.VirtualModel != nil {
 			ucfg.VirtualModel = *req.VirtualModel
+		}
+		if req.StrategyProfile != nil {
+			ucfg.StrategyProfile = *req.StrategyProfile
+		}
+		if req.ModelPool != nil {
+			ucfg.ModelPool = *req.ModelPool
+		}
+		if req.ExcludedModels != nil {
+			ucfg.ExcludedModels = *req.ExcludedModels
+		}
+		if req.BanditEnabled != nil {
+			ucfg.BanditEnabled = *req.BanditEnabled
+		}
+		if req.SpeculativeCascade != nil {
+			ucfg.SpeculativeCascade = *req.SpeculativeCascade
 		}
 		if req.ChannelPreference != nil {
 			ucfg.ChannelPreference = *req.ChannelPreference

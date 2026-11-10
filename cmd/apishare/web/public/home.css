@@ -179,6 +179,12 @@ select { min-height: 44px; max-width: 150px; padding: 9px 11px; border: 1px soli
 .button:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 .connection-strip .button { margin-left: auto; flex: 0 0 auto; }
 .button .icon { width: 17px; height: 17px; }
+.model-ribbon .rankings-entry { margin-left: auto; flex: 0 0 auto; color: var(--accent-hover); background: var(--surface); }
+@media (max-width: 540px) {
+ .model-ribbon { flex-wrap: wrap; }
+ .model-ribbon .today-models { flex: 1; }
+ .model-ribbon .rankings-entry { width: 100%; margin-left: 0; }
+}
 .site-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 20px; padding: 28px 0 35px; color: var(--muted); font: 11px var(--mono); }
 .footer-divider { margin: 0 9px; color: #9b907e; }
 .refresh-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; font: 12px var(--font); }

@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-site-title="{{SITE_TITLE}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#faf9f5">
+  <meta name="description" content="查看站点已接入全部模型的六维能力参考排行与在线路由表现。">
+  <title>模型排行 · {{PUBLIC_TITLE}}</title>
+  <link rel="icon" type="{{SITE_ICON_TYPE}}" href="{{SITE_ICON_FAVICON}}">
+  <link rel="apple-touch-icon" type="{{SITE_ICON_TYPE}}" href="{{SITE_ICON_TOUCH}}">
+  <link rel="stylesheet" href="/public/static/home.css">
+  <link rel="stylesheet" href="/public/static/model-icons.css">
+  <link rel="stylesheet" href="/public/static/rankings.css">
+  <script src="/public/static/model-icons.js" defer></script>
+  <script src="/public/static/rankings.js" defer></script>
+</head>
+<body class="rankings-page">
+  <a class="skip-link" href="#rankings">跳到完整排行</a>
+  <svg class="symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="rank-arrow" viewBox="0 0 24 24"><path d="M19 12H5m6 6-6-6 6-6"/></symbol>
+    <symbol id="rank-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 6a8 8 0 0 1 14 6M4 12a8 8 0 0 0 14 6"/></symbol>
+    <symbol id="rank-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+  </svg>
+  <div class="container ranking-container">
+    <header class="ranking-nav">
+      <a class="ranking-brand" href="/" aria-label="{{SITE_TITLE}} 首页"><img src="{{SITE_ICON_LOGO}}" width="38" height="38" alt=""><span>{{SITE_TITLE}}</span></a>
+      <a class="button" href="/"><svg class="icon" aria-hidden="true"><use href="#rank-arrow"/></svg>返回首页</a>
+    </header>
+    <main>
+      <section class="ranking-hero" aria-labelledby="rankingTitle">
+        <div>
+          <p class="eyebrow">MODEL INTELLIGENCE / THE LEADERBOARD</p>
+          <h1 id="rankingTitle">模型排行<span class="ranking-title-dot">.</span></h1>
+          <p class="ranking-description">各有所长，一览便知。<br>从软件工程到数学推理，比较站点已接入全部模型的能力画像。</p>
+          <a class="ranking-method-link" href="#methodology">这些分数意味着什么？ <span aria-hidden="true">↘</span></a>
+        </div>
+        <div class="ranking-summary" aria-label="排行概况">
+          <div><strong id="rankingModelCount">—</strong><span>已接入模型</span></div>
+          <div><strong>06</strong><span>能力维度</span></div>
+          <div><strong id="rankingMeasuredCount">—</strong><span>有在线样本</span></div>
+        </div>
+      </section>
+      <section class="ranking-leaders" aria-labelledby="leadersTitle">
+        <div class="ranking-section-heading"><h2 id="leadersTitle">综合能力 · 领先模型</h2><span>适合的，才是最好的。</span></div>
+        <div id="rankingLeaders" class="ranking-podium" aria-busy="true"><p class="ranking-placeholder">正在读取模型能力画像…</p></div>
+      </section>
+      <section id="rankings" class="ranking-board" aria-labelledby="boardTitle" tabindex="-1">
+        <div class="ranking-board-heading">
+          <div><p class="eyebrow">EVERY MODEL, IN PERSPECTIVE</p><h2 id="boardTitle">完整模型榜单</h2></div>
+          <button id="rankingRefresh" class="button" type="button"><svg class="icon" aria-hidden="true"><use href="#rank-refresh"/></svg><span>刷新排行</span></button>
+        </div>
+        <form id="rankingFilters" class="ranking-filters" role="search">
+          <label class="ranking-search"><span>搜索模型</span><div><svg class="icon" aria-hidden="true"><use href="#rank-search"/></svg><input id="rankingSearch" type="search" placeholder="输入模型名称或提供方" autocomplete="off"></div></label>
+          <label><span>排行维度</span><select id="rankingSort">
+            <option value="overall_score">综合能力</option><option value="coding_swe">软件工程 / SWE</option><option value="frontend_ui">前端与 UI</option><option value="reasoning_math">数学与推理</option><option value="agentic_tools">Agent 与工具</option><option value="writing_knowledge">写作与知识</option><option value="long_context_mm">长上下文 / 多模态</option><option value="bandit_win_rate">Bandit 后验表现</option><option value="ewma_ttft_ms">在线首字延迟 · 从低到高</option>
+          </select></label>
+          <label><span>模型提供方</span><select id="rankingFamily"><option value="">全部提供方</option></select></label>
+        </form>
+        <div class="ranking-list-meta"><p id="rankingResultCount" role="status" aria-live="polite">正在加载完整榜单…</p><span id="rankingUpdatedAt">等待更新</span></div>
+        <p id="rankingError" class="ranking-error hidden" role="alert"></p>
+        <p id="rankingLoadingNote" class="ranking-discovery hidden" role="status">部分渠道正在后台发现模型目录，可稍后刷新查看新增模型。</p>
+        <div class="ranking-column-head" aria-hidden="true"><span>排名 / 模型</span><span id="rankingScoreHeading">综合能力</span><span>六维能力参考分</span><span>在线路由样本</span></div>
+        <ol id="rankingList" class="ranking-list" aria-label="模型完整排行" aria-busy="true"><li class="ranking-placeholder">正在读取模型排行…</li></ol>
+        <div id="rankingEmpty" class="ranking-empty hidden"><h3>没有匹配的模型</h3><p>试试其他关键词，或切换提供方。</p><button id="rankingClear" class="button" type="button">清除筛选</button></div>
+      </section>
+      <section id="methodology" class="ranking-methodology" aria-labelledby="methodTitle">
+        <p class="eyebrow">READ THE NUMBERS, KNOW THE LIMITS</p><h2 id="methodTitle">读懂排行，而不只看名次。</h2>
+        <div class="ranking-method-grid">
+          <article><span class="ranking-method-number">01</span><h3>能力分是路由参考，不是官方榜单</h3><p>与智能路由共用六维能力画像。来源可能是内置校准、模型族推断、同步数据或站点覆盖；每个模型均标明来源。分数不是本站重新运行公开基准所得的实测成绩。</p></article>
+          <article><span class="ranking-method-number">02</span><h3>不同任务，值得不同的第一名</h3><p>综合分按软件工程 24%、前端 UI 12%、数学推理 22%、工具调用 18%、写作知识 14%、长上下文与多模态 10% 加权。也可按单项能力独立排序。</p></article>
+          <article><span class="ranking-method-number">03</span><h3>在线表现，单独看待</h3><p>Bandit 后验来自启用在线学习的站点路由样本，包含先验、衰减与反馈，不等于真实任务准确率。首字延迟为按调用量汇总的平滑估计；无样本显示“—”，少量样本仅供参考。个人渠道数据不参与公共排行。</p></article>
+        </div>
+      </section>
+    </main>
+    <footer class="site-footer"><span>能力参考，不是能力承诺。请结合实际任务选择模型。</span><a href="/">返回用量与服务状态 ↗</a></footer>
+  </div>
+</body>
+</html>
