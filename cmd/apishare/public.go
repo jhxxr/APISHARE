@@ -241,15 +241,19 @@ func buildPublicOverview(now time.Time, interval string) (*PublicOverview, error
 				catalog[model] = publicFamily(model, u.Type)
 			}
 		}
-		if strings.TrimSpace(u.Models) == "" {
+		if strings.TrimSpace(u.Models) != "" {
+			for _, id := range strings.Split(u.Models, ",") {
+				add(id)
+			}
+		} else if defaults := defaultDecisionModelsForType(u.Type); len(defaults) > 0 {
+			for _, id := range defaults {
+				add(id)
+			}
+		} else {
 			wildcard = true
 			ids, pending := publicWildcardModels(u)
 			loading = loading || pending
 			for _, id := range ids {
-				add(id)
-			}
-		} else {
-			for _, id := range strings.Split(u.Models, ",") {
 				add(id)
 			}
 		}

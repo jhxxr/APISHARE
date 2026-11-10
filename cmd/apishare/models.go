@@ -195,7 +195,7 @@ func probeUpstreamModelListWithClient(ctx context.Context, upType, baseURL, apiK
 	}
 	upType, baseURL, apiKey = strings.TrimSpace(upType), strings.TrimSpace(baseURL), strings.TrimSpace(apiKey)
 	if !validUpstreamType(upType) {
-		return nil, fmt.Errorf("type must be openai, cliproxy, opencode-free, opencode, cline, anthropic, gemini, systemone or cloudflare")
+		return nil, fmt.Errorf("type must be openai, cliproxy, opencode-free, opencode, cline, anthropic, gemini, openrouter, systemone or cloudflare")
 	}
 	base, err := url.Parse(baseURL)
 	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" || base.User != nil || base.RawQuery != "" || base.Fragment != "" {
@@ -207,7 +207,7 @@ func probeUpstreamModelListWithClient(ctx context.Context, upType, baseURL, apiK
 	if upType == "cline" {
 		return probeClineModels(ctx, &Upstream{Type: upType, BaseURL: baseURL, APIKey: apiKey, HeaderOverrides: headers}, client)
 	}
-	if upType == "systemone" || upType == "cloudflare" {
+	if upType == "openrouter" || upType == "systemone" || upType == "cloudflare" {
 		return probeDecisionUpstreamModels(ctx, &Upstream{Type: upType, BaseURL: baseURL, APIKey: apiKey, HeaderOverrides: headers}, client)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -637,9 +637,15 @@ func modelHandler(c *gin.Context) {
 
 func probeDecisionUpstreamModels(ctx context.Context, up *Upstream, client *http.Client) ([]string, error) {
 	defaults := defaultDecisionModelsForType(up.Type)
+	if up.isOpenRouterDecisionUpstream("") && strings.EqualFold(up.Type, "systemone") {
+		defaults = []string{defaultOpenRouterDecisionsModel, "parallel/decisions-fast", "jev", "Julia-1"}
+	}
 	probeModel := "jev"
 	if len(defaults) > 0 {
 		probeModel = defaults[0]
+	}
+	if up.isOpenRouterDecisionUpstream("") {
+		probeModel = defaultOpenRouterDecisionsModel
 	}
 	// If Cloudflare URL already embeds a specific @cf/ model path, preserve it in the list.
 	if up.isCloudflareDecisionUpstream(probeModel) {
@@ -653,40 +659,59 @@ func probeDecisionUpstreamModels(ctx context.Context, up *Upstream, client *http
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	reqBody, err := buildDecisionClassifierPayload(probeModel, up.isCloudflareDecisionUpstream(probeModel), "hello", defaultClassifierInstructions, defaultAutoRouterTierCriteria())
-	if err != nil {
-		return nil, err
-	}
-	endpoint := up.decisionEndpointURL(probeModel)
-	if endpoint == "" {
-		return nil, fmt.Errorf("invalid decision upstream URL")
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(reqBody))
-	if err != nil {
-		return nil, fmt.Errorf("invalid decision probe request")
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	if strings.TrimSpace(up.APIKey) != "" {
-		req.Header.Set("Authorization", "Bearer "+up.APIKey)
-	}
-	if err := up.applyHeaders(req, nil); err != nil {
-		return nil, err
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, fmt.Errorf("decision probe timed out or was canceled")
+
+	tryProbe := func(candidateModel string) ([]byte, int, error) {
+		reqBody, err := buildDecisionClassifierPayload(candidateModel, up.isCloudflareDecisionUpstream(candidateModel), "hello", defaultClassifierInstructions, defaultAutoRouterTierCriteria())
+		if err != nil {
+			return nil, 0, err
 		}
-		return nil, fmt.Errorf("could not connect to decision upstream API")
+		endpoint := up.decisionEndpointURL(candidateModel)
+		if endpoint == "" {
+			return nil, 0, fmt.Errorf("invalid decision upstream URL")
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(reqBody))
+		if err != nil {
+			return nil, 0, fmt.Errorf("invalid decision probe request")
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+		if strings.TrimSpace(up.APIKey) != "" {
+			req.Header.Set("Authorization", "Bearer "+up.APIKey)
+		}
+		if err := up.applyHeaders(req, nil); err != nil {
+			return nil, 0, err
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, 0, fmt.Errorf("decision probe timed out or was canceled")
+			}
+			return nil, 0, fmt.Errorf("could not connect to decision upstream API")
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 256<<10))
+		if err != nil {
+			return nil, resp.StatusCode, fmt.Errorf("failed to read decision upstream response")
+		}
+		return body, resp.StatusCode, nil
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 256<<10))
+
+	body, statusCode, err := tryProbe(probeModel)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read decision upstream response")
+		return nil, err
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("decision upstream returned HTTP %d: %s", resp.StatusCode, truncate(strings.TrimSpace(string(body)), 180))
+	// If a generic systemone endpoint rejected "jev" with 400/404, also try OpenRouter's default model (or vice versa)
+	if (statusCode == http.StatusBadRequest || statusCode == http.StatusNotFound) && strings.EqualFold(up.Type, "systemone") {
+		altModel := defaultOpenRouterDecisionsModel
+		if probeModel == defaultOpenRouterDecisionsModel {
+			altModel = "jev"
+		}
+		if altBody, altStatus, altErr := tryProbe(altModel); altErr == nil && altStatus >= 200 && altStatus < 300 {
+			body, statusCode, probeModel = altBody, altStatus, altModel
+		}
+	}
+	if statusCode < 200 || statusCode >= 300 {
+		return nil, fmt.Errorf("decision upstream returned HTTP %d: %s", statusCode, truncate(strings.TrimSpace(string(body)), 180))
 	}
 	if _, parseErr := parseDecisionClassifierResponse(body, 0); parseErr != nil {
 		return nil, fmt.Errorf("decision upstream returned unrecognized payload: %w", parseErr)

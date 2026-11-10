@@ -22,8 +22,8 @@ const fmtTime = (value) => {
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
 };
 const number = (value) => Number(value || 0).toLocaleString("zh-CN");
-const upstreamFormatNames = { cliproxy: "CLIProxyAPI · 原生协议", "openai-chat": "OpenAI Chat Completions", "openai-responses": "OpenAI Responses", "openai-auto": "OpenAI · 旧配置（跟随客户端）", "opencode-free": "OpenCode 免费模型", opencode: "OpenCode · 旧配置（Zen / Go）", cline: "Cline 免费模型", anthropic: "Anthropic Messages", gemini: "Gemini generateContent", systemone: "SystemOne 决策模型", cloudflare: "Cloudflare Clef 决策模型" };
-const providerURLs = { cliproxy: "http://127.0.0.1:18317", openai: "https://api.openai.com", "opencode-free": "https://opencode.ai/inference", opencode: "https://opencode.ai/zen", cline: "https://api.cline.bot/api/v1", anthropic: "https://api.anthropic.com", gemini: "https://generativelanguage.googleapis.com", systemone: "https://api.typesafe.ai/v1/systemone", cloudflare: "https://api.cloudflare.com/client/v4/accounts/YOUR_ACCOUNT_ID/ai/run" };
+const upstreamFormatNames = { cliproxy: "CLIProxyAPI · 原生协议", "openai-chat": "OpenAI Chat Completions", "openai-responses": "OpenAI Responses", "openai-auto": "OpenAI · 旧配置（跟随客户端）", "opencode-free": "OpenCode 免费模型", opencode: "OpenCode · 旧配置（Zen / Go）", cline: "Cline 免费模型", anthropic: "Anthropic Messages", gemini: "Gemini generateContent", openrouter: "OpenRouter Decisions 决策模型", systemone: "SystemOne 决策模型", cloudflare: "Cloudflare Clef 决策模型" };
+const providerURLs = { cliproxy: "http://127.0.0.1:18317", openai: "https://api.openai.com", "opencode-free": "https://opencode.ai/inference", opencode: "https://opencode.ai/zen", cline: "https://api.cline.bot/api/v1", anthropic: "https://api.anthropic.com", gemini: "https://generativelanguage.googleapis.com", openrouter: "https://openrouter.ai/api/alpha/decisions", systemone: "https://api.typesafe.ai/v1/systemone", cloudflare: "https://api.cloudflare.com/client/v4/accounts/YOUR_ACCOUNT_ID/ai/run" };
 const openCodeURLs = { zen: providerURLs.opencode, go: "https://opencode.ai/zen/go" };
 const isOpenCodeType = (type) => type === "opencode" || type === "opencode-free";
 function upstreamFormat(upstream) {
@@ -36,7 +36,7 @@ function editorUpstreamType() {
   return format.startsWith("openai-") ? "openai" : format;
 }
 function editorOpenAIProtocol() {
-  if ($("editType").value === "cline" || $("editType").value === "systemone" || $("editType").value === "cloudflare") return "chat";
+  if ($("editType").value === "cline" || $("editType").value === "openrouter" || $("editType").value === "systemone" || $("editType").value === "cloudflare") return "chat";
   if (isOpenCodeType($("editType").value)) return $("editOpenCodeProtocol").value || "auto";
   return { "openai-chat": "chat", "openai-responses": "responses" }[$("editType").value] || "auto";
 }
@@ -924,7 +924,7 @@ function updateEditorProvider(changed = true) {
   $("editorHeaders").classList.toggle("hidden", type === "cliproxy");
   document.querySelector('[data-section="editorHeaders"]').classList.toggle("hidden", type === "cliproxy");
   $("editHeaderOverrides").disabled = type === "cliproxy";
-  const isDecision = type === "systemone" || type === "cloudflare";
+  const isDecision = type === "openrouter" || type === "systemone" || type === "cloudflare";
   $("editStructuredOutput").closest(".field").classList.toggle("hidden", type === "cliproxy" || isDecision);
   $("editStructuredOutput").disabled = type === "cliproxy" || isDecision;
   validateHeaderOverrides();
@@ -943,6 +943,7 @@ function updateEditorProvider(changed = true) {
     cline: "点击「登录 Cline 账号」完成浏览器授权，即可获取当前免费模型，无需安装 CLI。也可手动填写账号凭据。免费模型与额度由 Cline 调整。",
     anthropic: "上游使用 Anthropic 原生 /v1/messages 接口。",
     gemini: "上游使用 Gemini 原生 generateContent / streamGenerateContent 接口。",
+    openrouter: "使用 OpenRouter Decisions 接口 (https://openrouter.ai/api/alpha/decisions)，支持 noul / choice / score 决策问题。默认绑定免费模型 parallel/decisions-fast:free，可在「智能路由」中选作分类器，或通过网关 /api/alpha/decisions 直接调用。",
     systemone: "使用 SystemOne / TypeSafe Jev / Julia-1 决策接口 (/v1/systemone)，发送原生 questions.tier 决策结构并解析四档概率。默认绑定 jev、Julia-1，可在「智能路由」中直接选作网关分类器。",
     cloudflare: "使用 Cloudflare Workers AI Clef 决策接口 (/client/v4/accounts/{account_id}/ai/run/...)，发送原生 questions.tier 决策结构。默认绑定 @cf/cloudflare/clef-flash，可在「智能路由」中直接选作网关分类器。"
   }[format];

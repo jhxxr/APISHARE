@@ -72,8 +72,12 @@ function upstreamToggle(item) {
 }
 function upstreamModelsHTML(item) {
   const models = parseAllowlist(item.models);
-  if (!models.length && (item.type === "systemone" || item.type === "cloudflare")) {
-    const defaults = item.type === "cloudflare" ? ["@cf/cloudflare/clef-flash", "@cf/cloudflare/clef"] : ["jev", "Julia-1"];
+  if (!models.length && (item.type === "openrouter" || item.type === "systemone" || item.type === "cloudflare")) {
+    const defaults = item.type === "cloudflare"
+      ? ["@cf/cloudflare/clef-flash", "@cf/cloudflare/clef"]
+      : item.type === "openrouter"
+        ? ["parallel/decisions-fast:free", "parallel/decisions-fast"]
+        : ["jev", "Julia-1", "parallel/decisions-fast:free"];
     return '<button class="upstream-model-count" onclick="openUpstreamSection(' + item.id + ',\'editorModels\')" title="' + esc("默认决策模型：" + defaults.join(", ")) + '">' + icon("layers") + defaults.length + ' 条</button>';
   }
   return '<button class="upstream-model-count" onclick="openUpstreamSection(' + item.id + ',\'editorModels\')" title="' + esc(models.join(", ") || "允许全部模型") + '">' + icon("layers") + (models.length ? models.length + ' 条' : '全部') + '</button>';

@@ -226,7 +226,7 @@ func validatePublicUpstreamURL(rawURL string, allowQuery bool) error {
 
 func validUserClassifierProvider(provider string) bool {
 	switch normalizeClassifierProvider(provider) {
-	case "cloudflare", "jev", "systemone", "openai_chat":
+	case "cloudflare", "jev", "openrouter", "systemone", "openai_chat":
 		return true
 	default:
 		return false
@@ -235,7 +235,7 @@ func validUserClassifierProvider(provider string) bool {
 
 func validUserUpstreamType(t string) bool {
 	switch strings.ToLower(strings.TrimSpace(t)) {
-	case "openai", "anthropic", "gemini", "systemone", "cloudflare":
+	case "openai", "anthropic", "gemini", "openrouter", "systemone", "cloudflare":
 		return true
 	default:
 		return false
@@ -831,6 +831,13 @@ func classifyViaUpstream(ctx context.Context, up *Upstream, clientModel string, 
 		if strings.TrimSpace(up.APIKey) != "" {
 			req.Header.Set("Authorization", "Bearer "+up.APIKey)
 		}
+		if up.isOpenRouterDecisionUpstream(upModel) {
+			siteTitle := strings.TrimSpace(getSettings().SiteTitle)
+			if siteTitle == "" {
+				siteTitle = "APISHARE"
+			}
+			req.Header.Set("X-OpenRouter-Title", siteTitle)
+		}
 		if err := up.applyHeaders(req, nil); err != nil {
 			return nil, upstreamUsage{}, err
 		}
@@ -1114,10 +1121,7 @@ func classifyForUserAutoRouter(ctx context.Context, ak ApiKey, sub string, ucfg 
 		if model == "" {
 			return nil, errors.New("missing personal classifier model name")
 		}
-		ups, err := getUserUpstreams(sub)
-		if err != nil || len(ups) == 0 {
-			return nil, errors.New("no personal BYOK channels configured")
-		}
+		ups, _ := getUserUpstreams(sub)
 		var chosen *Upstream
 		if ucfg.UserClassifierUpstream > 0 {
 			targetID := -ucfg.UserClassifierUpstream
@@ -1128,14 +1132,25 @@ func classifyForUserAutoRouter(ctx context.Context, ak ApiKey, sub string, ucfg 
 				}
 			}
 		}
-		if chosen == nil {
-			chosen, err = pickUserUpstream(sub, FormatOpenAIChat, model, nil, false, nil)
-			if err != nil {
-				return nil, err
+		if chosen == nil && len(ups) > 0 {
+			chosen, _ = pickUserUpstream(sub, FormatOpenAIChat, model, nil, false, nil)
+		}
+		if chosen != nil {
+			res, _, callErr := classifyViaUpstream(ctx, chosen, model, "user_upstream", state, criteria, defaultClassifierInstructions, ucfg.MinConfidence, ucfg.ClassifierTimeoutMS)
+			return res, callErr
+		}
+		// Also support using a model available on the user's API key from gateway upstreams
+		if ak.ID == 0 || (ak.allowsModel(model) && !ak.quotaExhausted(model)) {
+			res, up, usage, gwErr := classifyViaGatewayUpstream(ctx, model, state, criteria, defaultClassifierInstructions, ucfg.MinConfidence, ucfg.ClassifierTimeoutMS)
+			if gwErr == nil {
+				res.Provider = "user_upstream"
+				if !dryRun && ak.ID > 0 {
+					recordSharedClassifierCall(ak, up, model, usage, res.LatencyMS)
+				}
+				return res, nil
 			}
 		}
-		res, _, callErr := classifyViaUpstream(ctx, chosen, model, "user_upstream", state, criteria, defaultClassifierInstructions, ucfg.MinConfidence, ucfg.ClassifierTimeoutMS)
-		return res, callErr
+		return nil, fmt.Errorf("未找到支持决策模型 %q 的可用渠道", model)
 
 	case "user_external":
 		if !validUserClassifierProvider(ucfg.UserClassifierProvider) {
@@ -1758,7 +1773,7 @@ func registerUserRouterRoutes(userAPI *gin.RouterGroup) {
 			upType = "openai"
 		}
 		if !validUserUpstreamType(upType) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "渠道类型仅支持 openai、anthropic、gemini、systemone 或 cloudflare"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "渠道类型仅支持 openai、anthropic、gemini、openrouter、systemone 或 cloudflare"})
 			return
 		}
 		proto := strings.ToLower(strings.TrimSpace(req.OpenAIProtocol))
@@ -1878,7 +1893,7 @@ func registerUserRouterRoutes(userAPI *gin.RouterGroup) {
 		if req.Type != nil {
 			curType = strings.ToLower(strings.TrimSpace(*req.Type))
 			if !validUserUpstreamType(curType) {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "渠道类型仅支持 openai、anthropic、gemini、systemone 或 cloudflare"})
+				c.JSON(http.StatusBadRequest, gin.H{"error": "渠道类型仅支持 openai、anthropic、gemini、openrouter、systemone 或 cloudflare"})
 				return
 			}
 		}
@@ -2046,7 +2061,7 @@ func registerUserRouterRoutes(userAPI *gin.RouterGroup) {
 			upType = "openai"
 		}
 		if !validUserUpstreamType(upType) {
-			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "渠道类型仅支持 openai、anthropic、gemini、systemone 或 cloudflare"})
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "渠道类型仅支持 openai、anthropic、gemini、openrouter、systemone 或 cloudflare"})
 			return
 		}
 		if err := validatePublicUpstreamURL(baseURL, false); err != nil {

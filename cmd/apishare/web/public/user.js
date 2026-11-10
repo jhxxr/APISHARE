@@ -708,7 +708,12 @@
     const baseInput = $("#byokBaseURL");
     const modelsInput = $("#byokModels");
     if (baseInput) {
-      if (type === "systemone") {
+      if (type === "openrouter") {
+        baseInput.placeholder = "例如：https://openrouter.ai/api/alpha/decisions";
+        if (autoFillModels && !baseInput.value.trim()) {
+          baseInput.value = "https://openrouter.ai/api/alpha/decisions";
+        }
+      } else if (type === "systemone") {
         baseInput.placeholder = "例如：https://api.typesafe.ai/v1/systemone";
       } else if (type === "cloudflare") {
         baseInput.placeholder = "例如：https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/ai/run";
@@ -721,8 +726,13 @@
       }
     }
     if (modelsInput) {
-      if (type === "systemone") {
-        modelsInput.placeholder = "默认自动绑定：jev, Julia-1（也可留空）";
+      if (type === "openrouter") {
+        modelsInput.placeholder = "默认自动绑定：parallel/decisions-fast:free, parallel/decisions-fast（也可留空）";
+        if (autoFillModels && !modelsInput.value.trim()) {
+          modelsInput.value = "parallel/decisions-fast:free, parallel/decisions-fast";
+        }
+      } else if (type === "systemone") {
+        modelsInput.placeholder = "默认自动绑定：jev, Julia-1, parallel/decisions-fast:free（也可留空）";
         if (autoFillModels && !modelsInput.value.trim()) {
           modelsInput.value = "jev, Julia-1";
         }
@@ -918,13 +928,10 @@
       }
     }
 
-    // Populate user BYOK upstreams select for classifier
+    // Reset upstream classifier channel to automatic selection (0)
     const upSelect = $("#userClassifierUpstreamSelect");
-    const ups = Array.isArray(v.upstreams) ? v.upstreams : [];
     if (upSelect) {
-      upSelect.innerHTML = `<option value="0">自动选择包含该模型的自带渠道</option>`
-        + ups.map((u) => `<option value="${u.id}">${esc(u.name)} (${esc(u.type)})</option>`).join("");
-      upSelect.value = String(v.user_classifier_upstream || 0);
+      upSelect.value = "0";
     }
 
     if ($("#userClassifierSource")) $("#userClassifierSource").value = v.classifier_source || "heuristic";
@@ -943,9 +950,9 @@
     // Populate datalists & bound model selects
     const personalModels = Array.isArray(v.personal_models) ? v.personal_models : [];
     const siteModels = Array.isArray(v.site_models) ? v.site_models : [];
-    const allModels = Array.from(new Set([...personalModels, ...siteModels]));
+    const allModels = Array.from(new Set([...personalModels, ...siteModels])).sort();
     if ($("#userPersonalModelsList")) {
-      $("#userPersonalModelsList").innerHTML = personalModels.map((m) => `<option value="${esc(m)}"></option>`).join("");
+      $("#userPersonalModelsList").innerHTML = allModels.map((m) => `<option value="${esc(m)}"></option>`).join("");
     }
     if ($("#userAllCandidateModelsList")) {
       $("#userAllCandidateModelsList").innerHTML = allModels.map((m) => `<option value="${esc(m)}"></option>`).join("");
@@ -957,32 +964,28 @@
     renderUserTiersEditor();
   }
 
-  function populateUserDefaultModelSelect() {
-    const sel = $("#userRouterDefaultModelSelect");
-    if (!sel) return;
+  function collectUserAvailableModelList() {
     const v = state.routerView || {};
     const personalModels = Array.isArray(v.personal_models) ? v.personal_models : [];
     const siteModels = Array.isArray(v.site_models) ? v.site_models : [];
+    return Array.from(new Set([...personalModels, ...siteModels])).filter(Boolean).sort();
+  }
+
+  function populateUserDefaultModelSelect() {
+    const sel = $("#userRouterDefaultModelSelect");
+    if (!sel) return;
+    const allModels = collectUserAvailableModelList();
     const current = ($("#userRouterDefaultModel")?.value || "").trim();
-    if (!personalModels.length && !siteModels.length) {
-      sel.innerHTML = `<option value="">（尚未绑定渠道模型）</option>`
+    if (!allModels.length) {
+      sel.innerHTML = `<option value="">（当前无可用模型）</option>`
         + (current ? `<option value="${esc(current)}" selected>${esc(current)}</option>` : "");
       sel.value = current;
       return;
     }
-    let html = `<option value="">从已绑定模型中选择…</option>`;
-    if (personalModels.length) {
-      html += `<optgroup label="我的自带渠道模型 (免站点额度)">`
-        + personalModels.map((m) => `<option value="${esc(m)}"${current === m ? " selected" : ""}>[我的渠道] ${esc(m)}</option>`).join("")
-        + `</optgroup>`;
-    }
-    if (siteModels.length) {
-      html += `<optgroup label="站点已授权模型">`
-        + siteModels.map((m) => `<option value="${esc(m)}"${current === m ? " selected" : ""}>[站点模型] ${esc(m)}</option>`).join("")
-        + `</optgroup>`;
-    }
-    if (current && !personalModels.includes(current) && !siteModels.includes(current)) {
-      html += `<optgroup label="自定义模型"><option value="${esc(current)}" selected>${esc(current)} (自定义)</option></optgroup>`;
+    let html = `<option value="">选择可用模型作为兜底模型…</option>`
+      + allModels.map((m) => `<option value="${esc(m)}"${current === m ? " selected" : ""}>${esc(m)}</option>`).join("");
+    if (current && !allModels.includes(current)) {
+      html += `<option value="${esc(current)}" selected>${esc(current)}</option>`;
     }
     sel.innerHTML = html;
     sel.value = current;
@@ -991,32 +994,18 @@
   function populateUserUpstreamClassifierModelSelect() {
     const sel = $("#userUpstreamClassifierModelSelect");
     if (!sel) return;
-    const v = state.routerView || {};
-    const ups = Array.isArray(v.upstreams) ? v.upstreams : [];
-    const selectedUpId = Number($("#userClassifierUpstreamSelect")?.value || 0);
+    const allModels = collectUserAvailableModelList();
     const current = ($("#userUpstreamClassifierModel")?.value || "").trim();
-
-    const targetUps = selectedUpId > 0 ? ups.filter((u) => Number(u.id) === selectedUpId) : ups;
-    const hasAnyBound = targetUps.some((u) => Array.isArray(u.models) && u.models.length > 0);
-    if (!hasAnyBound) {
-      sel.innerHTML = `<option value="">（请先在个人渠道中绑定模型）</option>`
+    if (!allModels.length) {
+      sel.innerHTML = `<option value="">（当前无可用模型）</option>`
         + (current ? `<option value="${esc(current)}" selected>${esc(current)}</option>` : "");
       sel.value = current;
       return;
     }
-
-    let html = `<option value="">从自带渠道已绑定模型中选择…</option>`;
-    const covered = new Set();
-    targetUps.forEach((u) => {
-      const models = Array.isArray(u.models) ? u.models : [];
-      if (!models.length) return;
-      models.forEach((m) => covered.add(m));
-      html += `<optgroup label="${esc(`渠道：${u.name} (${u.type})`)}">`
-        + models.map((m) => `<option value="${esc(m)}"${current === m ? " selected" : ""}>${esc(m)} · [${esc(u.name)}]</option>`).join("")
-        + `</optgroup>`;
-    });
-    if (current && !covered.has(current)) {
-      html += `<optgroup label="自定义模型"><option value="${esc(current)}" selected>${esc(current)} (自定义)</option></optgroup>`;
+    let html = `<option value="">选择可用模型作为决策模型…</option>`
+      + allModels.map((m) => `<option value="${esc(m)}"${current === m ? " selected" : ""}>${esc(m)}</option>`).join("");
+    if (current && !allModels.includes(current)) {
+      html += `<option value="${esc(current)}" selected>${esc(current)}</option>`;
     }
     sel.innerHTML = html;
     sel.value = current;
@@ -1029,6 +1018,28 @@
     $("#userExternalClassifierWrap")?.classList.toggle("hidden", src !== "user_external");
     const extProvider = $("#userExternalClassifierProvider")?.value || "cloudflare";
     $("#userExternalCfAccountField")?.classList.toggle("hidden", extProvider !== "cloudflare");
+    const modelInput = $("#userExternalClassifierModel");
+    const endpointInput = $("#userExternalEndpoint");
+    if (extProvider === "openrouter") {
+      if (modelInput) {
+        modelInput.placeholder = "parallel/decisions-fast:free";
+        if (!modelInput.value.trim() || modelInput.value.startsWith("@cf/")) {
+          modelInput.value = "parallel/decisions-fast:free";
+        }
+      }
+      if (endpointInput) {
+        endpointInput.placeholder = "https://openrouter.ai/api/alpha/decisions (可留空自动使用)";
+      }
+    } else if (extProvider === "cloudflare") {
+      if (modelInput) modelInput.placeholder = "@cf/cloudflare/clef-flash";
+      if (endpointInput) endpointInput.placeholder = "留空自动拼接 Cloudflare Workers AI 地址";
+    } else if (extProvider === "jev" || extProvider === "systemone") {
+      if (modelInput) modelInput.placeholder = "jev 或 Julia-1";
+      if (endpointInput) endpointInput.placeholder = "https://api.typesafe.ai/v1/systemone";
+    } else {
+      if (modelInput) modelInput.placeholder = "例如：decision-model-preview";
+      if (endpointInput) endpointInput.placeholder = "https://.../v1/chat/completions";
+    }
   }
 
   function sourceBadgeForCandidate(model) {
@@ -1057,8 +1068,7 @@
   function renderUserTiersEditor() {
     const host = $("#userTiersEditor");
     if (!host) return;
-    const personalModels = Array.isArray(state.routerView?.personal_models) ? state.routerView.personal_models : [];
-    const siteModels = Array.isArray(state.routerView?.site_models) ? state.routerView.site_models : [];
+    const allModels = collectUserAvailableModelList();
 
     host.innerHTML = USER_TIER_META.map(({ id, title }) => {
       const list = state.routerTiers[id] || [];
@@ -1077,19 +1087,11 @@
           </div>`).join("")
         : `<div class="muted" style="font-size:11px;padding:6px 2px">暂无候选模型，命中本档时将顺延下一档或默认模型</div>`;
 
-      const unusedPersonal = personalModels.filter((m) => !list.includes(m));
-      const unusedSite = siteModels.filter((m) => !list.includes(m));
-      let optGroups = `<option value="">+ 选择自带模型或站点模型加入本档…</option>`;
-      if (unusedPersonal.length) {
-        optGroups += `<optgroup label="我的自带渠道模型 (免站点额度)">`
-          + unusedPersonal.map((m) => `<option value="${esc(m)}">[我的渠道] ${esc(m)}</option>`).join("")
-          + `</optgroup>`;
-      }
-      if (unusedSite.length) {
-        optGroups += `<optgroup label="站点已授权模型">`
-          + unusedSite.map((m) => `<option value="${esc(m)}">[站点模型] ${esc(m)}</option>`).join("")
-          + `</optgroup>`;
-      }
+      const unusedModels = allModels.filter((m) => !list.includes(m));
+      const optGroups = unusedModels.length
+        ? `<option value="">+ 选择可用模型加入本档…</option>`
+          + unusedModels.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join("")
+        : `<option value="">${allModels.length ? "（所有可用模型均已添加）" : "（当前无可用模型）"}</option>`;
 
       return `<div class="user-tier-card" data-user-tier="${id}">
         <div class="user-tier-head">

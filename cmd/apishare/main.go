@@ -113,8 +113,15 @@ func newRouter() *gin.Engine {
 	v1.POST("/responses/compact", relayHandler(FormatOpenAIResponse, true))
 	v1.POST("/messages", relayHandler(FormatAnthropic, false))
 	v1.POST("/embeddings", relayHandler(FormatOpenAIChat, true))
+	v1.POST("/decisions", decisionsRelayHandler())
+	v1.POST("/alpha/decisions", decisionsRelayHandler())
+	v1.POST("/systemone", decisionsRelayHandler())
 	registerAudioRoutes(v1)
 	registerModelRoutes(v1)
+
+	apiAlpha := r.Group("/api/alpha")
+	apiAlpha.Use(corsV1(), keyAuth(), trackRequestClient(), keyRateLimit())
+	apiAlpha.POST("/decisions", decisionsRelayHandler())
 
 	v1beta := r.Group("/v1beta")
 	v1beta.Use(corsV1(), keyAuth(), trackRequestClient(), keyRateLimit())
@@ -127,7 +134,7 @@ func newRouter() *gin.Engine {
 	r.NoRoute(func(c *gin.Context) {
 		// Handle generic API preflights here: a wildcard OPTIONS route would
 		// conflict with the explicit model preflights and panic during startup.
-		if c.Request.Method == http.MethodOptions && strings.HasPrefix(c.Request.URL.Path, "/v1/") {
+		if c.Request.Method == http.MethodOptions && (strings.HasPrefix(c.Request.URL.Path, "/v1/") || strings.HasPrefix(c.Request.URL.Path, "/api/alpha/")) {
 			corsV1()(c)
 			return
 		}
@@ -142,7 +149,7 @@ func corsV1() gin.HandlerFunc {
 		h := c.Writer.Header()
 		h.Set("Access-Control-Allow-Origin", "*")
 		h.Set("Access-Control-Allow-Headers",
-			"Authorization, Content-Type, OpenAI-Beta, x-api-key, x-goog-api-key, anthropic-version, anthropic-beta, X-Session-Id, X-Conversation-Id")
+			"Authorization, Content-Type, OpenAI-Beta, x-api-key, x-goog-api-key, anthropic-version, anthropic-beta, X-Session-Id, X-Conversation-Id, HTTP-Referer, X-OpenRouter-Title, X-Title")
 		h.Set("Access-Control-Expose-Headers", "Location, X-Request-Id, Retry-After, X-APISHARE-RateLimit-Source, X-APISHARE-Router-Tier, X-APISHARE-Router-Model, X-APISHARE-Router-Cause, X-APISHARE-Router-Latency-MS, X-APISHARE-Router-Shadow, X-APISHARE-Router-Shadow-Model")
 		h.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		if c.Request.Method == http.MethodOptions {

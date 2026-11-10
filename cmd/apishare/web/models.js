@@ -20,11 +20,13 @@ function renderModelChips() {
     chip.append(brand.firstElementChild, text, button); box.append(chip);
   });
   const upType = typeof editorUpstreamType === "function" ? editorUpstreamType() : "";
-  const emptyLabel = upType === "systemone"
-    ? "留空默认绑定 jev, Julia-1"
-    : upType === "cloudflare"
-      ? "留空默认绑定 @cf/cloudflare/clef-flash, @cf/cloudflare/clef"
-      : "留空允许全部模型";
+  const emptyLabel = upType === "openrouter"
+    ? "留空默认绑定 parallel/decisions-fast:free, parallel/decisions-fast"
+    : upType === "systemone"
+      ? "留空默认绑定 jev, Julia-1, parallel/decisions-fast:free"
+      : upType === "cloudflare"
+        ? "留空默认绑定 @cf/cloudflare/clef-flash, @cf/cloudflare/clef"
+        : "留空允许全部模型";
   $("editModelInput").placeholder = editProbe.selected.size ? "继续添加模型…" : "输入模型名，按回车添加";
   $("selectedModelCount").textContent = editProbe.selected.size ? "已添加 " + editProbe.selected.size + " 个模型" : emptyLabel;
   refreshModelSuggestions();

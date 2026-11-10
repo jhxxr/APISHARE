@@ -880,6 +880,25 @@ func TestAutoRouterUpstreamBoundModelsAndNoPlaceholders(t *testing.T) {
 	if len(parsed.UpstreamModels) != 2 {
 		t.Fatalf("expected 2 upstream_models groups, got %d", len(parsed.UpstreamModels))
 	}
+
+	// 3. Verify /admin/api/keys/models ("分配模型给key") and /admin/api/models/overview ("模型列表") match available_models
+	reqKeyModels := httptest.NewRequest(http.MethodGet, "/admin/api/keys/models", nil)
+	reqKeyModels.Header.Set("Authorization", "Bearer "+adminToken)
+	wKeyModels := httptest.NewRecorder()
+	router.ServeHTTP(wKeyModels, reqKeyModels)
+	if wKeyModels.Code != http.StatusOK {
+		t.Fatalf("expected GET /admin/api/keys/models 200, got %d: %s", wKeyModels.Code, wKeyModels.Body.String())
+	}
+	var keyModelsResp struct {
+		Models []string `json:"models"`
+	}
+	if err := json.Unmarshal(wKeyModels.Body.Bytes(), &keyModelsResp); err != nil {
+		t.Fatalf("unmarshal /admin/api/keys/models: %v", err)
+	}
+	if strings.Join(keyModelsResp.Models, ",") != expectedAvail {
+		t.Fatalf("expected /admin/api/keys/models=%q to match router available_models=%q",
+			strings.Join(keyModelsResp.Models, ","), strings.Join(parsed.AvailableModels, ","))
+	}
 }
 
 func TestDecisionModelUpstreamAddProbeTestAndClassify(t *testing.T) {
@@ -918,7 +937,7 @@ func TestDecisionModelUpstreamAddProbeTestAndClassify(t *testing.T) {
 	defer mockCloudflare.Close()
 
 	// 1. Validate upstream types for Admin & User BYOK
-	for _, tp := range []string{"systemone", "cloudflare"} {
+	for _, tp := range []string{"openrouter", "systemone", "cloudflare"} {
 		if !validUpstreamType(tp) {
 			t.Fatalf("expected validUpstreamType(%q) == true", tp)
 		}
@@ -927,13 +946,21 @@ func TestDecisionModelUpstreamAddProbeTestAndClassify(t *testing.T) {
 		}
 	}
 
-	// 2. Probe models on systemone and cloudflare decision upstreams
+	// 2. Probe models on openrouter, systemone and cloudflare decision upstreams
 	sysModels, err := probeUpstreamModelsWithClient(context.Background(), "systemone", mockSystemOne.URL, "sk-jev-test", mockSystemOne.Client())
 	if err != nil {
 		t.Fatalf("probeUpstreamModelsWithClient(systemone): %v", err)
 	}
 	if strings.Join(sysModels, ",") != "jev,Julia-1" {
 		t.Fatalf("expected systemone probe models jev,Julia-1, got %v", sysModels)
+	}
+
+	orModels, err := probeUpstreamModelsWithClient(context.Background(), "openrouter", mockSystemOne.URL+"/api/alpha/decisions", "sk-or-test", mockSystemOne.Client())
+	if err != nil {
+		t.Fatalf("probeUpstreamModelsWithClient(openrouter): %v", err)
+	}
+	if strings.Join(orModels, ",") != "parallel/decisions-fast:free,parallel/decisions-fast" {
+		t.Fatalf("expected openrouter probe models parallel/decisions-fast:free,parallel/decisions-fast, got %v", orModels)
 	}
 
 	cfBaseURL := mockCloudflare.URL + "/client/v4/accounts/acc123/ai/run"
@@ -1030,5 +1057,125 @@ func TestDecisionModelUpstreamAddProbeTestAndClassify(t *testing.T) {
 	}
 	if !strings.Contains(testResp.text(), `"tier":"COMPLEX"`) {
 		t.Fatalf("expected testUpstreamModel response to contain decision JSON with tier COMPLEX, got %s", testResp.text())
+	}
+
+	// 6. Test OpenRouter Decisions upstream + direct gateway POST /api/alpha/decisions (noul / choice / score)
+	var orGotPath, orGotReferer, orGotTitle, orGotBody string
+	mockOpenRouter := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		orGotPath = r.URL.Path
+		orGotReferer = r.Header.Get("HTTP-Referer")
+		orGotTitle = r.Header.Get("X-OpenRouter-Title")
+		orGotBody = string(b)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"answers": {
+				"is_urgent": {"noul": 0.92},
+				"department": {"choice": "billing", "probabilities": {"billing": 0.91, "technical": 0.06, "sales": 0.03}},
+				"frustration": {"score": 0.88}
+			}
+		}`))
+	}))
+	defer mockOpenRouter.Close()
+
+	orUp := &Upstream{
+		Name:     "OpenRouter-Decisions-Upstream",
+		Type:     "openrouter",
+		BaseURL:  mockOpenRouter.URL + "/api/v1", // Verify /api/v1 auto-normalizes to /api/alpha/decisions!
+		APIKey:   "sk-or-v1-test",
+		Models:   "",
+		ModelMap: "{}",
+		Priority: 2,
+		Weight:   1,
+		Enabled:  true,
+	}
+	if err := dbInsertUpstream(orUp); err != nil {
+		t.Fatalf("dbInsertUpstream(openrouter): %v", err)
+	}
+	invalidateRoutingSnapshot()
+
+	rawKey := "sk-decisions-client-key"
+	ak := &ApiKey{
+		Name:        "decisions-user",
+		Key:         rawKey,
+		QPS:         50,
+		Concurrency: 10,
+		Models:      "parallel/decisions-fast:free,jev",
+		QuotaUSD:    10.0,
+		Enabled:     true,
+	}
+	if err := dbInsertKey(ak); err != nil {
+		t.Fatalf("dbInsertKey: %v", err)
+	}
+
+	router := newRouter()
+	decisionsReqJSON := `{
+		"model": "parallel/decisions-fast:free",
+		"state": "Help! My payouts have been failing for 3 days.",
+		"questions": {
+			"is_urgent": {
+				"type": "noul",
+				"instructions": "Does this message convey urgency?",
+				"criteria": {"true": "Explicitly time-sensitive", "false": "No urgency expressed"}
+			},
+			"department": {
+				"type": "choice",
+				"instructions": "Which team should handle this?",
+				"criteria": {"billing": "Payments, invoicing, refunds", "technical": "Bugs, outages, integrations", "sales": "Pricing, upgrades, new accounts"}
+			},
+			"frustration": {
+				"type": "score",
+				"instructions": "How frustrated is the customer?",
+				"criteria": ["Calm", "Frustrated", "Very angry"]
+			}
+		}
+	}`
+	reqDec := httptest.NewRequest(http.MethodPost, "/api/alpha/decisions", strings.NewReader(decisionsReqJSON))
+	reqDec.Header.Set("Authorization", "Bearer "+rawKey)
+	reqDec.Header.Set("Content-Type", "application/json")
+	reqDec.Header.Set("HTTP-Referer", "https://example.com")
+	reqDec.Header.Set("X-OpenRouter-Title", "MyApp")
+	wDec := httptest.NewRecorder()
+	router.ServeHTTP(wDec, reqDec)
+
+	if wDec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK from POST /api/alpha/decisions, got %d: %s", wDec.Code, wDec.Body.String())
+	}
+	mu.Lock()
+	gotORPath, gotORRef, gotORTitle, gotORBody := orGotPath, orGotReferer, orGotTitle, orGotBody
+	mu.Unlock()
+	if gotORPath != "/api/alpha/decisions" {
+		t.Fatalf("expected OpenRouter upstream path /api/alpha/decisions, got %q", gotORPath)
+	}
+	if gotORRef != "https://example.com" || gotORTitle != "MyApp" {
+		t.Fatalf("expected HTTP-Referer and X-OpenRouter-Title forwarded, got referer=%q title=%q", gotORRef, gotORTitle)
+	}
+	if !strings.Contains(gotORBody, `"model":"parallel/decisions-fast:free"`) || !strings.Contains(gotORBody, `"is_urgent"`) {
+		t.Fatalf("unexpected OpenRouter request body: %s", gotORBody)
+	}
+	// Verify @openrouter/sdk type fields ("noul", "choice", "score") are present in answers
+	var decResp struct {
+		Answers map[string]struct {
+			Type          string             `json:"type"`
+			Noul          float64            `json:"noul"`
+			Choice        string             `json:"choice"`
+			Probabilities map[string]float64 `json:"probabilities"`
+			Score         float64            `json:"score"`
+		} `json:"answers"`
+	}
+	if err := json.Unmarshal(wDec.Body.Bytes(), &decResp); err != nil {
+		t.Fatalf("unmarshal /api/alpha/decisions response: %v", err)
+	}
+	if decResp.Answers["is_urgent"].Type != "noul" || decResp.Answers["is_urgent"].Noul < 0.9 {
+		t.Fatalf("unexpected is_urgent answer: %+v", decResp.Answers["is_urgent"])
+	}
+	if decResp.Answers["department"].Type != "choice" || decResp.Answers["department"].Choice != "billing" {
+		t.Fatalf("unexpected department answer: %+v", decResp.Answers["department"])
+	}
+	if decResp.Answers["frustration"].Type != "score" || decResp.Answers["frustration"].Score < 0.8 {
+		t.Fatalf("unexpected frustration answer: %+v", decResp.Answers["frustration"])
 	}
 }

@@ -67,14 +67,14 @@ func validOpenAIProtocol(p string) bool {
 }
 
 func validUpstreamType(t string) bool {
-	return t == "openai" || t == "cliproxy" || t == "opencode" || t == openCodeFreeType || t == "cline" || t == "anthropic" || t == "gemini" || t == "systemone" || t == "cloudflare"
+	return t == "openai" || t == "cliproxy" || t == "opencode" || t == openCodeFreeType || t == "cline" || t == "anthropic" || t == "gemini" || t == "systemone" || t == "openrouter" || t == "cloudflare"
 }
 
 func validUpstreamProtocol(upstreamType, protocol string) bool {
 	if upstreamType == "cliproxy" {
 		return protocol == "" || protocol == "auto"
 	}
-	if upstreamType == "cline" || upstreamType == "systemone" || upstreamType == "cloudflare" {
+	if upstreamType == "cline" || upstreamType == "systemone" || upstreamType == "openrouter" || upstreamType == "cloudflare" {
 		return protocol == "" || protocol == "auto" || protocol == "chat"
 	}
 	if upstreamType == "opencode" || upstreamType == openCodeFreeType {

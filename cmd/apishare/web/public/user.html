@@ -250,8 +250,8 @@
               <label class="user-field">
                 <span>兜底默认模型 (Default)</span>
                 <div class="user-model-select-combo">
-                  <select id="userRouterDefaultModelSelect" aria-label="从已绑定模型选择兜底默认模型">
-                    <option value="">从已绑定模型中选择…</option>
+                  <select id="userRouterDefaultModelSelect" aria-label="从可用模型选择兜底默认模型">
+                    <option value="">选择可用模型…</option>
                   </select>
                   <input id="userRouterDefaultModel" type="text" list="userAllCandidateModelsList" placeholder="或手动输入模型名">
                 </div>
@@ -269,7 +269,7 @@
                   <select id="userClassifierSource">
                     <option value="heuristic">本地毫秒级规则打分 (&lt;1ms · 零成本推荐)</option>
                     <option value="gateway_shared">使用站点开放共享的决策模型</option>
-                    <option value="user_upstream">使用我的自带渠道模型分档 (免站点额度)</option>
+                    <option value="user_upstream">使用已配置的可用决策模型</option>
                     <option value="user_external">自带外部专用决策接口 (Clef / Jev / SystemOne)</option>
                   </select>
                 </label>
@@ -280,20 +280,15 @@
                   <small>仅列出站点管理员开放共享的决策模型（站点私有决策模型已隔离）</small>
                 </label>
 
-                <div id="userUpstreamClassifierWrap" class="user-form-grid-2 user-grid-span-2 hidden">
+                <div id="userUpstreamClassifierWrap" class="user-field hidden">
+                  <input type="hidden" id="userClassifierUpstreamSelect" value="0">
                   <label class="user-field">
-                    <span>指定自带渠道</span>
-                    <select id="userClassifierUpstreamSelect">
-                      <option value="0">自动选择包含该模型的自带渠道</option>
-                    </select>
-                  </label>
-                  <label class="user-field">
-                    <span>用于分档的自带模型名称</span>
+                    <span>选择用于分档的决策模型</span>
                     <div class="user-model-select-combo">
-                      <select id="userUpstreamClassifierModelSelect" aria-label="从自带渠道已绑定模型中选择决策模型">
-                        <option value="">从渠道绑定模型中选择…</option>
+                      <select id="userUpstreamClassifierModelSelect" aria-label="从可用模型列表中选择决策模型">
+                        <option value="">选择可用模型…</option>
                       </select>
-                      <input id="userUpstreamClassifierModel" type="text" list="userPersonalModelsList" placeholder="或手动输入模型名">
+                      <input id="userUpstreamClassifierModel" type="text" list="userAllCandidateModelsList" placeholder="或手动输入模型名">
                     </div>
                   </label>
                 </div>
@@ -303,6 +298,7 @@
                     <span>外部决策协议</span>
                     <select id="userExternalClassifierProvider">
                       <option value="cloudflare">Cloudflare Workers AI (Clef)</option>
+                      <option value="openrouter">OpenRouter Decisions (/api/alpha/decisions · 免费 parallel/decisions-fast:free)</option>
                       <option value="jev">TypeSafe Jev (/v1/systemone)</option>
                       <option value="systemone">SystemOne 兼容端点 (/v1/systemone)</option>
                       <option value="openai_chat">OpenAI Chat 兼容端点</option>
@@ -435,6 +431,7 @@
               <option value="openai">OpenAI 兼容 (/v1/chat/completions)</option>
               <option value="anthropic">Anthropic (/v1/messages)</option>
               <option value="gemini">Google Gemini (/v1beta/models)</option>
+              <option value="openrouter">OpenRouter Decisions 决策模型 (/api/alpha/decisions)</option>
               <option value="systemone">SystemOne / Jev 决策模型 (/v1/systemone)</option>
               <option value="cloudflare">Cloudflare Clef 决策模型 (Workers AI)</option>
             </select>

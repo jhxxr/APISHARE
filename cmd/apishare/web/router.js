@@ -284,80 +284,62 @@ function upstreamModelGroupsForRouter() {
 function availableGatewayModelOptions() {
   const vm = (routerDraft?.virtual_model || routerConfigCache?.virtual_model || "auto").toLowerCase();
   const set = new Set();
-  (routerConfigCache?.available_models || []).forEach((m) => {
-    if (m && m.toLowerCase() !== vm) set.add(m);
-  });
+  const add = (m) => {
+    const trimmed = String(m || "").trim();
+    if (trimmed && trimmed.toLowerCase() !== vm) set.add(trimmed);
+  };
+  (routerConfigCache?.available_models || []).forEach(add);
+  (modelOverviewCache?.models || []).forEach((item) => add(item?.model));
+  if (typeof keyModelPickers !== "undefined" && Array.isArray(keyModelPickers?.key?.models)) {
+    keyModelPickers.key.models.forEach(add);
+  }
   const groups = upstreamModelGroupsForRouter();
   groups.forEach((g) => {
     if (g.enabled) {
-      g.models.forEach((m) => { if (m && m.toLowerCase() !== vm) set.add(m); });
+      g.models.forEach(add);
     }
   });
-  if (set.size === 0) {
-    groups.forEach((g) => {
-      g.models.forEach((m) => { if (m && m.toLowerCase() !== vm) set.add(m); });
-    });
-  }
   const healthMap = routerConfigCache?.model_health || {};
   Object.keys(healthMap).forEach((m) => {
     const info = healthMap[m];
-    if (m && m.toLowerCase() !== vm && info && info.status !== "missing" && Number(info.total_count || 0) > 0) {
-      set.add(m);
+    if (info && info.status !== "missing" && Number(info.total_count || 0) > 0) {
+      add(m);
     }
   });
   return [...set].sort();
 }
 
-function buildUpstreamModelSelectOptionsHTML(excludeList = [], placeholderText = "+ 从上游已绑定模型选择…", selectedValue = "") {
+function buildUpstreamModelSelectOptionsHTML(excludeList = [], placeholderText = "+ 选择可用模型…", selectedValue = "") {
   const excludeSet = new Set(excludeList || []);
-  const groups = upstreamModelGroupsForRouter();
   const allModels = availableGatewayModelOptions();
-  if (!groups.length && !allModels.length) {
-    let html = '<option value="">（当前无已绑定模型的上游，请先在「上游服务」绑定模型）</option>';
+  if (!allModels.length) {
+    let html = '<option value="">（当前无可用模型，请先在「上游服务」配置模型）</option>';
     if (selectedValue) {
-      html += '<option value="' + esc(selectedValue) + '" selected>' + esc(selectedValue) + ' (未绑定上游)</option>';
+      html += '<option value="' + esc(selectedValue) + '" selected>' + esc(selectedValue) + '</option>';
     }
     return html;
   }
 
-  let optGroupsHtml = "";
-  const coveredInGroups = new Set();
-  let totalAvailable = 0;
+  const selectable = allModels.filter((m) => !excludeSet.has(m));
+  let optionsHtml = selectable
+    .map((m) => '<option value="' + esc(m) + '"' + (selectedValue === m ? " selected" : "") + '>' + esc(m) + '</option>')
+    .join("");
 
-  groups.forEach((g) => {
-    const models = g.models.filter((m) => !excludeSet.has(m));
-    g.models.forEach((m) => coveredInGroups.add(m));
-    if (!models.length) return;
-    totalAvailable += models.length;
-    const stateLabel = !g.enabled ? " · 已停用" : (g.healthy ? " · 健康" : " · 冷却中");
-    optGroupsHtml += '<optgroup label="' + esc("上游：" + g.name + " (" + g.type + stateLabel + ")") + '">'
-      + models.map((m) => '<option value="' + esc(m) + '"' + (selectedValue === m ? " selected" : "") + '>' + esc(m) + ' · [' + esc(g.name) + ']</option>').join("")
-      + '</optgroup>';
-  });
-
-  const uncovered = allModels.filter((m) => !coveredInGroups.has(m) && !excludeSet.has(m));
-  if (uncovered.length) {
-    totalAvailable += uncovered.length;
-    optGroupsHtml += '<optgroup label="上游已发现模型">'
-      + uncovered.map((m) => '<option value="' + esc(m) + '"' + (selectedValue === m ? " selected" : "") + '>' + esc(m) + '</option>').join("")
-      + '</optgroup>';
+  if (selectedValue && !selectable.includes(selectedValue)) {
+    optionsHtml = '<option value="' + esc(selectedValue) + '" selected>' + esc(selectedValue) + '</option>' + optionsHtml;
   }
 
-  if (selectedValue && !allModels.includes(selectedValue) && !coveredInGroups.has(selectedValue)) {
-    optGroupsHtml = '<optgroup label="当前自定义模型"><option value="' + esc(selectedValue) + '" selected>' + esc(selectedValue) + ' (自定义)</option></optgroup>' + optGroupsHtml;
+  if (!selectable.length && !selectedValue) {
+    return '<option value="">（所有可用模型均已添加）</option>';
   }
-
-  if (!totalAvailable && !selectedValue) {
-    return '<option value="">（所有上游已绑定模型均已添加）</option>';
-  }
-  return '<option value="">' + esc(placeholderText) + '</option>' + optGroupsHtml;
+  return '<option value="">' + esc(placeholderText) + '</option>' + optionsHtml;
 }
 
 function populateRouterDefaultModelSelect() {
   const sel = $("routerDefaultModelSelect");
   if (!sel || !routerDraft) return;
   const current = (routerDraft.default_model || "").trim();
-  sel.innerHTML = buildUpstreamModelSelectOptionsHTML([], "从上游已绑定模型选择兜底模型…", current);
+  sel.innerHTML = buildUpstreamModelSelectOptionsHTML([], "选择可用模型作为兜底模型…", current);
   sel.value = current;
 }
 
@@ -396,7 +378,7 @@ function syncRouterGatewayClassifierSelect() {
   if (hasOption) {
     sel.value = current;
   } else {
-    sel.innerHTML = buildUpstreamModelSelectOptionsHTML([], "从上游已绑定模型中选择决策模型…", current);
+    sel.innerHTML = buildUpstreamModelSelectOptionsHTML([], "选择可用模型作为决策模型…", current);
     sel.value = current;
   }
 }
@@ -406,7 +388,7 @@ function renderRouterSharedClassifierControls() {
   const list = Array.isArray(routerDraft.shared_classifier_models) ? routerDraft.shared_classifier_models : [];
   const sel = $("routerSharedClassifierModelSelect");
   if (sel) {
-    sel.innerHTML = buildUpstreamModelSelectOptionsHTML(list, "+ 从上游已绑定模型选择添加到共享白名单…");
+    sel.innerHTML = buildUpstreamModelSelectOptionsHTML(list, "+ 选择可用模型添加到共享白名单…");
   }
   const chips = $("routerSharedClassifierChips");
   if (chips) {
@@ -490,7 +472,7 @@ function renderRouterTiersEditor() {
 
   const noUpstreamBanner = !allModels.length
     ? '<div class="router-candidate-empty" style="margin-bottom:8px;border-style:dashed">'
-      + '当前尚未检测到「上游服务」绑定的模型。请先前往左侧 <strong>上游服务</strong> 为渠道绑定可用模型，即可在下方下拉框中直接选择。'
+      + '当前尚未检测到可用模型。请先前往左侧 <strong>上游服务</strong> 配置模型，即可在下方模型列表中直接选择。'
       + '</div>'
     : '';
 
@@ -514,10 +496,10 @@ function renderRouterTiersEditor() {
             + '<button type="button" class="router-order-btn remove" title="从本档移除" aria-label="移除 ' + esc(model) + '" onclick="removeRouterCandidate(\'' + id + '\',' + idx + ')">×</button>'
             + '</div></div></div>';
         }).join("")
-      : '<div class="router-candidate-empty">当前档位暂无候选模型，可从下方下拉框选择上游已绑定的模型添加（为空时自动顺延到更高档位或兜底默认模型）</div>';
+      : '<div class="router-candidate-empty">当前档位暂无候选模型，可从下方可用模型列表中选择添加（为空时自动顺延到更高档位或兜底默认模型）</div>';
 
-    const quickSelectHtml = '<select class="router-tier-select" aria-label="从上游已绑定模型添加到 ' + id + '" onchange="if(this.value){addRouterCandidate(\'' + id + '\',this.value);this.value=\'\';}">'
-      + buildUpstreamModelSelectOptionsHTML(list, "+ 从上游已绑定模型选择加入 " + id + "…")
+    const quickSelectHtml = '<select class="router-tier-select" aria-label="选择可用模型添加到 ' + id + '" onchange="if(this.value){addRouterCandidate(\'' + id + '\',this.value);this.value=\'\';}">'
+      + buildUpstreamModelSelectOptionsHTML(list, "+ 选择可用模型加入 " + id + "…")
       + '</select>';
 
     return '<div class="router-tier-card" data-tier="' + id + '">'
@@ -543,7 +525,7 @@ function renderRouterTiersEditor() {
   if (defHealth) {
     defHealth.innerHTML = routerDraft.default_model
       ? healthBadgeForRouterModel(routerDraft.default_model)
-      : '<span class="router-health-pill missing" title="请从上游已绑定模型中选择兜底默认模型">未选择</span>';
+      : '<span class="router-health-pill missing" title="请从可用模型中选择兜底默认模型">未选择</span>';
   }
 }
 
@@ -618,6 +600,13 @@ function selectRouterClassifier(provider) {
   routerDraft.classifier = provider;
   if (provider === "cloudflare" && (!routerDraft.classifier_model || !routerDraft.classifier_model.startsWith("@cf/"))) {
     routerDraft.classifier_model = "@cf/cloudflare/clef-flash";
+  } else if (provider === "openrouter") {
+    if (!routerDraft.classifier_model || !routerDraft.classifier_model.startsWith("parallel/")) {
+      routerDraft.classifier_model = "parallel/decisions-fast:free";
+    }
+    if (!routerDraft.endpoint_url || !routerDraft.endpoint_url.includes("openrouter.ai")) {
+      routerDraft.endpoint_url = "https://openrouter.ai/api/alpha/decisions";
+    }
   } else if (provider === "jev") {
     if (!routerDraft.classifier_model || routerDraft.classifier_model.startsWith("@cf/")) routerDraft.classifier_model = "jev";
     if (!routerDraft.endpoint_url) routerDraft.endpoint_url = "https://api.typesafe.ai/v1/systemone";
@@ -669,7 +658,7 @@ function renderRouterClassifierForm() {
     gwClassifierSel.classList.toggle("hidden", !isGatewayUpstream);
     if (isGatewayUpstream) {
       const currentClf = (routerDraft.classifier_model || "").trim();
-      gwClassifierSel.innerHTML = buildUpstreamModelSelectOptionsHTML([], "从上游已绑定模型中选择决策模型…", currentClf);
+      gwClassifierSel.innerHTML = buildUpstreamModelSelectOptionsHTML([], "选择可用模型作为决策模型…", currentClf);
       gwClassifierSel.value = currentClf;
     }
   }
@@ -679,10 +668,11 @@ function renderRouterClassifierForm() {
     clfInput.value = routerDraft.classifier_model || "";
     const placeholders = {
       cloudflare: "@cf/cloudflare/clef-flash",
+      openrouter: "parallel/decisions-fast:free",
       jev: "jev",
       systemone: "Julia-1",
       openai_chat: "decision-model-preview",
-      gateway_upstream: "从左侧下拉框选择上游已绑定的模型，或输入模型 ID",
+      gateway_upstream: "从左侧可用模型列表中选择，或输入模型 ID",
     };
     clfInput.placeholder = placeholders[p] || "@cf/cloudflare/clef-flash";
   }
@@ -693,6 +683,7 @@ function renderRouterClassifierForm() {
   const envCfAcct = routerConfigCache?.env_cloudflare_account_id;
   const envCfTok = routerConfigCache?.env_cloudflare_token_present;
   const envJev = routerConfigCache?.env_jev_key_present;
+  const envOpenRouter = routerConfigCache?.env_openrouter_key_present;
   const keyPreview = routerConfigCache?.api_key_saved ? (routerConfigCache?.api_key_masked || "已保存") : "";
   const keyHint = $("routerApiKeyHint");
   if (keyHint) {
@@ -700,6 +691,8 @@ function renderRouterClassifierForm() {
       keyHint.textContent = "已保存后台密钥 (" + keyPreview + ")；留空则保留原密钥。";
     } else if (isCloudflare && envCfTok) {
       keyHint.textContent = "已检测到环境变量 CLOUDFLARE_API_TOKEN，留空将自动使用环境变量。";
+    } else if (p === "openrouter" && envOpenRouter) {
+      keyHint.textContent = "已检测到环境变量 OPENROUTER_API_KEY，留空将自动使用环境变量。";
     } else if (p === "jev" && envJev) {
       keyHint.textContent = "已检测到环境变量 TYPESAFE_API_KEY / JEV_API_KEY，留空将自动使用环境变量。";
     } else {
@@ -718,22 +711,23 @@ function renderRouterClassifierForm() {
     if (isCloudflare) {
       presetsBox.innerHTML = '<button type="button" class="router-preset-chip" onclick="applyRouterClassifierPreset(\'cloudflare\',\'@cf/cloudflare/clef-flash\')">@cf/cloudflare/clef-flash (推荐·快)</button>'
         + '<button type="button" class="router-preset-chip" onclick="applyRouterClassifierPreset(\'cloudflare\',\'@cf/cloudflare/clef\')">@cf/cloudflare/clef (高精度)</button>';
+    } else if (p === "openrouter") {
+      presetsBox.innerHTML = '<button type="button" class="router-preset-chip" onclick="applyRouterClassifierPreset(\'openrouter\',\'parallel/decisions-fast:free\',\'https://openrouter.ai/api/alpha/decisions\')">parallel/decisions-fast:free (OpenRouter 免费推荐)</button>'
+        + '<button type="button" class="router-preset-chip" onclick="applyRouterClassifierPreset(\'openrouter\',\'parallel/decisions-fast\',\'https://openrouter.ai/api/alpha/decisions\')">parallel/decisions-fast</button>';
     } else if (p === "jev") {
       presetsBox.innerHTML = '<button type="button" class="router-preset-chip" onclick="applyRouterClassifierPreset(\'jev\',\'jev\',\'https://api.typesafe.ai/v1/systemone\')">TypeSafe Jev 官方 (/v1/systemone)</button>';
     } else if (p === "systemone") {
-      presetsBox.innerHTML = '<button type="button" class="router-preset-chip" onclick="applyRouterClassifierPreset(\'systemone\',\'Julia-1\',\'http://127.0.0.1:8000/v1/systemone\')">本地 Julia-1 / vLLM (/v1/systemone)</button>';
+      presetsBox.innerHTML = '<button type="button" class="router-preset-chip" onclick="applyRouterClassifierPreset(\'systemone\',\'Julia-1\',\'http://127.0.0.1:8000/v1/systemone\')">本地 Julia-1 / vLLM (/v1/systemone)</button>'
+        + '<button type="button" class="router-preset-chip" onclick="applyRouterClassifierPreset(\'systemone\',\'parallel/decisions-fast:free\',\'https://openrouter.ai/api/alpha/decisions\')">OpenRouter Decisions (/api/alpha/decisions)</button>';
     } else if (p === "openai_chat") {
       presetsBox.innerHTML = '<button type="button" class="router-preset-chip" onclick="applyRouterClassifierPreset(\'openai_chat\',\'decision-model-preview\',\'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions\')">阿里云百炼 decision-model-preview</button>';
     } else if (p === "gateway_upstream") {
       const gwModels = availableGatewayModelOptions().slice(0, 8);
-      const healthMap = routerConfigCache?.model_health || {};
       presetsBox.innerHTML = gwModels.length
-        ? gwModels.map((m) => {
-            const upNames = (healthMap[m]?.upstream_names || []).join(", ");
-            const suffix = upNames ? " (" + upNames + ")" : " (网关上游)";
-            return '<button type="button" class="router-preset-chip" onclick="applyRouterClassifierPreset(\'gateway_upstream\',\'' + esc(m) + '\')">' + esc(m + suffix) + '</button>';
-          }).join("")
-        : '<small class="muted">当前暂无已绑定的上游模型，请先在「上游服务」中为渠道绑定模型。</small>';
+        ? gwModels.map((m) =>
+            '<button type="button" class="router-preset-chip" onclick="applyRouterClassifierPreset(\'gateway_upstream\',\'' + esc(m) + '\')">' + esc(m) + '</button>'
+          ).join("")
+        : '<small class="muted">当前暂无可用模型，请先在「上游服务」中配置模型。</small>';
     } else {
       presetsBox.innerHTML = "";
     }

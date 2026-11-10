@@ -352,6 +352,11 @@ func normalizeAutoRouterConfig(cfg *AutoRouterConfig) error {
 		if strings.TrimSpace(cfg.ClassifierModel) == "" || cfg.ClassifierModel == defaultClefFlashModel {
 			cfg.ClassifierModel = defaultClefModel
 		}
+	case "openrouter", "openrouter_decisions", "openrouter-decisions":
+		cfg.Classifier = "openrouter"
+		if strings.TrimSpace(cfg.ClassifierModel) == "" || strings.HasPrefix(cfg.ClassifierModel, "@cf/") {
+			cfg.ClassifierModel = defaultOpenRouterDecisionsModel
+		}
 	case "cloudflare", "jev", "systemone", "openai_chat", "gateway_upstream", "heuristic":
 		cfg.Classifier = rawClassifier
 	default:
@@ -955,16 +960,31 @@ func collectGatewayUpstreamBoundModels(ctx context.Context, virtualModel string)
 	if virtualModel == "" {
 		virtualModel = "auto"
 	}
+	enabledSet := make(map[string]bool)
+	if mods, err := availableModels(ctx); err == nil {
+		for _, m := range mods {
+			id := strings.TrimSpace(m.ID)
+			if id == "" || strings.EqualFold(id, virtualModel) || m.Owner == "apishare-router" {
+				continue
+			}
+			enabledSet[id] = true
+		}
+	}
+
 	snapshot, err := getRoutingSnapshot()
 	if err != nil {
-		return []string{}, []autoRouterUpstreamModelGroup{}
+		models := make([]string, 0, len(enabledSet))
+		for m := range enabledSet {
+			models = append(models, m)
+		}
+		sort.Strings(models)
+		return models, []autoRouterUpstreamModelGroup{}
 	}
-	enabledSet := make(map[string]bool)
-	allSet := make(map[string]bool)
 	groups := make([]autoRouterUpstreamModelGroup, 0, len(snapshot.upstreams))
 
 	for i := range snapshot.upstreams {
 		u := &snapshot.upstreams[i]
+		isEnabled := u.Enabled && u.Weight > 0
 		seenUp := make(map[string]bool)
 		upModels := make([]string, 0)
 		addModel := func(m string) {
@@ -977,8 +997,7 @@ func collectGatewayUpstreamBoundModels(ctx context.Context, virtualModel string)
 			}
 			seenUp[m] = true
 			upModels = append(upModels, m)
-			allSet[m] = true
-			if u.Enabled && u.Weight > 0 {
+			if isEnabled {
 				enabledSet[m] = true
 			}
 		}
@@ -990,7 +1009,7 @@ func collectGatewayUpstreamBoundModels(ctx context.Context, virtualModel string)
 			for _, dm := range defaults {
 				addModel(dm)
 			}
-		} else if u.Enabled && u.Weight > 0 {
+		} else if isEnabled {
 			ids, _ := publicWildcardModels(*u)
 			for _, id := range ids {
 				addModel(id)
@@ -1008,7 +1027,6 @@ func collectGatewayUpstreamBoundModels(ctx context.Context, virtualModel string)
 				addModel(client)
 			}
 		}
-		isEnabled := u.Enabled && u.Weight > 0
 		groups = append(groups, autoRouterUpstreamModelGroup{
 			ID:      u.ID,
 			Name:    u.Name,
@@ -1019,27 +1037,25 @@ func collectGatewayUpstreamBoundModels(ctx context.Context, virtualModel string)
 		})
 	}
 
-	targetSet := enabledSet
-	if len(targetSet) == 0 {
-		targetSet = allSet
-	}
-	models := make([]string, 0, len(targetSet))
-	for m := range targetSet {
+	models := make([]string, 0, len(enabledSet))
+	for m := range enabledSet {
 		models = append(models, m)
 	}
 	sort.Strings(models)
 	return models, groups
 }
 
-func buildAutoRouterModelHealthMap(ctx context.Context, cfg AutoRouterConfig) map[string]autoRouterModelHealth {
+func buildAutoRouterModelHealthMap(ctx context.Context, cfg AutoRouterConfig, availableModelsList []string) map[string]autoRouterModelHealth {
 	out := make(map[string]autoRouterModelHealth)
 	snapshot, err := getRoutingSnapshot()
 	if err != nil {
 		return out
 	}
 	candidates := make(map[string]bool)
-	boundModels, _ := collectGatewayUpstreamBoundModels(ctx, cfg.VirtualModel)
-	for _, m := range boundModels {
+	if len(availableModelsList) == 0 {
+		availableModelsList, _ = collectGatewayUpstreamBoundModels(ctx, cfg.VirtualModel)
+	}
+	for _, m := range availableModelsList {
 		if m != "" {
 			candidates[m] = true
 		}
@@ -1061,13 +1077,6 @@ func buildAutoRouterModelHealthMap(ctx context.Context, cfg AutoRouterConfig) ma
 	}
 	if cfg.Classifier == "gateway_upstream" && strings.TrimSpace(cfg.ClassifierModel) != "" {
 		candidates[strings.TrimSpace(cfg.ClassifierModel)] = true
-	}
-	if mods, err := availableModels(ctx); err == nil {
-		for _, m := range mods {
-			if m.ID != cfg.VirtualModel {
-				candidates[m.ID] = true
-			}
-		}
 	}
 	for model := range candidates {
 		info := autoRouterModelHealth{
@@ -1114,6 +1123,7 @@ func buildAutoRouterConfigView(ctx context.Context, cfg AutoRouterConfig) gin.H 
 	envAccountID := strings.TrimSpace(os.Getenv("CLOUDFLARE_ACCOUNT_ID"))
 	envToken := strings.TrimSpace(os.Getenv("CLOUDFLARE_API_TOKEN")) != "" || strings.TrimSpace(os.Getenv("CLOUDFLARE_API_KEY")) != ""
 	envJevKey := strings.TrimSpace(os.Getenv("TYPESAFE_API_KEY")) != "" || strings.TrimSpace(os.Getenv("JEV_API_KEY")) != ""
+	envOpenRouterKey := strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY")) != ""
 
 	credReady := credErr == nil
 	credMessage := "就绪"
@@ -1138,6 +1148,7 @@ func buildAutoRouterConfigView(ctx context.Context, cfg AutoRouterConfig) gin.H 
 		"api_key_source":                   keySource,
 		"env_cloudflare_token_present":     envToken,
 		"env_jev_key_present":              envJevKey,
+		"env_openrouter_key_present":       envOpenRouterKey,
 		"credentials_ready":                credReady,
 		"credentials_message":              credMessage,
 		"proxy_id":                         cfg.ProxyID,
@@ -1168,7 +1179,7 @@ func buildAutoRouterConfigView(ctx context.Context, cfg AutoRouterConfig) gin.H 
 			"fails":      breakerFails,
 			"last_error": breakerLast,
 		},
-		"model_health": buildAutoRouterModelHealthMap(ctx, cfg),
+		"model_health": buildAutoRouterModelHealthMap(ctx, cfg, availableModelsList),
 	}
 }
 
