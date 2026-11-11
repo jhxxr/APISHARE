@@ -1224,7 +1224,11 @@
               ? `<span class="muted">顺位备选 #${s.priority} (${esc(s.upstream_name || "")})</span>`
               : `<span style="color:var(--red)">跳过 #${s.priority} (${esc(s.reason || "不可用")})</span>`;
             const utilText = s.utility_score ? ` <small class="muted">[旧策略 U=${Number(s.utility_score).toFixed(1)}]</small>` : "";
-            const arenaText = s.arena ? ` <small class="muted">[Arena ${s.arena.status === "matched" && s.arena.score != null ? "#" + s.arena.rank + " · " + Number(s.arena.score).toFixed(dec.arena?.board === "agent" ? 4 : 2) : esc(s.arena.status)}]</small>` : "";
+            const arenaText = s.arena ? ` <small class="muted" title="${esc(s.arena.version_reference_note || "")}">[Arena ${
+              s.arena.score != null && ["matched", "version_reference"].includes(s.arena.status)
+                ? (s.arena.version_reference ? "旧版参考／新版推断 · " + esc(s.arena.source_model || "") + " · " : "")
+                  + "#" + s.arena.rank + " · " + Number(s.arena.score).toFixed(dec.arena?.board === "agent" ? 4 : 2)
+                : esc(s.arena.status)}]</small>` : "";
             return `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px dashed var(--border)">
               <span><code>[${esc(s.source_tier)}]</code> <strong>${esc(s.model)}</strong>${utilText}${arenaText}</span>
               ${stText}

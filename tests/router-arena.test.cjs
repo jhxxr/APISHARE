@@ -93,3 +93,22 @@ test("personal pool loading tolerates deprecated null tier arrays returned after
   assert.deepEqual(Array.from(context.state.routerPool),["bench-a(high,128k)","bench-b"]);
   assert.deepEqual(Array.from(context.state.routerExcluded),["bench-b"]);
 });
+
+test("dry run labels new-version assumptions and keeps old source score explicit",()=>{
+  const {$,context}=consoleContext();
+  context.result={decision:{tier:"COMPLEX",selected_model:"newest",arena:{mode:"live",board:"text"},
+    steps:[{priority:1,status:"selected",model:"newest",source_tier:"COMPLEX",
+      arena:{status:"version_reference",version_reference:true,version_reference_note:"旧版参考 <unsafe> 不是新版实测",
+        source_model:"DeepSeek-V4.1-Flash-20260910 (Max)",rank:8,score:1450}}]}};
+  vm.runInContext("renderRouterDryRunResult(result)",context);
+  const source=read("cmd/apishare/web/router.js");
+  const id=source.slice(source.indexOf("function renderRouterDryRunResult")).match(/\$\("([^"]+)"\)/)[1];
+  const html=$(id).innerHTML;
+  assert.match(html,/旧版参考／新版推断/);
+  assert.match(html,/20260910/);
+  assert.match(html,/1450\.00/);
+  assert.match(html,/不是新版实测/);
+  assert.match(html,/&lt;unsafe&gt;/);
+  assert.doesNotMatch(html,/<unsafe>/);
+  assert.match(read("cmd/apishare/web/public/user.js"),/旧版参考／新版推断/);
+});

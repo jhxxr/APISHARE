@@ -15,46 +15,51 @@ const (
 )
 
 type arenaRoutingEvidence struct {
-	Status          string   `json:"status"`
-	Identity        string   `json:"identity,omitempty"`
-	Thinking        string   `json:"effective_thinking,omitempty"`
-	SourceModel     string   `json:"source_model,omitempty"`
-	Rank            int      `json:"rank,omitempty"`
-	Score           *float64 `json:"score,omitempty"`
-	Lower           *float64 `json:"lower,omitempty"`
-	Upper           *float64 `json:"upper,omitempty"`
-	Samples         *int64   `json:"samples,omitempty"`
-	QualityGroup    *int     `json:"quality_group,omitempty"`
-	ChannelCalls    int64    `json:"channel_calls,omitempty"`
-	ChannelCount    int      `json:"primary_channel_count,omitempty"`
-	RecentCalls     int64    `json:"recent_service_calls,omitempty"`
-	RecentService   *float64 `json:"recent_service_success_ewma,omitempty"`
-	Unreliable      bool     `json:"channel_unreliable,omitempty"`
-	ServiceSuccess  *float64 `json:"service_success_rate,omitempty"` // transport outcomes, NOT task accuracy
-	ResponseMS      *float64 `json:"channel_response_ms,omitempty"`
-	ResponseKind    string   `json:"channel_response_kind,omitempty"`
-	PriceKnown      bool     `json:"price_known"`
-	PriceSource     string   `json:"price_source,omitempty"`
-	ComparisonCost  *float64 `json:"comparison_cost_usd,omitempty"`
-	CostOutputLimit int      `json:"cost_reference_output_tokens,omitempty"`
+	Status                      string   `json:"status"`
+	Identity                    string   `json:"identity,omitempty"`
+	Thinking                    string   `json:"effective_thinking,omitempty"`
+	SourceModel                 string   `json:"source_model,omitempty"`
+	Rank                        int      `json:"rank,omitempty"`
+	Score                       *float64 `json:"score,omitempty"`
+	Lower                       *float64 `json:"lower,omitempty"`
+	Upper                       *float64 `json:"upper,omitempty"`
+	Samples                     *int64   `json:"samples,omitempty"`
+	QualityGroup                *int     `json:"quality_group,omitempty"`
+	ChannelCalls                int64    `json:"channel_calls,omitempty"`
+	ChannelCount                int      `json:"primary_channel_count,omitempty"`
+	RecentCalls                 int64    `json:"recent_service_calls,omitempty"`
+	RecentService               *float64 `json:"recent_service_success_ewma,omitempty"`
+	Unreliable                  bool     `json:"channel_unreliable,omitempty"`
+	ServiceSuccess              *float64 `json:"service_success_rate,omitempty"` // transport outcomes, NOT task accuracy
+	ResponseMS                  *float64 `json:"channel_response_ms,omitempty"`
+	ResponseKind                string   `json:"channel_response_kind,omitempty"`
+	PriceKnown                  bool     `json:"price_known"`
+	PriceSource                 string   `json:"price_source,omitempty"`
+	ComparisonCost              *float64 `json:"comparison_cost_usd,omitempty"`
+	CostOutputLimit             int      `json:"cost_reference_output_tokens,omitempty"`
+	VersionReference            bool     `json:"version_reference,omitempty"`
+	VersionReferenceNote        string   `json:"version_reference_note,omitempty"`
+	ReferenceThinkingUnverified bool     `json:"reference_thinking_unverified,omitempty"`
 }
 
 type arenaRoutingDecision struct {
-	Mode           string   `json:"mode"`
-	Board          string   `json:"board,omitempty"`
-	Config         string   `json:"config,omitempty"`
-	PublishedAt    string   `json:"published_at,omitempty"`
-	FetchedAt      string   `json:"fetched_at,omitempty"`
-	SourceURL      string   `json:"source_url,omitempty"`
-	ReferenceOnly  bool     `json:"general_reference_only,omitempty"`
-	FloorPolicy    string   `json:"floor_policy,omitempty"`
-	QualityFloor   *float64 `json:"quality_floor,omitempty"`
-	BaselineModel  string   `json:"baseline_model,omitempty"`
-	BaselineSource string   `json:"baseline_source,omitempty"`
-	ProposedModel  string   `json:"proposed_model,omitempty"`
-	ActualModel    string   `json:"actual_model,omitempty"`
-	Different      bool     `json:"different"`
-	Reason         string   `json:"reason,omitempty"`
+	Mode                 string   `json:"mode"`
+	Board                string   `json:"board,omitempty"`
+	Config               string   `json:"config,omitempty"`
+	PublishedAt          string   `json:"published_at,omitempty"`
+	FetchedAt            string   `json:"fetched_at,omitempty"`
+	SourceURL            string   `json:"source_url,omitempty"`
+	ReferenceOnly        bool     `json:"general_reference_only,omitempty"`
+	FloorPolicy          string   `json:"floor_policy,omitempty"`
+	QualityFloor         *float64 `json:"quality_floor,omitempty"`
+	BaselineModel        string   `json:"baseline_model,omitempty"`
+	BaselineSource       string   `json:"baseline_source,omitempty"`
+	ProposedModel        string   `json:"proposed_model,omitempty"`
+	ActualModel          string   `json:"actual_model,omitempty"`
+	Different            bool     `json:"different"`
+	Reason               string   `json:"reason,omitempty"`
+	VersionReference     bool     `json:"version_reference,omitempty"`
+	VersionReferenceNote string   `json:"version_reference_note,omitempty"`
 }
 
 type arenaRoutingOptions struct {
@@ -116,6 +121,9 @@ func arenaIdentityForChannel(up *Upstream, model, tier, cause, policy string, cr
 	if base == "" {
 		base = wire
 	}
+	if version, official := arenaOfficialDeepSeekVersion(up, base); official {
+		base = version
+	}
 	switch {
 	case plan.StripAll:
 		if spec := parseRouterModelSpec(model); spec.Thinking != "" && spec.Thinking != "none" && spec.Thinking != "auto" {
@@ -138,7 +146,7 @@ func arenaIdentityForChannel(up *Upstream, model, tier, cause, policy string, cr
 	default:
 		identity = base
 	}
-	return arenaModelIdentity(identity), wire, ""
+	return arenaVersionedIdentity(identity), wire, ""
 }
 
 func arenaCandidateChannels(model string, opts arenaRoutingOptions) []*Upstream {
@@ -352,7 +360,7 @@ func assignArenaEvidence(plans []*arenaRoutePlan, snapshot *arenaSnapshot, now t
 	index := make(map[string][]arenaModel)
 	if usable {
 		for _, model := range snapshot.Models {
-			key := arenaModelIdentity(model.Model)
+			key := arenaVersionedIdentity(model.Model)
 			index[key] = append(index[key], model)
 		}
 	}
@@ -361,6 +369,7 @@ func assignArenaEvidence(plans []*arenaRoutePlan, snapshot *arenaSnapshot, now t
 		plan.trusted = false
 		e := plan.evidence
 		e.SourceModel, e.Rank, e.Score, e.Lower, e.Upper, e.Samples = "", 0, nil, nil, nil, nil
+		e.VersionReference, e.ReferenceThinkingUnverified, e.VersionReferenceNote = false, false, ""
 		if e.Identity == "" {
 			continue
 		}
@@ -374,15 +383,26 @@ func assignArenaEvidence(plans []*arenaRoutePlan, snapshot *arenaSnapshot, now t
 			e.Status = "ambiguous_source_model"
 			continue
 		}
+		var row arenaModel
 		if len(entries) == 0 {
-			continue
+			reference, differentThinking := arenaOlderVersionReference(e.Identity, snapshot.Models, now)
+			if reference == nil {
+				continue
+			}
+			row = *reference
+			e.VersionReference, e.ReferenceThinkingUnverified = true, differentThinking
+			e.VersionReferenceNote = arenaVersionReferenceNote(row, differentThinking)
+		} else {
+			row = entries[0]
 		}
-		row := entries[0]
 		value := row.Score
 		e.SourceModel, e.Rank, e.Score, e.Lower, e.Upper, e.Samples = row.Model, row.Rank, &value, row.RatingLower, row.RatingUpper, row.Votes
 		e.Status = "insufficient_samples"
 		if row.Votes != nil && *row.Votes >= arenaRoutingMinSamples {
 			e.Status, plan.trusted = "matched", true
+			if e.VersionReference {
+				e.Status = "version_reference"
+			}
 			matched++
 		}
 	}
@@ -428,6 +448,16 @@ func arenaScoreLess(a, b *arenaRoutePlan) bool {
 	}
 	if a.evidence.Rank != b.evidence.Rank {
 		return a.evidence.Rank < b.evidence.Rank
+	}
+	// Group an identical source deterministically before its version tie-break,
+	// keeping the comparator transitive when unrelated rows share score/rank.
+	if a.evidence.SourceModel != b.evidence.SourceModel {
+		return a.evidence.SourceModel < b.evidence.SourceModel
+	}
+	// A deliberately small preference: no made-up Elo/IPS increment and no
+	// leap over any measured higher score. It only breaks a shared-source tie.
+	if a.evidence.VersionReference != b.evidence.VersionReference {
+		return a.evidence.VersionReference
 	}
 	return a.model < b.model
 }
@@ -624,6 +654,11 @@ func applyArenaRoutePolicy(d *routerDecisionDetails, models []string, opts arena
 		proposed = append(proposed, plan.model)
 	}
 	evaluation.ProposedModel, evaluation.Different = proposed[0], proposed[0] != evaluation.BaselineModel
+	if ordered[0].evidence.VersionReference {
+		evaluation.VersionReference = true
+		evaluation.VersionReferenceNote = ordered[0].evidence.VersionReferenceNote
+		evaluation.Reason += "+version_reference_minor_preference"
+	}
 	d.Arena = evaluation
 	if mode == "shadow" {
 		return models

@@ -11,7 +11,11 @@
   const score = (value) => value == null ? "—" : Number(value).toFixed(snapshot?.score_kind === "ips" ? 4 : 2);
   const count = (value) => value == null ? "—" : Number(value).toLocaleString("zh-CN");
   const sampleCount = (value) => value == null ? "—" : value >= 10000 ? (value / 1000).toFixed(1) + "k" : count(value);
-  const badge = () => '<span class="arena-site-badge">已接入</span>';
+  const badge = (m) => m.site_available
+    ? '<span class="arena-site-badge" title="' + esc(m.site_match_note || '本站已接入同型号，思考配置可能不同') + '">已接入</span>'
+    : m.related_site_models?.length
+      ? '<span class="arena-site-badge is-version-mismatch" title="' + esc(m.site_match_note || '本站为不同日期版本，不套用此分数') + '">本站版本不同</span>'
+      : '<span class="arena-unmarked">—</span>';
   const normalizeQuery = (value) => String(value).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
 
   function fitTableHeight() {
@@ -54,8 +58,8 @@
     $("rankingList").innerHTML = visible.map(({model:m,index}) => {
       const interval = m.rating_lower != null && m.rating_upper != null ? score(m.rating_lower) + " – " + score(m.rating_upper) : "—";
       return '<tr class="ranking-row' + (m.site_available ? ' is-connected' : '') + '"><td class="arena-col-rank"><span class="ranking-position' + (m.rank <= 3 ? ' is-leading' : '') + '" aria-label="源榜第 ' + m.rank + ' 名">' + m.rank + '</span></td>'
-        + '<td class="arena-col-model"><button type="button" class="arena-model-button" data-model-index="' + index + '" title="查看 ' + esc(m.model) + ' 的原始数据">' + modelLabel(m) + '<svg class="arena-detail-cue" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button><div class="arena-model-meta"><span>' + esc(provider(m.family)) + '</span><span class="arena-license">' + esc(m.license || "") + '</span>' + (m.site_available ? '<span class="arena-mobile-badge">' + badge() + '</span>' : '') + '</div></td>'
-        + '<td class="arena-col-score arena-score-value">' + score(m.score) + '</td><td class="arena-col-interval arena-interval-value">' + interval + '</td><td class="arena-col-votes" title="' + count(m.votes) + '">' + sampleCount(m.votes) + '</td><td class="arena-col-site">' + (m.site_available ? badge() : '<span class="arena-unmarked">—</span>') + '</td></tr>';
+        + '<td class="arena-col-model"><button type="button" class="arena-model-button" data-model-index="' + index + '" title="查看 ' + esc(m.model) + ' 的原始数据">' + modelLabel(m) + '<svg class="arena-detail-cue" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button><div class="arena-model-meta"><span>' + esc(provider(m.family)) + '</span><span class="arena-license">' + esc(m.license || "") + '</span>' + (m.site_available || m.related_site_models?.length ? '<span class="arena-mobile-badge">' + badge(m) + '</span>' : '') + '</div></td>'
+        + '<td class="arena-col-score arena-score-value">' + score(m.score) + '</td><td class="arena-col-interval arena-interval-value">' + interval + '</td><td class="arena-col-votes" title="' + count(m.votes) + '">' + sampleCount(m.votes) + '</td><td class="arena-col-site">' + badge(m) + '</td></tr>';
     }).join("");
     $("rankingEmpty").classList.toggle("hidden", rows.length > 0);
     $("rankingEmpty").querySelector("h3").textContent = snapshot.models.length ? "没有匹配的模型" : "暂无官方榜单缓存";
@@ -64,6 +68,10 @@
     $("rankingPage").innerHTML = Array.from({length:pages}, (_,i) => '<option value="' + (i + 1) + '">' + (i + 1) + ' / ' + pages + '</option>').join("");
     $("rankingPage").value = String(currentPage); $("rankingPage").disabled = pages === 1;
     $("rankingPrev").disabled = currentPage <= 1; $("rankingNext").disabled = currentPage >= pages;
+    const unranked = snapshot.unranked_site_models || [];
+    $("rankingUnranked").classList.toggle("hidden", !unranked.length);
+    $("rankingUnrankedCount").textContent = String(unranked.length);
+    $("rankingUnrankedList").innerHTML = unranked.map(m => '<li><code>' + esc(m.model) + '</code><span>' + esc((m.versions || []).join(" / ")) + '</span><small>' + esc(m.note || '当前分榜未收录对应版本，不生成排名') + '</small></li>').join("");
     fitTableHeight();
   }
 
@@ -84,7 +92,10 @@
     const interval = m.rating_lower != null && m.rating_upper != null ? String(m.rating_lower) + " – " + String(m.rating_upper) : "—";
     const values = [["提供方",provider(m.family)],[snapshot.score_label + " · 原始值",String(m.score)],["源榜评分区间",interval],[snapshot.sample_label,count(m.votes)],["源榜发布日期",snapshot.published_at || "—"],["许可证（源数据）",m.license || "—"]];
     const siteModels = (m.site_models || []).map((name,i) => '<div class="arena-copy-row"><code>' + esc(name) + '</code><button type="button" data-copy-index="' + i + '">复制</button></div>').join("");
-    $("rankingDetailContent").innerHTML = '<dl class="arena-detail-metrics">' + values.map(([label,value]) => '<div><dt>' + esc(label) + '</dt><dd>' + esc(value) + '</dd></div>').join("") + '</dl><h3>' + (m.site_available ? '本站已接入的模型标识' : '本站暂无匹配的接入标记') + '</h3>' + siteModels + '<p class="arena-detail-note">接入标记不代表实时健康或个人密钥权限。不同版本与思考模式不混同，排名保持原榜口径。</p>';
+    $("rankingDetailContent").innerHTML = '<dl class="arena-detail-metrics">' + values.map(([label,value]) => '<div><dt>' + esc(label) + '</dt><dd>' + esc(value) + '</dd></div>').join("") + '</dl><h3>' + (m.site_available ? '本站已接入的模型标识' : '本站暂无匹配的接入标记') + '</h3>' + siteModels
+      + (m.related_site_models?.length ? '<h3>本站另有不同日期版本（不是此行分数）</h3>' + m.related_site_models.map(name => '<div class="arena-copy-row"><code>' + esc(name) + '</code></div>').join("") : '')
+      + (m.site_match_note ? '<p class="arena-detail-note">' + esc(m.site_match_note) + '</p>' : '')
+      + '<p class="arena-detail-note">接入标记按型号匹配，可忽略已知思考强度；不代表测试配置、实时健康或个人密钥权限。不同日期版本不混同，排名和分数保持原榜口径。自动选模仍严格核对思考配置。</p>';
     $("rankingCopyStatus").textContent = ""; $("rankingDetail").showModal();
   }
 
@@ -95,6 +106,7 @@
     snapshot = snapshots.get(board) || null;
     boardTabs.forEach(tab => tab.setAttribute("aria-pressed", String(tab.dataset.board === board)));
     if (snapshot) showBoard(snapshot); else {
+      $("rankingUnranked").classList.add("hidden"); $("rankingUnrankedList").innerHTML = ""; $("rankingUnrankedCount").textContent = "0";
       $("rankingList").innerHTML = '<tr><td colspan="6" class="arena-table-placeholder">正在读取所选榜单的本地缓存…</td></tr>';
       $("rankingEmpty").classList.add("hidden"); $("rankingModelCount").textContent = $("rankingSiteCount").textContent = "—";
       $("rankingPublication").textContent = "正在读取源数据日期…"; $("rankingBoardLabel").textContent = "读取榜单中…"; $("rankingResultCount").textContent = "正在读取…";

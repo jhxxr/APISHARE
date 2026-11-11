@@ -518,6 +518,15 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 					continue
 				}
 				upstreamAttempted = true
+				var toolLimit *upstreamToolLimitError
+				if errors.As(attemptErr, &toolLimit) {
+					// This endpoint rejected the request before generation. Try
+					// another channel/protocol for the SAME model first; never retry
+					// the rejecting channel or discard any tool definitions.
+					tried[up.ID] = true
+					i--
+					continue
+				}
 				if routerDecision != nil && routerBanditEnabled && c.Request.Context().Err() == nil && !errors.Is(attemptErr, errDownstreamWrite) {
 					if attemptErr != nil && strings.Contains(attemptErr.Error(), "speculative_probe:") {
 						recordBanditSpeculativeEscalation(up.ID, candRawModel, task.primaryDomain)
@@ -599,6 +608,12 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 		if errors.As(lastErr, &conversion) {
 			writeRelayError(c, task.format, http.StatusBadRequest, conversion.Error())
 			insertFailureLog(ak, info, task, http.StatusBadRequest, conversion.Error())
+			return
+		}
+		var toolLimit *upstreamToolLimitError
+		if errors.As(lastErr, &toolLimit) {
+			writeRelayError(c, task.format, http.StatusBadRequest, toolLimit.Error())
+			insertFailureLog(ak, info, task, http.StatusBadRequest, toolLimit.Error())
 			return
 		}
 		var rateLimit *openCodeRateLimitError
@@ -952,7 +967,8 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	// Count actual attempts, including interrupted streams, but never penalize
 	// an upstream for client cancellation or request/configuration validation.
 	defer func() {
-		if c.Request.Context().Err() != nil || errors.Is(err, errDownstreamWrite) || errors.Is(err, errAutoRouterModelIncompatible) {
+		var toolLimit *upstreamToolLimitError
+		if c.Request.Context().Err() != nil || errors.Is(err, errDownstreamWrite) || errors.Is(err, errAutoRouterModelIncompatible) || errors.As(err, &toolLimit) {
 			return
 		}
 		if up.isOpenCode() && rateLimit != nil && up.selectedKeyID == "" {
@@ -1036,6 +1052,14 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 			detail = redactModelTestError(detail, up.openCodeAPIKey())
 		}
 		info.OutputText.WriteString(detail)
+		if !c.Writer.Written() {
+			wireCount := requestToolEntries(reqBody)
+			if limit := upstreamToolsLimit(info.Status, b, wireCount); limit > 0 {
+				return info, false, &upstreamToolLimitError{
+					Limit: limit, ClientCount: requestToolEntries(task.body), WireCount: wireCount,
+				}
+			}
+		}
 		learnModelLimitFromErrorBody(upModel, info.Status, b)
 		if cand := task.effectiveCandidateModel(); cand != "" {
 			if candBase := parseRouterModelSpec(cand).BaseModel; candBase != "" && !strings.EqualFold(candBase, parseRouterModelSpec(upModel).BaseModel) {

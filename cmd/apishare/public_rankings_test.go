@@ -41,7 +41,7 @@ func TestPublicRankingsFullSourceAndSiteBadges(t *testing.T) {
 	if len(got.Models) != 64 || got.Models[0].Rank != 1 || got.Models[2].Rank != 2 || got.Models[0].Score != 1470 {
 		t.Fatalf("source ranks/scores altered or truncated: %+v", got)
 	}
-	if !got.Models[0].SiteAvailable || !got.Models[1].SiteAvailable || got.Models[2].SiteAvailable || got.Models[3].SiteAvailable || got.Models[63].SiteAvailable {
+	if !got.Models[0].SiteAvailable || !got.Models[1].SiteAvailable || !got.Models[2].SiteAvailable || got.Models[3].SiteAvailable || got.Models[63].SiteAvailable {
 		t.Fatalf("incorrect membership badges: %+v", got.Models[:4])
 	}
 	if !strings.Contains(strings.Join(got.Models[1].SiteModels, ","), "public-alias") {
@@ -51,6 +51,99 @@ func TestPublicRankingsFullSourceAndSiteBadges(t *testing.T) {
 	for _, private := range []string{"private-", `"upstream_id"`, `"api_key"`, `"base_url"`, `"capabilities"`, `"bandit_win_rate"`} {
 		if strings.Contains(string(blob), private) {
 			t.Fatalf("private or inferred data leaked: %s", private)
+		}
+	}
+}
+
+func TestArenaPublicIdentityIgnoresOnlyThinkingNotVersions(t *testing.T) {
+	for _, pair := range [][2]string{
+		{"Claude Opus 4.6 (High)", "anthropic/claude-opus-4-6"},
+		{"Muse Wonder (Max)", "muse-wonder"},
+		{"DeepSeek-V3.2 (Thinking)", "deepseek-v3.2"},
+		{"DeepSeek-V4-Pro (High, 20260813)", "deepseek-v4-pro-20260813"},
+		{"DeepSeek-V4.1-Flash-1017 (Max)", "deepseek-v4.1-flash-20261017"},
+	} {
+		if arenaPublicModelIdentity(pair[0]) != arenaPublicModelIdentity(pair[1]) {
+			t.Fatalf("public model-level match missed: %v", pair)
+		}
+		if arenaModelIdentity(pair[0]) == arenaModelIdentity(pair[1]) {
+			t.Fatalf("public matching weakened the router's exact identity: %v", pair)
+		}
+	}
+	for _, pair := range [][2]string{
+		{"gpt-5.2", "gpt-5.2-pro"}, {"gpt-5.2", "gpt-5.2-mini"},
+		{"deepseek-v4.1-flash-20260910 (Max)", "deepseek-v4.1-flash-1017"},
+		{"deepseek-r1 (0528)", "deepseek-r1"},
+		{"qwen-max", "qwen"}, {"muse-wonder-preview (Max)", "muse-wonder"},
+		{"model-high", "model"}, {"model (Preview)", "model"},
+	} {
+		if arenaPublicModelIdentity(pair[0]) == arenaPublicModelIdentity(pair[1]) {
+			t.Fatalf("unrelated version/product matched: %v", pair)
+		}
+	}
+}
+
+func TestArenaPublicDeepSeekOfficial1017DoesNotBorrow0910Score(t *testing.T) {
+	setupAutoRouterTestDB(t)
+	for _, up := range []*Upstream{
+		{Name: "official", Type: "openai", BaseURL: "https://api.deepseek.com/v1", Models: "deepseek-flash,deepseek-v4-flash,deepseek-v4-pro", Weight: 1, Enabled: true},
+		{Name: "third-party", Type: "openai", BaseURL: "https://example.invalid", Models: "third-party-flash", ModelMap: `{"third-party-flash":"deepseek-flash"}`, Weight: 1, Enabled: true},
+		{Name: "actual-mapping", Type: "openai", BaseURL: "https://example.invalid", Models: "gpt-5.2", ModelMap: `{"gpt-5.2":"gpt-5.1"}`, Weight: 1, Enabled: true},
+		{Name: "hidden-deployment", Type: "openai", BaseURL: "https://example.invalid", Models: "visible-client-alias", ModelMap: `{"visible-client-alias":"private-deployment-id"}`, Weight: 1, Enabled: true},
+	} {
+		if err := dbInsertUpstream(up); err != nil {
+			t.Fatal(err)
+		}
+	}
+	models := []arenaModel{
+		{Rank: 1, Model: "DeepSeek-V4.1-Flash-20260910 (Max)", Score: 1500},
+		{Rank: 2, Model: "DeepSeek-V4-Pro", Score: 1400},
+		{Rank: 3, Model: "GPT-5.2 (High)", Score: 1300},
+		{Rank: 4, Model: "GPT-5.1 (High)", Score: 1200},
+	}
+	setArenaFixture(t, "text", models)
+	board, _ := findArenaBoard("text")
+	got, err := buildPublicRankings(time.Now(), board)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Models[0].SiteAvailable || len(got.Models[0].RelatedSiteModels) != 3 || got.Models[0].Score != 1500 {
+		t.Fatalf("official 1017 falsely inherited old 0910 result: %+v", got.Models[0])
+	}
+	if got.Models[1].SiteAvailable || got.Models[2].SiteAvailable || !got.Models[3].SiteAvailable {
+		t.Fatalf("request aliases overrode actual upstream identities: %+v", got.Models)
+	}
+	encoded, _ := json.Marshal(got)
+	if strings.Contains(string(encoded), "private-deployment-id") {
+		t.Fatal("unranked metadata exposed an unpublished mapped deployment ID")
+	}
+	for _, pending := range got.UnrankedSiteModels {
+		if pending.Model == "deepseek-flash" && (!strings.Contains(pending.Note, "1017") || pending.Versions[0] != "DeepSeek-V4.1-Flash-20261017") {
+			t.Fatalf("missing official version explanation: %+v", pending)
+		}
+		if pending.Model == "third-party-flash" && strings.Contains(strings.Join(pending.Versions, ","), "1017") {
+			t.Fatal("third-party gateway inherited an unverified official alias")
+		}
+	}
+	// When the source actually contains the release, only that row is marked.
+	models = append(models, arenaModel{Rank: 5, Model: "DeepSeek-V4.1-Flash-1017 (Max)", Score: 1100})
+	setArenaFixture(t, "text", models)
+	got, err = buildPublicRankings(time.Now(), board)
+	if err != nil || !got.Models[4].SiteAvailable || len(got.Models[4].SiteModels) != 3 || got.Models[0].SiteAvailable {
+		t.Fatalf("official 1017 aliases not matched to the precise dated row: %+v / %v", got, err)
+	}
+	for _, pending := range got.UnrankedSiteModels {
+		if pending.Model == "deepseek-flash" {
+			t.Fatal("a matched 1017 release still appeared as unranked")
+		}
+	}
+}
+
+func TestArenaOfficialDeepSeekAliasRequiresTrustedHost(t *testing.T) {
+	for _, host := range []string{"https://api.deepseek.com.evil.invalid", "https://deepseek.com", "http://api.deepseek.com", "https://api.deepseek.com:8443"} {
+		got, official := arenaOfficialDeepSeekVersion(&Upstream{BaseURL: host}, "deepseek-flash")
+		if official || got != "deepseek-flash" {
+			t.Fatalf("unverified endpoint inherited official version: %s", host)
 		}
 	}
 }

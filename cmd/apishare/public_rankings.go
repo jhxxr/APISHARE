@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"github.com/gin-gonic/gin"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -12,25 +11,28 @@ import (
 
 type PublicModelRanking struct {
 	arenaModel
-	SiteAvailable bool     `json:"site_available"`
-	SiteModels    []string `json:"site_models,omitempty"`
+	SiteAvailable     bool     `json:"site_available"`
+	SiteModels        []string `json:"site_models,omitempty"`
+	RelatedSiteModels []string `json:"related_site_models,omitempty"`
+	SiteMatchNote     string   `json:"site_match_note,omitempty"`
 }
 type PublicRankings struct {
-	UpdatedAt     string               `json:"updated_at"`
-	PublishedAt   string               `json:"published_at,omitempty"`
-	FetchedAt     string               `json:"fetched_at,omitempty"`
-	SourceName    string               `json:"source_name"`
-	SourceURL     string               `json:"source_url"`
-	Board         string               `json:"board"`
-	BoardLabel    string               `json:"board_label"`
-	ScoreKind     string               `json:"score_kind"`
-	ScoreLabel    string               `json:"score_label"`
-	SampleLabel   string               `json:"sample_label"`
-	Boards        []arenaBoard         `json:"boards"`
-	Loading       bool                 `json:"loading"`
-	Stale         bool                 `json:"stale"`
-	ModelsLoading bool                 `json:"models_loading"`
-	Models        []PublicModelRanking `json:"models"`
+	UpdatedAt          string                    `json:"updated_at"`
+	PublishedAt        string                    `json:"published_at,omitempty"`
+	FetchedAt          string                    `json:"fetched_at,omitempty"`
+	SourceName         string                    `json:"source_name"`
+	SourceURL          string                    `json:"source_url"`
+	Board              string                    `json:"board"`
+	BoardLabel         string                    `json:"board_label"`
+	ScoreKind          string                    `json:"score_kind"`
+	ScoreLabel         string                    `json:"score_label"`
+	SampleLabel        string                    `json:"sample_label"`
+	Boards             []arenaBoard              `json:"boards"`
+	Loading            bool                      `json:"loading"`
+	Stale              bool                      `json:"stale"`
+	ModelsLoading      bool                      `json:"models_loading"`
+	Models             []PublicModelRanking      `json:"models"`
+	UnrankedSiteModels []PublicUnrankedSiteModel `json:"unranked_site_models"`
 }
 
 // Ignore presentation separators, not versions, dates, Pro/Mini or thinking modes.
@@ -54,34 +56,6 @@ func arenaModelIdentity(model string) string {
 	}
 	return normalized.String()
 }
-func arenaSiteModelIndex(snapshot *routingSnapshot, catalog map[string]string) map[string][]string {
-	index := make(map[string][]string)
-	add := func(identity, clientModel string) {
-		key := arenaModelIdentity(identity)
-		if key == "" {
-			return
-		}
-		for _, existing := range index[key] {
-			if existing == clientModel {
-				return
-			}
-		}
-		index[key] = append(index[key], clientModel)
-	}
-	for model := range catalog {
-		add(model, model)
-		for i := range snapshot.upstreams {
-			up := &snapshot.upstreams[i]
-			if up.Enabled && up.Weight > 0 && servesRouterCandidate(up, model) {
-				add(up.mapModel(resolveUpstreamCandidateModel(up, model)), model)
-			}
-		}
-	}
-	for _, models := range index {
-		sort.Strings(models)
-	}
-	return index
-}
 func buildPublicRankings(now time.Time, board arenaBoard) (*PublicRankings, error) {
 	routing, err := getRoutingSnapshot()
 	if err != nil {
@@ -97,16 +71,30 @@ func buildPublicRankings(now time.Time, board arenaBoard) (*PublicRankings, erro
 		result.ScoreKind, result.ScoreLabel, result.SampleLabel = "ips", "Agent IPS Score", "观测样本"
 	}
 	if snapshot == nil {
+		result.UnrankedSiteModels = siteModels.unranked(nil)
 		return result, nil
 	}
 	result.PublishedAt, result.FetchedAt = snapshot.PublishedAt, snapshot.FetchedAt
 	fetchedAt, err := time.Parse(time.RFC3339, snapshot.FetchedAt)
 	result.Stale = failed || err != nil || now.Sub(fetchedAt) > arenaRefreshTTL
 	// All source models, preserving source ranks and ties. Site membership is only a badge.
+	matchedModels := map[string]bool{}
 	for _, model := range snapshot.Models {
-		matched := siteModels[arenaModelIdentity(model.Model)]
-		result.Models = append(result.Models, PublicModelRanking{arenaModel: model, SiteAvailable: len(matched) > 0, SiteModels: matched})
+		matched := siteModels.byIdentity[arenaPublicModelIdentity(model.Model)]
+		for _, model := range matched {
+			matchedModels[model] = true
+		}
+		related := siteModels.relatedVersions(model.Model)
+		note := ""
+		if len(matched) > 0 {
+			note = "已接入同一型号/版本；思考强度与榜单测试配置可能不同，不代表复现该分数。"
+		}
+		if len(related) > 0 {
+			note += " 本站另有同系列不同日期版本，请勿将此行分数用于另一版本。"
+		}
+		result.Models = append(result.Models, PublicModelRanking{arenaModel: model, SiteAvailable: len(matched) > 0, SiteModels: matched, RelatedSiteModels: related, SiteMatchNote: strings.TrimSpace(note)})
 	}
+	result.UnrankedSiteModels = siteModels.unranked(matchedModels)
 	return result, nil
 }
 func publicRankingsHandler(c *gin.Context) {

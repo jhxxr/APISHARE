@@ -1008,7 +1008,11 @@ function renderRouterDryRunResult(res) {
     const thinkTag = st.thinking ? '<span class="router-price-tag" title="实际适配思考档位">思考: ' + esc(st.thinking) + '</span>' : '';
     const utilTag = st.utility_score ? '<span class="router-price-tag" title="旧启发式策略参考，不是真实榜单评分">旧策略 U=' + Number(st.utility_score).toFixed(1) + '</span>' : '';
     const evidence = st.arena;
-    const arenaTag = evidence ? '<span class="router-price-tag" title="' + esc(evidence.identity || evidence.status) + '">Arena: ' + (evidence.status === "matched" && evidence.score != null ? '#' + evidence.rank + ' · ' + Number(evidence.score).toFixed(dec.arena?.board === "agent" ? 4 : 2) : esc(evidence.status)) + '</span>' : '';
+    const arenaTag = evidence ? '<span class="router-price-tag" title="' + esc(evidence.version_reference_note || evidence.identity || evidence.status) + '">Arena: '
+      + (evidence.score != null && (evidence.status === "matched" || evidence.status === "version_reference")
+        ? (evidence.version_reference ? '旧版参考／新版推断 · ' + esc(evidence.source_model || "") + ' · ' : '')
+          + '#' + evidence.rank + ' · ' + Number(evidence.score).toFixed(dec.arena?.board === "agent" ? 4 : 2)
+        : esc(evidence.status)) + '</span>' : '';
     const runtimeTag = evidence ? '<span class="router-price-tag" title="费用只作相同输出预算下的比较参考，不是实付账单">'
       + (evidence.price_known && evidence.comparison_cost_usd != null ? '费用参考 $' + Number(evidence.comparison_cost_usd).toPrecision(4) + ' · 输出 ' + Number(evidence.cost_reference_output_tokens || 0) + ' token' : evidence.price_source === 'byok_cost_unknown' ? '自带渠道费用未知' : '费率未知')
       + (evidence.channel_response_ms != null ? ' · ' + (evidence.channel_response_kind === 'nonstream_total' ? '非流式响应 ' : '流式 TTFT ') + Math.round(evidence.channel_response_ms) + ' ms' : ' · 速度未知')

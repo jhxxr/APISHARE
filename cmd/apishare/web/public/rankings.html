@@ -53,7 +53,8 @@
         </div>
         <div class="arena-pagination"><p id="rankingResultCount" role="status" aria-live="polite">正在加载…</p><div class="arena-page-controls"><label>每页<select id="rankingPageSize" aria-label="每页显示模型数"><option value="25">25</option><option value="50">50</option><option value="100">100</option></select></label><button id="rankingPrev" type="button" disabled aria-label="上一页">上一页</button><select id="rankingPage" aria-label="跳转到页"><option value="1">1 / 1</option></select><button id="rankingNext" type="button" disabled aria-label="下一页">下一页</button></div></div>
       </section>
-      <details class="arena-methodology"><summary>榜单口径与接入标记说明</summary><div><p><strong>原始数据，不二次打分。</strong>使用 Arena 官方历史数据集 latest 快照的 overall 类别，保留原始分数、并列名次、区间及样本。搜索和分页不重新编号；源榜未收录的模型不编造排名。</p><p><strong>各分榜独立比较。</strong>文本与视觉采用风格控制配置；Agent 为 IPS 分数。不同分榜的尺度不同，不合并加权。同名但不同名次的源数据条目原样保留。</p><p><strong>标记接入，不保证实时健康。</strong>按模型标识及明确的模型映射匹配本站启用渠道，不混同版本、日期或思考模式。每日同步一次；源站故障时保留旧快照并显示日期，不采用推断分数兜底。</p></div></details>
+      <details id="rankingUnranked" class="arena-methodology hidden"><summary>本站还有 <span id="rankingUnrankedCount">0</span> 个模型未匹配当前分榜的对应版本</summary><div><p>这些模型已在本站接入，但没有对应版本的源榜记录。这里仅展示接入信息，不借用旧版本或其他型号的评分。</p><ul id="rankingUnrankedList" class="arena-unranked-list"></ul></div></details>
+      <details class="arena-methodology"><summary>榜单口径与接入标记说明</summary><div><p><strong>原始数据，不二次打分。</strong>使用 Arena 官方历史数据集 latest 快照的 overall 类别，保留原始分数、并列名次、区间及样本。搜索和分页不重新编号；源榜未收录的模型不编造排名。</p><p><strong>各分榜独立比较。</strong>文本与视觉采用风格控制配置；Agent 为 IPS 分数。不同分榜的尺度不同，不合并加权。同名但不同名次的源数据条目原样保留。</p><p><strong>标记接入，不保证实时健康。</strong>按实际模型映射匹配本站启用渠道；接入标记可忽略明确的思考强度，但不代表复现该配置的分数。日期版本仍严格区分。DeepSeek 官方滚动别名按 2026-11-11 核验的 V4.1-Flash-1017 标注；旧 0910 榜单行不会冒充 1017 排名。每日同步一次；源站故障时保留旧快照并显示日期，不采用推断分数兜底。</p></div></details>
     </main>
     <footer class="arena-footer"><span>数据归原榜单发布方所有 · 仅代表对应评测口径</span><span>点击模型名称查看详情</span></footer>
   </div>

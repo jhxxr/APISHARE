@@ -76,6 +76,10 @@
 .arena-table .arena-interval-value { color: var(--muted); font-size: 12px; }
 .arena-site-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border: 1px solid var(--success-border); border-radius: 4px; color: var(--green); background: var(--success-soft); font-size: 11px; white-space: nowrap; }
 .arena-unmarked { color: var(--muted); }
+.arena-site-badge.is-version-mismatch { color: var(--muted); border-color: var(--border); background: var(--surface); }
+.arena-unranked-list { max-height: 300px; overflow-y: auto; padding-left: 20px; }
+.arena-unranked-list li { padding: 8px 0; overflow-wrap: anywhere; }
+.arena-unranked-list li > span, .arena-unranked-list li > small { display: block; margin-top: 4px; color: var(--muted); }
 .arena-mobile-badge { display: none; }
 .arena-table-placeholder, .arena-empty { padding: 56px 20px !important; text-align: center; color: var(--muted); font-size: 13px; }
 .arena-empty h3 { color: var(--text); font-size: 17px; font-weight: 500; }

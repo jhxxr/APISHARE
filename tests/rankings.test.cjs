@@ -70,6 +70,32 @@ test("details use original row index after paging and copy the actual site alias
  await p.get("rankingDetailContent").listeners.click({target:{closest:()=>({dataset:{copyIndex:"0"}})}});
  assert.deepEqual(p.copied,["real-request-alias"]);p.get("rankingDetailClose").listeners.click();assert.equal(p.get("rankingDetail").open,false);
 });
+test("version-mismatched DeepSeek is not presented as scored 1017 and unranked models stay visible",async()=>{
+ const source=model("DeepSeek-V4.1-Flash-20260910 (Max)",8,1450);
+ source.related_site_models=["deepseek-flash"];
+ source.site_match_note='本站是 1017，不能套用 0910；<unsafe>';
+ const response={...data([source]),unranked_site_models:[{model:"deepseek-flash",versions:["V4.1-Flash-1017"],note:"官方 2026-10-17 版本"}]};
+ const p=await page([],async()=>({ok:true,json:async()=>response}));
+ assert.match(p.get("rankingList").innerHTML,/本站版本不同/);
+ assert.doesNotMatch(p.get("rankingList").innerHTML,/is-connected/);
+ assert.equal(p.get("rankingSiteCount").textContent,"0");
+ assert.equal(p.get("rankingUnrankedCount").textContent,"1");
+ assert.match(p.get("rankingUnrankedList").innerHTML,/1017/);
+ p.get("rankingList").listeners.click({target:{closest:()=>({dataset:{modelIndex:"0"}})}});
+ const detail=p.get("rankingDetailContent").innerHTML;
+ assert.match(detail,/不同日期版本/);assert.match(detail,/deepseek-flash/);
+ assert.match(detail,/&lt;unsafe&gt;/);assert.doesNotMatch(detail,/<unsafe>/);
+ p.get("rankingScopeSite").listeners.click();
+ assert.equal(p.get("rankingList").innerHTML,"");
+ assert.equal(p.get("rankingUnranked").classList.contains("hidden"),false);
+});
+test("thinking-level connection notes do not change the source label or score",async()=>{
+ const m=model("GPT-5.2 (High)",9,1456.78,true);m.site_models=["gpt-5.2"];m.site_match_note="思考配置可能不同";
+ const p=await page([m]);
+ assert.match(p.get("rankingList").innerHTML,/GPT-5.2 \(High\)/);
+ assert.match(p.get("rankingList").innerHTML,/1456.78/);
+ assert.match(p.get("rankingList").innerHTML,/思考配置可能不同/);
+});
 test("admin reset and capability metadata regressions stay fixed",async()=>{
  let requested;const ctx=vm.createContext({esc:String,setBusy(){},toast(){},reportError(e){throw e},api:async(url)=>{requested=url}});
  vm.runInContext(read("cmd/apishare/web/router.js"),ctx);vm.runInContext("loadAutoRouter=async()=>{}",ctx);await vm.runInContext("resetAutoRouterBanditState({})",ctx);
