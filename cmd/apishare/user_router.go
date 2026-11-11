@@ -32,6 +32,7 @@ type UserAutoRouterConfig struct {
 	Enabled                 bool                `json:"enabled"`
 	VirtualModel            string              `json:"virtual_model"`
 	StrategyProfile         string              `json:"strategy_profile"` // "balanced" | "quality_first" | "cost_first" | "latency_first"
+	ArenaMode               string              `json:"arena_mode"`
 	ModelPool               []string            `json:"model_pool,omitempty"`
 	ExcludedModels          []string            `json:"excluded_models,omitempty"`
 	BanditEnabled           bool                `json:"bandit_enabled"`
@@ -70,6 +71,7 @@ func defaultUserAutoRouterConfig() UserAutoRouterConfig {
 		Enabled:                false,
 		VirtualModel:           "my-auto",
 		StrategyProfile:        StrategyBalanced,
+		ArenaMode:              "shadow",
 		ModelPool:              []string{},
 		ExcludedModels:         []string{},
 		BanditEnabled:          true,
@@ -563,6 +565,11 @@ func normalizeUserAutoRouterConfig(sub string, ucfg *UserAutoRouterConfig, stric
 	}
 
 	ucfg.StrategyProfile = normalizeStrategyProfile(ucfg.StrategyProfile)
+	if mode, err := normalizeArenaRoutingMode(ucfg.ArenaMode); err != nil {
+		return err
+	} else {
+		ucfg.ArenaMode = mode
+	}
 	rawPool := normalizeModelSlice(ucfg.ModelPool)
 	cleanPool := make([]string, 0, len(rawPool))
 	for _, m := range rawPool {
@@ -1280,6 +1287,10 @@ func resolveUserAutoRouteWithConfig(ctx context.Context, sub string, ucfg UserAu
 					Thinking:     tPlan.EffectiveLabel,
 					ContextLimit: ctxLimit,
 				}}
+				if mode, err := normalizeArenaRoutingMode(ucfg.ArenaMode); err == nil && mode != "off" {
+					decision.Arena = &arenaRoutingDecision{Mode: mode, ActualModel: prevSessionModel,
+						BaselineModel: prevSessionModel, ProposedModel: prevSessionModel, Reason: "session_tool_followup_preserved"}
+				}
 				return decision, []userRouteTarget{target}, nil
 			}
 		}
@@ -1385,6 +1396,26 @@ func resolveUserAutoRouteWithConfig(ctx context.Context, sub string, ucfg UserAu
 	decision.SkippedCandidates = skippedCount
 	if quotaErr != nil {
 		return decision, nil, quotaErr
+	}
+	models := make([]string, 0, len(targets))
+	targetByModel := make(map[string]userRouteTarget, len(targets))
+	for _, target := range targets {
+		models = append(models, target.Model)
+		targetByModel[target.Model] = target
+	}
+	manual := false
+	for _, list := range ucfg.Tiers {
+		manual = manual || len(list) > 0
+	}
+	models = applyArenaRoutePolicy(decision, models, arenaRoutingOptions{
+		Mode: ucfg.ArenaMode, Strategy: ucfg.StrategyProfile, DefaultModel: ucfg.DefaultModel,
+		TierThinking: ucfg.TierThinking, PreserveTiers: manual, UserSub: sub, Targets: targetByModel,
+		ConfiguredOrder: arenaConfiguredOrder(ucfg.ModelPool, ucfg.Tiers), BanditEnabled: ucfg.BanditEnabled,
+		Format: format, NativeOnly: nativeOnly, PreviousModel: prevSessionModel,
+	}, cr, demand)
+	targets = targets[:0]
+	for _, model := range models {
+		targets = append(targets, targetByModel[model])
 	}
 	if len(targets) > 0 {
 		decision.SelectedModel = targets[0].Model
@@ -1506,6 +1537,9 @@ func selectUserTierTargets(ctx context.Context, sub string, ucfg UserAutoRouterC
 	isExcluded := routerModelExclusionFilter(ucfg.ExcludedModels)
 	ordered := make([]tierCandidate, 0, 12)
 	evalUtility := func(m string, stochastic bool) candidateUtilityBreakdown {
+		if ucfg.ArenaMode == "live" {
+			return candidateUtilityBreakdown{RawModel: m}
+		}
 		cLim := effectiveModelContextLimit(m, nil)
 		var upID int64
 		if ucfg.BanditEnabled {
@@ -1936,6 +1970,7 @@ func buildUserAutoRouterView(ctx context.Context, sub string, ak ApiKey) gin.H {
 		"enabled":                          ucfg.Enabled,
 		"virtual_model":                    ucfg.VirtualModel,
 		"strategy_profile":                 normalizeStrategyProfile(ucfg.StrategyProfile),
+		"arena_mode":                       ucfg.ArenaMode,
 		"model_pool":                       ucfg.ModelPool,
 		"excluded_models":                  ucfg.ExcludedModels,
 		"bandit_enabled":                   ucfg.BanditEnabled,
@@ -2391,6 +2426,7 @@ func registerUserRouterRoutes(userAPI *gin.RouterGroup) {
 			Enabled                 *bool                `json:"enabled"`
 			VirtualModel            *string              `json:"virtual_model"`
 			StrategyProfile         *string              `json:"strategy_profile"`
+			ArenaMode               *string              `json:"arena_mode"`
 			ModelPool               *[]string            `json:"model_pool"`
 			ExcludedModels          *[]string            `json:"excluded_models"`
 			BanditEnabled           *bool                `json:"bandit_enabled"`
@@ -2429,6 +2465,9 @@ func registerUserRouterRoutes(userAPI *gin.RouterGroup) {
 		}
 		if req.StrategyProfile != nil {
 			ucfg.StrategyProfile = *req.StrategyProfile
+		}
+		if req.ArenaMode != nil {
+			ucfg.ArenaMode = *req.ArenaMode
 		}
 		if req.ModelPool != nil {
 			ucfg.ModelPool = *req.ModelPool

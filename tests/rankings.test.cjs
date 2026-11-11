@@ -1,116 +1,79 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
-const vm = require("node:vm");
-const root = path.resolve(__dirname, "..");
-const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
-
+const fs = require("node:fs"), path = require("node:path"), vm = require("node:vm");
+const read = (file) => fs.readFileSync(path.resolve(__dirname, "..", file), "utf8");
 function element() {
-  const children = new Map();
-  const classes = new Set();
-  return {
-    value: "", innerHTML: "", textContent: "", disabled: false, listeners: {},
-    classList: {
-      add(name) { classes.add(name); },
-      remove(name) { classes.delete(name); },
-      contains(name) { return classes.has(name); },
-      toggle(name, force) { if (force) classes.add(name); else classes.delete(name); },
-    },
-    addEventListener(name, callback) { this.listeners[name] = callback; },
-    setAttribute(name, value) { this[name] = value; },
-    querySelector(selector) { if (!children.has(selector)) children.set(selector, element()); return children.get(selector); },
-    focus() {},
-  };
+ const children = new Map(), classes = new Set();
+ return {value:"", innerHTML:"", textContent:"", disabled:false, listeners:{}, dataset:{},
+  classList:{add(n){classes.add(n)},remove(n){classes.delete(n)},contains(n){return classes.has(n)},toggle(n,on){if(on)classes.add(n);else classes.delete(n)}},
+  addEventListener(n,fn){this.listeners[n]=fn},setAttribute(n,v){this[n]=v},querySelector(s){if(!children.has(s))children.set(s,element());return children.get(s)},focus(){},showModal(){this.open=true},close(){this.open=false}};
 }
-
-async function rankingsPage(models) {
-  const nodes = new Map();
-  const get = (id) => { if (!nodes.has(id)) nodes.set(id, element()); return nodes.get(id); };
-  get("rankingSort").value = "overall_score";
-  const fixture = { models, updated_at: "2026-11-10T15:00:00+08:00", models_loading: false };
-  let fail = false;
-  const context = vm.createContext({
-    document: { getElementById: get }, window: {}, console, AbortController, setTimeout, clearTimeout,
-    fetch: async () => {
-      if (fail) throw new Error("offline");
-      return { ok: true, json: async () => fixture };
-    },
-  });
-  vm.runInContext(read("cmd/apishare/web/public/rankings.js"), context);
-  await new Promise(setImmediate);
-  return { get, fail: () => { fail = true; } };
+const model=(name,rank,score,site=false)=>({model:name,family:"Example",rank,score,site_available:site,site_models:site?[name]:[],votes:1200,rating_lower:score-5,rating_upper:score+5});
+const data=(models,board="text")=>({models,board,boards:[{id:"text"},{id:"agent"}],board_label:board==="text"?"Text":"Agent",score_kind:board==="agent"?"ips":"arena",score_label:board==="agent"?"Agent IPS Score":"Arena Score",sample_label:"对战样本",published_at:"2026-11-09",fetched_at:"2026-11-10T04:00:00+08:00"});
+async function page(models,customFetch){
+ const nodes=new Map(),urls=[],copied=[];let fail=false;
+ const get=id=>{if(!nodes.has(id))nodes.set(id,element());return nodes.get(id)};get("rankingBoard").value="text";get("rankingPageSize").value="25";
+ const tabs=["text","vision","webdev","agent"].map(board=>{const el=element();el.dataset.board=board;return el});
+ const context=vm.createContext({document:{getElementById:get,querySelectorAll:()=>tabs},window:{},console,AbortController,setTimeout,clearTimeout,copyToClipboard:async(value)=>copied.push(value),
+  fetch:async(url,opts)=>{urls.push(url);if(fail)throw Error("offline");if(customFetch)return customFetch(url,opts);return{ok:true,json:async()=>data(models,new URL(url,"https://example.invalid").searchParams.get("board"))}}});
+ vm.runInContext(read("cmd/apishare/web/public/rankings.js"),context);await new Promise(setImmediate);
+ return{get,urls,copied,tabs,fail(){fail=true}};
 }
-
-function model(name, score, extra = {}) {
-  return {
-    model: name, family: "Example", bandit_calls: 0,
-    capabilities: { overall_score: score, coding_swe: score, frontend_ui: score, reasoning_math: score, agentic_tools: score, writing_knowledge: score, long_context_mm: score, benchmark_source: "inferred" },
-    ...extra,
-  };
-}
-
-test("full catalog includes no-sample models and preserves ranks when searching", async () => {
-  const page = await rankingsPage([model("weaker", 70), model("stronger", 95)]);
-  const { get } = page;
-  assert.match(get("rankingResultCount").textContent, /2 \/ 2/);
-  assert.ok(get("rankingList").innerHTML.indexOf("stronger") < get("rankingList").innerHTML.indexOf("weaker"));
-  assert.match(get("rankingList").innerHTML, /暂无在线样本/);
-  get("rankingSearch").value = "weaker";
-  get("rankingSearch").listeners.input();
-  assert.match(get("rankingResultCount").textContent, /1 \/ 2/);
-  assert.match(get("rankingList").innerHTML, /第 2 名/);
-  assert.doesNotMatch(get("rankingList").innerHTML, /stronger/);
+test("shows ALL official models, preserves ties and original scores",async()=>{
+ const p=await page([model("external winner",1,1525.95),model("site model",2,1470.25,true),model("tied",2,1469)]);
+ const html=p.get("rankingList").innerHTML;
+ assert.ok(html.indexOf("external winner")<html.indexOf("site model"));assert.match(html,/1525.95/);assert.match(html,/已接入/);assert.equal((html.match(/源榜第 2 名/g)||[]).length,2);
+ assert.equal(p.get("rankingSiteCount").textContent,"1");assert.match(p.get("rankingPublication").textContent,/2026-11-09/);
 });
-
-test("latency sorting is ascending and missing measurements sort last", async () => {
-  const { get } = await rankingsPage([
-    model("unmeasured", 100), model("slow", 90, { bandit_calls: 3, ewma_ttft_ms: 3000 }),
-    model("fast", 80, { bandit_calls: 5, ewma_ttft_ms: 200 }),
-  ]);
-  get("rankingSort").value = "ewma_ttft_ms";
-  get("rankingSort").listeners.change();
-  const html = get("rankingList").innerHTML;
-  assert.ok(html.indexOf(">fast<") < html.indexOf(">slow<"));
-  assert.ok(html.indexOf(">slow<") < html.indexOf(">unmeasured<"));
-  assert.match(html, /暂无名次/);
-  assert.match(html, /200ms/);
-  assert.doesNotMatch(get("rankingLeaders").innerHTML, /unmeasured/);
+test("site-only, provider and search filters do not renumber or fetch externally",async()=>{
+ const p=await page([model("external",1,1500),model("local",7,1400,true)]);
+ p.get("rankingScopeSite").listeners.click();let html=p.get("rankingList").innerHTML;
+ assert.match(html,/源榜第 7 名/);assert.doesNotMatch(html,/external/);assert.match(p.get("rankingResultCount").textContent,/全榜 2/);
+ p.get("rankingSearch").value="nothing";p.get("rankingSearch").listeners.input();assert.equal(p.get("rankingList").innerHTML,"");assert.equal(p.urls.length,1);
 });
-
-test("model names are escaped and an unsuccessful refresh retains prior results", async () => {
-  const page = await rankingsPage([model('<img src=x onerror="alert(1)">', 88)]);
-  assert.doesNotMatch(page.get("rankingList").innerHTML, /<img/);
-  assert.match(page.get("rankingList").innerHTML, /&lt;img/);
-  const before = page.get("rankingList").innerHTML;
-  page.fail();
-  await page.get("rankingRefresh").listeners.click();
-  assert.equal(page.get("rankingList").innerHTML, before);
-  assert.match(page.get("rankingError").textContent, /保留上次/);
-  assert.equal(page.get("rankingRefresh").disabled, false);
-  assert.equal(page.get("rankingList")["aria-busy"], "false");
+test("board change reads only local public API; IPS score keeps its scale",async()=>{
+ const p=await page([model("agent",3,0.199556,true)]);p.get("rankingBoard").value="agent";await p.get("rankingBoard").listeners.change();
+ assert.match(p.get("rankingList").innerHTML,/0.1996/);assert.match(p.get("rankingScoreHeading").textContent,/Agent IPS Score/);assert.ok(p.urls.every(u=>u.startsWith("/api/public/rankings?board=")));
 });
-
-test("empty catalogs can be rendered without inventing scores", async () => {
-  const { get } = await rankingsPage([]);
-  assert.equal(get("rankingList").innerHTML, "");
-  assert.equal(get("rankingEmpty").querySelector("h3").textContent, "暂未接入模型");
-  assert.equal(get("rankingModelCount").textContent, "0");
+test("empty official cache NEVER invents models or scores",async()=>{
+ const p=await page([]);assert.equal(p.get("rankingList").innerHTML,"");assert.equal(p.get("rankingEmpty").querySelector("h3").textContent,"暂无官方榜单缓存");assert.match(p.get("rankingEmpty").querySelector("p").textContent,/不生成推断排名/);
 });
-
-test("admin reset uses the registered route and capability tags use the API field", async () => {
-  let requested;
-  const context = vm.createContext({
-    esc: String, setBusy() {}, toast() {}, reportError(error) { throw error; },
-    api: async (url) => { requested = url; },
-  });
-  vm.runInContext(read("cmd/apishare/web/router.js"), context);
-  vm.runInContext("loadAutoRouter = async () => {};", context);
-  await vm.runInContext("resetAutoRouterBanditState({})", context);
-  const route = read("cmd/apishare/auto_router.go").match(/auth.POST\("(\/auto-router\/bandit\/reset)"/)[1];
-  assert.equal(requested, "api" + route);
-  vm.runInContext(`routerConfigCache = {model_health: {example: {capabilities: {coding_swe: 90, frontend_ui: 88, reasoning_math: 80, agentic_tools: 75}, bandit_calls: 5, bandit_win_rate: 0.9}}};`, context);
-  const tags = vm.runInContext("capabilityTagsForRouterModel('example')", context);
-  assert.match(tags, /SWE 90/);
-  assert.match(tags, /胜率 90%/);
+test("escapes external names and keeps good snapshot if local request fails",async()=>{
+ const p=await page([model('<img src=x onerror="alert(1)">',1,1500)]);const before=p.get("rankingList").innerHTML;assert.doesNotMatch(before,/<img/);assert.match(before,/&lt;img/);
+ p.fail();await p.get("rankingRefresh").listeners.click();assert.equal(p.get("rankingList").innerHTML,before);assert.match(p.get("rankingError").textContent,/保留已显示/);assert.equal(p.get("rankingRefresh").disabled,false);
+});
+test("slow old board response cannot overwrite newly selected board",async()=>{
+ let resolveFirst;let count=0;
+ const p=await page([],async(url)=>{const board=new URL(url,"https://example.invalid").searchParams.get("board");if(++count===1)return new Promise(resolve=>{resolveFirst=resolve});return{ok:true,json:async()=>data([model("new agent",1,0.2)],board)}});
+ p.get("rankingBoard").value="agent";await p.get("rankingBoard").listeners.change();resolveFirst({ok:true,json:async()=>data([model("old text",1,1500)])});await new Promise(setImmediate);
+ assert.match(p.get("rankingList").innerHTML,/new agent/);assert.doesNotMatch(p.get("rankingList").innerHTML,/old text/);
+});
+test("pagination limits DOM size, preserves source ranks and resets when filtering",async()=>{
+ const models=Array.from({length:80},(_,i)=>model("model-"+(i+1),i+1,1600-i,i%10===0));
+ const p=await page(models);
+ assert.equal((p.get("rankingList").innerHTML.match(/class="ranking-row/g)||[]).length,25);
+ assert.equal(p.get("rankingPrev").disabled,true);
+ p.get("rankingNext").listeners.click();
+ assert.match(p.get("rankingList").innerHTML,/源榜第 26 名/);assert.doesNotMatch(p.get("rankingList").innerHTML,/源榜第 1 名/);
+ assert.equal(p.get("rankingPage").value,"2");
+ p.get("rankingPageSize").value="50";p.get("rankingPageSize").listeners.change();
+ assert.equal((p.get("rankingList").innerHTML.match(/class="ranking-row/g)||[]).length,50);
+ p.get("rankingScopeSite").listeners.click();assert.equal(p.get("rankingPage").value,"1");assert.equal(p.get("rankingNext").disabled,true);
+ assert.equal(p.urls.length,1);
+});
+test("details use original row index after paging and copy the actual site alias",async()=>{
+ const models=Array.from({length:30},(_,i)=>model("entry-"+(i+1),i+1,1600-i,true));models[25].site_models=["real-request-alias"];
+ const p=await page(models);p.get("rankingNext").listeners.click();
+ p.get("rankingList").listeners.click({target:{closest:()=>({dataset:{modelIndex:"25"}})}});
+ assert.equal(p.get("rankingDetailTitle").textContent,"entry-26");assert.equal(p.get("rankingDetail").open,true);
+ assert.match(p.get("rankingDetailContent").innerHTML,/real-request-alias/);
+ await p.get("rankingDetailContent").listeners.click({target:{closest:()=>({dataset:{copyIndex:"0"}})}});
+ assert.deepEqual(p.copied,["real-request-alias"]);p.get("rankingDetailClose").listeners.click();assert.equal(p.get("rankingDetail").open,false);
+});
+test("admin reset and capability metadata regressions stay fixed",async()=>{
+ let requested;const ctx=vm.createContext({esc:String,setBusy(){},toast(){},reportError(e){throw e},api:async(url)=>{requested=url}});
+ vm.runInContext(read("cmd/apishare/web/router.js"),ctx);vm.runInContext("loadAutoRouter=async()=>{}",ctx);await vm.runInContext("resetAutoRouterBanditState({})",ctx);
+ const route=read("cmd/apishare/auto_router.go").match(/auth.POST\("(\/auto-router\/bandit\/reset)"/)[1];assert.equal(requested,"api"+route);
+ vm.runInContext("routerConfigCache={model_health:{example:{capabilities:{coding_swe:90,frontend_ui:88},bandit_calls:5,bandit_win_rate:0.9}}}",ctx);
+ assert.match(vm.runInContext("capabilityTagsForRouterModel('example')",ctx),/SWE 90/);
 });

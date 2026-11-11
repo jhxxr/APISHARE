@@ -1,18 +1,14 @@
 <!DOCTYPE html>
 <html lang="zh-CN" data-site-title="{{SITE_TITLE}}">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#faf9f5">
-  <meta name="description" content="查看站点已接入全部模型的六维能力参考排行与在线路由表现。">
+  <meta name="description" content="浏览 Arena 官方完整模型榜单，搜索、分页和筛选本站已接入模型；保留原始评分与排名，每日同步。">
   <title>模型排行 · {{PUBLIC_TITLE}}</title>
   <link rel="icon" type="{{SITE_ICON_TYPE}}" href="{{SITE_ICON_FAVICON}}">
   <link rel="apple-touch-icon" type="{{SITE_ICON_TYPE}}" href="{{SITE_ICON_TOUCH}}">
-  <link rel="stylesheet" href="/public/static/home.css">
-  <link rel="stylesheet" href="/public/static/model-icons.css">
-  <link rel="stylesheet" href="/public/static/rankings.css">
-  <script src="/public/static/model-icons.js" defer></script>
-  <script src="/public/static/rankings.js" defer></script>
+  <link rel="stylesheet" href="/public/static/home.css"><link rel="stylesheet" href="/public/static/model-icons.css"><link rel="stylesheet" href="/public/static/rankings.css">
+  <script src="/public/static/clipboard.js" defer></script><script src="/public/static/model-icons.js" defer></script><script src="/public/static/rankings.js" defer></script>
 </head>
 <body class="rankings-page">
   <a class="skip-link" href="#rankings">跳到完整排行</a>
@@ -20,59 +16,47 @@
     <symbol id="rank-arrow" viewBox="0 0 24 24"><path d="M19 12H5m6 6-6-6 6-6"/></symbol>
     <symbol id="rank-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 6a8 8 0 0 1 14 6M4 12a8 8 0 0 0 14 6"/></symbol>
     <symbol id="rank-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="rank-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
   </svg>
-  <div class="container ranking-container">
-    <header class="ranking-nav">
-      <a class="ranking-brand" href="/" aria-label="{{SITE_TITLE}} 首页"><img src="{{SITE_ICON_LOGO}}" width="38" height="38" alt=""><span>{{SITE_TITLE}}</span></a>
-      <a class="button" href="/"><svg class="icon" aria-hidden="true"><use href="#rank-arrow"/></svg>返回首页</a>
-    </header>
+  <div class="arena-shell">
+    <header class="arena-nav"><a class="arena-brand" href="/"><img src="{{SITE_ICON_LOGO}}" width="32" height="32" alt=""><span>{{SITE_TITLE}}</span><span class="arena-nav-divider">/</span><span class="arena-nav-label">模型排行</span></a><a class="arena-back" href="/"><svg class="icon" aria-hidden="true"><use href="#rank-arrow"/></svg>返回首页</a></header>
     <main>
-      <section class="ranking-hero" aria-labelledby="rankingTitle">
-        <div>
-          <p class="eyebrow">MODEL INTELLIGENCE / THE LEADERBOARD</p>
-          <h1 id="rankingTitle">模型排行<span class="ranking-title-dot">.</span></h1>
-          <p class="ranking-description">各有所长，一览便知。<br>从软件工程到数学推理，比较站点已接入全部模型的能力画像。</p>
-          <a class="ranking-method-link" href="#methodology">这些分数意味着什么？ <span aria-hidden="true">↘</span></a>
-        </div>
-        <div class="ranking-summary" aria-label="排行概况">
-          <div><strong id="rankingModelCount">—</strong><span>已接入模型</span></div>
-          <div><strong>06</strong><span>能力维度</span></div>
-          <div><strong id="rankingMeasuredCount">—</strong><span>有在线样本</span></div>
-        </div>
+      <section class="arena-heading" aria-labelledby="rankingTitle">
+        <div><p class="arena-kicker">ARENA LEADERBOARD</p><h1 id="rankingTitle">模型排行榜<span class="arena-heading-tag">官方数据</span></h1><p>全量榜单，原始名次。找到模型，再看它是否已在本站接入。</p></div>
+        <div class="arena-update"><span>每天 04:00 · 北京时间同步</span><a id="rankingSourceLink" href="https://huggingface.co/datasets/lmarena-ai/leaderboard-dataset" target="_blank" rel="noopener noreferrer">查看数据来源 ↗</a></div>
       </section>
-      <section class="ranking-leaders" aria-labelledby="leadersTitle">
-        <div class="ranking-section-heading"><h2 id="leadersTitle">综合能力 · 领先模型</h2><span>适合的，才是最好的。</span></div>
-        <div id="rankingLeaders" class="ranking-podium" aria-busy="true"><p class="ranking-placeholder">正在读取模型能力画像…</p></div>
-      </section>
-      <section id="rankings" class="ranking-board" aria-labelledby="boardTitle" tabindex="-1">
-        <div class="ranking-board-heading">
-          <div><p class="eyebrow">EVERY MODEL, IN PERSPECTIVE</p><h2 id="boardTitle">完整模型榜单</h2></div>
-          <button id="rankingRefresh" class="button" type="button"><svg class="icon" aria-hidden="true"><use href="#rank-refresh"/></svg><span>刷新排行</span></button>
+      <section id="rankings" class="arena-workspace" aria-labelledby="boardTitle" tabindex="-1">
+        <h2 id="boardTitle" class="arena-visually-hidden">完整模型榜单</h2>
+        <div class="arena-toolbar">
+          <div class="arena-toolbar-top">
+            <div class="arena-board-tabs" role="group" aria-label="常用榜单"><button type="button" data-board="text" aria-pressed="true">文本</button><button type="button" data-board="vision" aria-pressed="false">视觉</button><button type="button" data-board="webdev" aria-pressed="false">网页开发</button><button type="button" data-board="agent" aria-pressed="false">智能体</button></div>
+            <label class="arena-board-picker"><span class="arena-visually-hidden">选择全部公开分榜</span><select id="rankingBoard">
+              <option value="text">Text · 文本（风格控制）</option><option value="vision">Vision · 视觉（风格控制）</option><option value="webdev">WebDev · 网页开发</option><option value="agent">Agent · 智能体</option><option value="document">Document · 文档（风格控制）</option><option value="search">Search · 搜索（风格控制）</option><option value="text-to-image">Text to Image · 文生图</option><option value="image-edit">Image Edit · 图像编辑</option><option value="text-to-video">Text to Video · 文生视频</option><option value="image-to-video">Image to Video · 图生视频</option><option value="video-edit">Video Edit · 视频编辑</option>
+            </select></label>
+          </div>
+          <form id="rankingFilters" class="arena-filter-row" role="search">
+            <label class="arena-search"><svg class="icon" aria-hidden="true"><use href="#rank-search"/></svg><span class="arena-visually-hidden">搜索模型、提供方或本站模型标识</span><input id="rankingSearch" type="search" placeholder="搜索模型、提供方或本站模型标识" autocomplete="off"></label>
+            <label class="arena-provider"><span class="arena-visually-hidden">模型提供方</span><select id="rankingFamily"><option value="">全部提供方</option></select></label>
+            <div class="arena-scope" role="group" aria-label="接入范围"><button id="rankingScopeAll" type="button" aria-pressed="true">全部<span id="rankingModelCount">—</span></button><button id="rankingScopeSite" type="button" aria-pressed="false">本站已接入<span id="rankingSiteCount">—</span></button></div>
+            <button id="rankingClear" class="arena-text-button" type="button">重置</button>
+            <button id="rankingRefresh" class="arena-refresh" type="button" aria-label="更新页面，重新读取每日缓存" title="重新读取本地缓存，不触发外部同步"><svg class="icon" aria-hidden="true"><use href="#rank-refresh"/></svg><span>更新页面</span></button>
+          </form>
         </div>
-        <form id="rankingFilters" class="ranking-filters" role="search">
-          <label class="ranking-search"><span>搜索模型</span><div><svg class="icon" aria-hidden="true"><use href="#rank-search"/></svg><input id="rankingSearch" type="search" placeholder="输入模型名称或提供方" autocomplete="off"></div></label>
-          <label><span>排行维度</span><select id="rankingSort">
-            <option value="overall_score">综合能力</option><option value="coding_swe">软件工程 / SWE</option><option value="frontend_ui">前端与 UI</option><option value="reasoning_math">数学与推理</option><option value="agentic_tools">Agent 与工具</option><option value="writing_knowledge">写作与知识</option><option value="long_context_mm">长上下文 / 多模态</option><option value="bandit_win_rate">Bandit 后验表现</option><option value="ewma_ttft_ms">在线首字延迟 · 从低到高</option>
-          </select></label>
-          <label><span>模型提供方</span><select id="rankingFamily"><option value="">全部提供方</option></select></label>
-        </form>
-        <div class="ranking-list-meta"><p id="rankingResultCount" role="status" aria-live="polite">正在加载完整榜单…</p><span id="rankingUpdatedAt">等待更新</span></div>
-        <p id="rankingError" class="ranking-error hidden" role="alert"></p>
-        <p id="rankingLoadingNote" class="ranking-discovery hidden" role="status">部分渠道正在后台发现模型目录，可稍后刷新查看新增模型。</p>
-        <div class="ranking-column-head" aria-hidden="true"><span>排名 / 模型</span><span id="rankingScoreHeading">综合能力</span><span>六维能力参考分</span><span>在线路由样本</span></div>
-        <ol id="rankingList" class="ranking-list" aria-label="模型完整排行" aria-busy="true"><li class="ranking-placeholder">正在读取模型排行…</li></ol>
-        <div id="rankingEmpty" class="ranking-empty hidden"><h3>没有匹配的模型</h3><p>试试其他关键词，或切换提供方。</p><button id="rankingClear" class="button" type="button">清除筛选</button></div>
-      </section>
-      <section id="methodology" class="ranking-methodology" aria-labelledby="methodTitle">
-        <p class="eyebrow">READ THE NUMBERS, KNOW THE LIMITS</p><h2 id="methodTitle">读懂排行，而不只看名次。</h2>
-        <div class="ranking-method-grid">
-          <article><span class="ranking-method-number">01</span><h3>能力分是路由参考，不是官方榜单</h3><p>与智能路由共用六维能力画像。来源可能是内置校准、模型族推断、同步数据或站点覆盖；每个模型均标明来源。分数不是本站重新运行公开基准所得的实测成绩。</p></article>
-          <article><span class="ranking-method-number">02</span><h3>不同任务，值得不同的第一名</h3><p>综合分按软件工程 24%、前端 UI 12%、数学推理 22%、工具调用 18%、写作知识 14%、长上下文与多模态 10% 加权。也可按单项能力独立排序。</p></article>
-          <article><span class="ranking-method-number">03</span><h3>在线表现，单独看待</h3><p>Bandit 后验来自启用在线学习的站点路由样本，包含先验、衰减与反馈，不等于真实任务准确率。首字延迟为按调用量汇总的平滑估计；无样本显示“—”，少量样本仅供参考。个人渠道数据不参与公共排行。</p></article>
+        <div class="arena-board-meta"><div><strong id="rankingBoardLabel">Text · 文本（风格控制）</strong><span class="arena-meta-separator">·</span><span id="rankingPublication">等待源榜数据</span></div><span id="rankingUpdatedAt">读取每日缓存中…</span></div>
+        <p id="rankingError" class="arena-notice arena-notice-error hidden" role="alert"></p><p id="rankingLoadingNote" class="arena-notice hidden" role="status"></p>
+        <div id="rankingTableScroll" class="arena-table-scroll" tabindex="0" aria-label="榜单表格，可上下滚动">
+          <table class="arena-table"><caption class="arena-visually-hidden">完整模型榜单，点击模型名称查看原始数据详情。筛选和分页保留原始名次。</caption>
+            <thead><tr><th scope="col" class="arena-col-rank">排名</th><th scope="col" class="arena-col-model">模型 / 提供方</th><th scope="col" class="arena-col-score" id="rankingScoreHeading">Arena Score</th><th scope="col" class="arena-col-interval">评分区间</th><th scope="col" class="arena-col-votes" id="rankingSampleHeading">对战样本</th><th scope="col" class="arena-col-site">本站接入</th></tr></thead>
+            <tbody id="rankingList" aria-busy="true"><tr><td colspan="6" class="arena-table-placeholder">正在读取公开榜单…</td></tr></tbody>
+          </table>
+          <div id="rankingEmpty" class="arena-empty hidden"><h3>没有匹配的模型</h3><p>尝试其他关键词，或重置筛选条件。</p></div>
         </div>
+        <div class="arena-pagination"><p id="rankingResultCount" role="status" aria-live="polite">正在加载…</p><div class="arena-page-controls"><label>每页<select id="rankingPageSize" aria-label="每页显示模型数"><option value="25">25</option><option value="50">50</option><option value="100">100</option></select></label><button id="rankingPrev" type="button" disabled aria-label="上一页">上一页</button><select id="rankingPage" aria-label="跳转到页"><option value="1">1 / 1</option></select><button id="rankingNext" type="button" disabled aria-label="下一页">下一页</button></div></div>
       </section>
+      <details class="arena-methodology"><summary>榜单口径与接入标记说明</summary><div><p><strong>原始数据，不二次打分。</strong>使用 Arena 官方历史数据集 latest 快照的 overall 类别，保留原始分数、并列名次、区间及样本。搜索和分页不重新编号；源榜未收录的模型不编造排名。</p><p><strong>各分榜独立比较。</strong>文本与视觉采用风格控制配置；Agent 为 IPS 分数。不同分榜的尺度不同，不合并加权。同名但不同名次的源数据条目原样保留。</p><p><strong>标记接入，不保证实时健康。</strong>按模型标识及明确的模型映射匹配本站启用渠道，不混同版本、日期或思考模式。每日同步一次；源站故障时保留旧快照并显示日期，不采用推断分数兜底。</p></div></details>
     </main>
-    <footer class="site-footer"><span>能力参考，不是能力承诺。请结合实际任务选择模型。</span><a href="/">返回用量与服务状态 ↗</a></footer>
+    <footer class="arena-footer"><span>数据归原榜单发布方所有 · 仅代表对应评测口径</span><span>点击模型名称查看详情</span></footer>
   </div>
+  <dialog id="rankingDetail" class="arena-detail" aria-labelledby="rankingDetailTitle"><div class="arena-detail-top"><p>MODEL DETAIL / 原始数据</p><button id="rankingDetailClose" type="button" aria-label="关闭模型详情"><svg class="icon" aria-hidden="true"><use href="#rank-close"/></svg></button></div><h2 id="rankingDetailTitle"></h2><p id="rankingDetailBoard" class="arena-detail-subtitle"></p><div id="rankingDetailContent"></div><p id="rankingCopyStatus" class="arena-copy-status" role="status" aria-live="polite"></p><a class="arena-detail-source" href="https://huggingface.co/datasets/lmarena-ai/leaderboard-dataset" target="_blank" rel="noopener noreferrer">查看 Arena 官方数据集 ↗</a></dialog>
 </body>
 </html>

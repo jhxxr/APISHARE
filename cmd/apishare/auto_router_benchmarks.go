@@ -27,14 +27,10 @@ var allCapabilityDomains = []string{
 	DomainLongContextMM,
 }
 
-// ModelCapabilityVector represents a model's normalized [0, 100] capability scores
-// aligned with public benchmarks:
-//   - CodingSWE:        SWE-bench Verified / Aider Polyglot
-//   - FrontendUI:       WebDev Arena / Design2Code
-//   - ReasoningMath:    LiveBench Reasoning / AIME / GPQA Diamond
-//   - AgenticTools:     Berkeley Function-Calling Leaderboard (BFCL) / tau-bench
-//   - WritingKnowledge: LMSYS Chatbot Arena Elo / Arena-Hard
-//   - LongContextMM:    MRCR / LongBench / MMMU
+// ModelCapabilityVector is the LEGACY heuristic/administrator profile used by
+// the off/shadow baseline. Builtin "calibrated" numbers are not measured public
+// benchmark results. Live Arena routing uses raw arenaRoutingEvidence instead;
+// it never adds these model-name priors or thinking bonuses to an Arena score.
 type ModelCapabilityVector struct {
 	CodingSWE        float64 `json:"coding_swe"`
 	FrontendUI       float64 `json:"frontend_ui"`

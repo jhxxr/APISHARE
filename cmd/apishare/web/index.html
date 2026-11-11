@@ -284,7 +284,7 @@
 
         <section id="tab-router" class="panel hidden">
           <div class="page-heading">
-            <div><span class="eyebrow">SMART ROUTER 3.0 · AUTONOMOUS BANDIT &amp; BENCHMARK MATRIX</span><h1>智能路由 3.0</h1><p>免手动分级：结合 6 维公开评测能力矩阵（SWE-bench / WebDev / AIME / BFCL / Arena）、在线上下文 Bandit (Thompson Sampling / UCB) 与投机探针自检升级 (Speculative Cascade) 全自动寻优。</p></div>
+            <div><span class="eyebrow">SMART ROUTER · ARENA PRIOR &amp; CHANNEL METRICS</span><h1>智能路由</h1><p>按任务分档，以真实 Arena 分榜作为可选质量参考，再结合渠道稳定性、成本和延迟选择。默认观察对照，不改变实际转发；旧人工能力画像不属于公开评测实测分数。</p></div>
             <div class="heading-actions">
               <div class="dash-segmented dash-segmented-small" role="group" aria-label="路由统计周期">
                 <button type="button" class="active" data-router-period="24h" aria-pressed="true" onclick="setRouterStatsPeriod('24h')">近 24H</button>
@@ -351,8 +351,8 @@
                   <div class="router-section-heading-main">
                     <span class="section-icon"><svg class="icon"><use href="#i-layers"/></svg></span>
                     <div>
-                      <h2>自治模型池与 6 维基准 Bandit 寻优</h2>
-                      <p>无需手动维护四档列表：系统自动从上游绑定的可用模型池中，根据请求所属 6 大专业领域（SWE工程 / 前端UI / 数学推理 / Agent工具 / 写作知识 / 超长上下文）、实时 Bandit 胜率与策略偏好动态计算效用分 $U(m|x)$ 排序。</p>
+                      <h2>自治模型池与真实 Arena 榜单策略</h2>
+                      <p>按任务选择对应的真实分榜，筛选可信候选后再比较成本与渠道延迟。默认仅观察：保留旧策略实际转发，记录 Arena 建议用于对照；人工能力画像不属于真实评测分数。</p>
                     </div>
                   </div>
                   <div class="router-section-heading-actions">
@@ -361,13 +361,22 @@
                 </div>
 
                 <div class="form-grid" style="margin-bottom:10px">
+                  <label class="field" style="grid-column:1/-1">
+                    <span>真实榜单路由 (Arena)</span>
+                    <select id="routerArenaMode" onchange="if(routerDraft){routerDraft.arena_mode=this.value;}markRouterDirty(true)">
+                      <option value="shadow">观察对照（默认：记录建议，不改变实际选模）</option>
+                      <option value="live">正式启用（真实榜单质量参考 + 成本 / 延迟择优）</option>
+                      <option value="off">关闭（只使用旧策略）</option>
+                    </select>
+                    <small>仅使用每日缓存，请求处理不联网拉榜；版本或思考模式不匹配、样本不足、过期和同名歧义均不套分。代码 / 数学仅把 Text 作为通用弱参考。</small>
+                  </label>
                   <label class="field">
                     <span>全局路由寻优偏好 (Strategy Profile)</span>
                     <select id="routerStrategyProfile" onchange="if(routerDraft){routerDraft.strategy_profile=this.value;}renderRouterAutonomousPoolEditor();markRouterDirty(true)">
-                      <option value="balanced">均衡智能寻优 (Balanced · 推荐：按难度动态权衡能力与成本)</option>
-                      <option value="quality_first">质量与评测基准优先 (Quality First · 优先各领域高分旗舰)</option>
-                      <option value="cost_first">极致成本优先 (Cost First · 达标前提下优先低价与命中缓存)</option>
-                      <option value="latency_first">极速低延迟优先 (Latency First · 优先实时首字 TTFT / TPS 最快)</option>
+                      <option value="balanced">均衡寻优 (Balanced · 在质量可接受组内比较已知费用与延迟)</option>
+                      <option value="quality_first">质量参考优先 (Quality First · 优先对应分榜高分候选)</option>
+                      <option value="cost_first">成本优先 (Cost First · 未知费率不当免费，不预设缓存折扣)</option>
+                      <option value="latency_first">首响应优先 (Latency First · 流式 TTFT / 非流式完整响应)</option>
                     </select>
                   </label>
                   <label class="field">
@@ -383,11 +392,11 @@
                 </div>
 
                 <label class="switch-row compact">
-                  <span><strong>启用在线上下文 Bandit 实时自适应寻优 (Thompson Sampling + UCB)</strong><small>按 <code>(上游, 模型, 领域)</code> 实时学习成功率、首字延迟 TTFT 与用户下一轮追问纠错反馈（如“不对/还是报错”自动扣减上一轮模型胜率）。</small></span>
+                  <span><strong>记录渠道表现（兼容旧策略 Bandit）</strong><small>记录成功 / 失败与延迟；HTTP 200 不代表回答能力。Arena 模式只将这些记录用于渠道稳定性与同档延迟比较，不混入榜单质量分。</small></span>
                   <input id="routerBanditEnabled" type="checkbox" class="switch-input" checked onchange="if(routerDraft){routerDraft.bandit_enabled=this.checked;}renderRouterAutonomousPoolEditor();markRouterDirty(true)"><span class="switch-track"></span>
                 </label>
                 <label class="switch-row compact">
-                  <span><strong>启用 Speculative Cascade 投机探针自检升级 (Probe &amp; Escalate)</strong><small>边界难度请求先派发高性价比快模型并预检前 ~84 字；若检测到拒答推诿（“抱歉我无法…”）、空输出或 <code>[ESCALATE]</code>，在向客户端发送 HTTP 200 前零感中断并无缝升级至强模型。</small></span>
+                  <span><strong>启用输出预检与候选升级 (Speculative Cascade)</strong><small>预检首选输出，识别拒答、空输出或 <code>[ESCALATE]</code>。Arena 正式启用时，仅当下一候选具有可信且更高的同榜参考分才启用语义探针；普通网络失败仍沿既定候选链兜底。</small></span>
                   <input id="routerSpeculativeCascade" type="checkbox" class="switch-input" checked onchange="if(routerDraft){routerDraft.speculative_cascade=this.checked;}markRouterDirty(true)"><span class="switch-track"></span>
                 </label>
 

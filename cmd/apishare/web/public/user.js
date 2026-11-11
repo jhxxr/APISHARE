@@ -922,6 +922,7 @@
     if ($("#userRouterVirtualModel")) $("#userRouterVirtualModel").value = v.virtual_model || "my-auto";
     if ($("#siteVirtualModelCode")) $("#siteVirtualModelCode").textContent = v.site_virtual_model || "auto";
     if ($("#userRouterStrategyProfile")) $("#userRouterStrategyProfile").value = v.strategy_profile || "balanced";
+    if ($("#userRouterArenaMode")) $("#userRouterArenaMode").value = v.arena_mode || "shadow";
     if ($("#userRouterChannelPref")) $("#userRouterChannelPref").value = v.channel_preference || "personal_first";
     if ($("#userRouterDefaultModel")) $("#userRouterDefaultModel").value = v.default_model || "";
 
@@ -1330,6 +1331,7 @@
       enabled: Boolean($("#userRouterEnabled")?.checked),
       virtual_model: ($("#userRouterVirtualModel")?.value || "my-auto").trim(),
       strategy_profile: $("#userRouterStrategyProfile")?.value || "balanced",
+      arena_mode: $("#userRouterArenaMode")?.value || state.routerView?.arena_mode || "shadow",
       speculative_cascade: $("#userRouterSpeculativeCascade") ? Boolean($("#userRouterSpeculativeCascade").checked) : true,
       channel_preference: $("#userRouterChannelPref")?.value || "personal_first",
       default_model: ($("#userRouterDefaultModel")?.value || "").trim(),
@@ -1415,9 +1417,10 @@
               : s.status === "standby"
               ? `<span class="muted">顺位备选 #${s.priority} (${esc(s.upstream_name || "")})</span>`
               : `<span style="color:var(--red)">跳过 #${s.priority} (${esc(s.reason || "不可用")})</span>`;
-            const utilText = s.utility_score ? ` <small class="muted">[U=${Number(s.utility_score).toFixed(1)} · 能力=${Number(s.capability_score || 0).toFixed(0)}]</small>` : "";
+            const utilText = s.utility_score ? ` <small class="muted">[旧策略 U=${Number(s.utility_score).toFixed(1)}]</small>` : "";
+            const arenaText = s.arena ? ` <small class="muted">[Arena ${s.arena.status === "matched" && s.arena.score != null ? "#" + s.arena.rank + " · " + Number(s.arena.score).toFixed(dec.arena?.board === "agent" ? 4 : 2) : esc(s.arena.status)}]</small>` : "";
             return `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px dashed var(--border)">
-              <span><code>[${esc(s.source_tier)}]</code> <strong>${esc(s.model)}</strong>${utilText}</span>
+              <span><code>[${esc(s.source_tier)}]</code> <strong>${esc(s.model)}</strong>${utilText}${arenaText}</span>
               ${stText}
             </div>`;
           }).join("")
@@ -1434,6 +1437,7 @@
           </div>
           <span class="muted">分类器: <code>${esc(dec.cause || "heuristic")}</code></span>
         </div>
+        ${dec.arena ? `<p class="muted">Arena ${dec.arena.mode === "live" ? "正式启用" : "观察（不改变实际转发）"} · ${esc(dec.arena.board || "无分榜")} · 源榜 ${esc(dec.arena.published_at || "未知")} · 建议 ${esc(dec.arena.proposed_model || "—")} · 实际 ${esc(dec.arena.actual_model || dec.selected_model || "—")}${dec.arena.general_reference_only ? " · 通用弱参考，不代表专项能力" : ""} · ${esc(dec.arena.reason || "")}</p>` : ""}
         <div>${stepsHTML}</div>`;
       }
     } catch {

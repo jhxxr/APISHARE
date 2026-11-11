@@ -7,6 +7,7 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/gin-gonic/gin v1.12.0
 	github.com/klauspost/compress v1.18.0
+	github.com/parquet-go/parquet-go v0.32.0
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/refraction-networking/utls v1.8.2
 	github.com/router-for-me/CLIProxyAPI/v8 v8.0.63
@@ -50,7 +51,10 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
+	github.com/parquet-go/bitpack v1.0.0 // indirect
+	github.com/parquet-go/jsonlite v1.0.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.4.3-0.20260624044523-35f78d5908f1 // indirect
+	github.com/pierrec/lz4/v4 v4.1.21 // indirect
 	github.com/pierrec/xxHash v0.1.5 // indirect
 	github.com/pion/datachannel v1.6.2 // indirect
 	github.com/pion/dtls/v3 v3.1.5 // indirect
@@ -77,6 +81,7 @@ require (
 	github.com/skratchdot/open-golang v0.0.0-20200116055534-eef842397966 // indirect
 	github.com/tiktoken-go/tokenizer v0.8.1 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
+	github.com/twpayne/go-geom v1.6.1 // indirect
 	github.com/ugorji/go/codec v1.3.1 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	go.etcd.io/bbolt v1.5.0 // indirect

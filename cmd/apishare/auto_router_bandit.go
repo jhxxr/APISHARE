@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -16,8 +17,9 @@ const (
 	StrategyCostFirst    = "cost_first"
 	StrategyLatencyFirst = "latency_first"
 
-	banditSettingsKey = "auto_router_bandit_json"
-	banditDecayFactor = 0.992 // Sliding-window exponential decay for non-stationary upstream quality
+	banditSettingsKey     = "auto_router_bandit_json"
+	banditDecayFactor     = 0.992 // Sliding-window exponential decay for non-stationary upstream quality
+	banditTransportWindow = 10 * time.Minute
 )
 
 // banditArmStats tracks online Thompson Sampling / Sliding-Window UCB statistics
@@ -38,6 +40,14 @@ type banditArmStats struct {
 	EWMATTFTMS             float64 `json:"ewma_ttft_ms"`
 	EWMATPS                float64 `json:"ewma_tps"`
 	UpdatedAt              string  `json:"updated_at"`
+	TransportSamples       int64   `json:"transport_samples,omitempty"`
+	TransportSuccesses     int64   `json:"transport_successes,omitempty"`
+	TransportEWMA          float64 `json:"transport_success_ewma,omitempty"`
+	TransportTTFTMS        float64 `json:"transport_ttft_ms,omitempty"`
+	TransportResponseMS    float64 `json:"transport_response_ms,omitempty"`
+	LastStreamAt           string  `json:"last_stream_at,omitempty"`
+	LastResponseAt         string  `json:"last_response_at,omitempty"`
+	LastTransportAt        string  `json:"last_transport_at,omitempty"`
 }
 
 func (s banditArmStats) PosteriorMean() float64 {
@@ -216,6 +226,47 @@ func getOrInitBanditArmLocked(upstreamID int64, model, domain string) *banditArm
 	return arm
 }
 
+type banditTransportObservation struct {
+	Valid  bool
+	Stream bool
+}
+
+func updateTransportArmLocked(arm *banditArmStats, success bool, responseMS int64, observation banditTransportObservation) {
+	if observation.Valid {
+		now := time.Now()
+		last, parseErr := time.Parse(time.RFC3339, arm.LastTransportAt)
+		if parseErr != nil || now.Sub(last) > banditTransportWindow || last.After(now.Add(time.Minute)) {
+			arm.TransportSamples, arm.TransportEWMA, arm.TransportTTFTMS = 0, 0, 0
+			arm.TransportSuccesses, arm.TransportResponseMS, arm.LastStreamAt, arm.LastResponseAt = 0, 0, "", ""
+		}
+		outcome := 0.0
+		if success {
+			outcome = 1
+			arm.TransportSuccesses++
+		}
+		if arm.TransportSamples == 0 {
+			arm.TransportEWMA = outcome
+		} else {
+			arm.TransportEWMA = 0.8*arm.TransportEWMA + 0.2*outcome
+		}
+		arm.TransportSamples++
+		if success && responseMS > 0 {
+			value, at := &arm.TransportResponseMS, &arm.LastResponseAt
+			if observation.Stream {
+				value, at = &arm.TransportTTFTMS, &arm.LastStreamAt
+			}
+			previous, err := time.Parse(time.RFC3339, *at)
+			if err != nil || now.Sub(previous) > banditTransportWindow || *value <= 0 {
+				*value = float64(responseMS)
+			} else {
+				*value = 0.75*(*value) + 0.25*float64(responseMS)
+			}
+			*at = now.UTC().Format(time.RFC3339)
+		}
+		arm.LastTransportAt = now.UTC().Format(time.RFC3339)
+	}
+}
+
 func updateSingleArmLocked(arm *banditArmStats, deltaAlpha, deltaBeta float64, ttftMS int64, tps float64, isCall, isSuccess, isFail, isImplicitPos, isImplicitNeg, isSpecEscalate bool) {
 	// Apply sliding-window exponential decay to keep α + β responsive to live changes
 	arm.Alpha = math.Max(0.8, arm.Alpha*banditDecayFactor) + deltaAlpha
@@ -256,12 +307,20 @@ func updateSingleArmLocked(arm *banditArmStats, deltaAlpha, deltaBeta float64, t
 }
 
 // recordBanditExplicitOutcome updates the Bandit posterior when a relay attempt completes.
-func recordBanditExplicitOutcome(upstreamID int64, model, domain string, success bool, firstTokenMS, latencyMS, durationMS int64, completionTokens int) {
+func recordBanditExplicitOutcome(upstreamID int64, model, domain string, success bool, firstTokenMS, latencyMS, durationMS int64, completionTokens int, observations ...banditTransportObservation) {
 	if strings.TrimSpace(model) == "" {
 		return
 	}
 	if domain == "" {
 		domain = DomainWritingKnowledge
+	}
+	observation := banditTransportObservation{Valid: true, Stream: true}
+	if len(observations) > 0 {
+		observation = observations[0]
+	}
+	responseMS := firstTokenMS
+	if !observation.Stream {
+		responseMS = durationMS
 	}
 	ttft := firstTokenMS
 	if ttft <= 0 && latencyMS > 0 {
@@ -287,10 +346,12 @@ func recordBanditExplicitOutcome(upstreamID int64, model, domain string, success
 	if upstreamID != 0 {
 		armUp := getOrInitBanditArmLocked(upstreamID, model, domain)
 		updateSingleArmLocked(armUp, dAlpha, dBeta, ttft, tps, true, success, !success, false, false, false)
+		updateTransportArmLocked(armUp, success, responseMS, observation)
 	}
 	if upstreamID >= 0 {
 		armGlobal := getOrInitBanditArmLocked(0, model, domain)
 		updateSingleArmLocked(armGlobal, dAlpha, dBeta, ttft, tps, true, success, !success, false, false, false)
+		updateTransportArmLocked(armGlobal, success, responseMS, observation)
 	}
 	autoRouterBandit.Unlock()
 

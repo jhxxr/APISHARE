@@ -72,6 +72,7 @@ function cloneRouterDraftFromConfig(cfg) {
     mode: cfg.mode || (cfg.enabled ? "live" : "off"),
     virtual_model: cfg.virtual_model || "auto",
     strategy_profile: cfg.strategy_profile || "balanced",
+    arena_mode: cfg.arena_mode || "shadow",
     bandit_enabled: cfg.bandit_enabled !== false,
     speculative_cascade: cfg.speculative_cascade !== false,
     model_pool: Array.isArray(cfg.model_pool) ? [...cfg.model_pool] : [],
@@ -921,10 +922,10 @@ function capabilityTagsForRouterModel(model) {
   const cap = info?.capabilities;
   if (!cap) return "";
   const dims = [
-    { k: "SWE", v: Number(cap.coding_swe || 0), title: "SWE-bench / Aider 软件工程分" },
-    { k: "UI", v: Number(cap.frontend_ui || 0), title: "WebDev Arena 前端与审美分" },
-    { k: "Math", v: Number(cap.reasoning_math || 0), title: "LiveBench / AIME / GPQA 数学推理分" },
-    { k: "Agent", v: Number(cap.agentic_tools || 0), title: "BFCL / τ-bench 工具编排分" },
+    { k: "SWE", v: Number(cap.coding_swe || 0), title: "旧启发式工程参考分，不是 SWE-bench / Aider 实测" },
+    { k: "UI", v: Number(cap.frontend_ui || 0), title: "旧启发式 UI 参考分，不是 WebDev 原始评分" },
+    { k: "Math", v: Number(cap.reasoning_math || 0), title: "旧启发式数学参考分，不是 AIME / GPQA 实测" },
+    { k: "Agent", v: Number(cap.agentic_tools || 0), title: "旧启发式工具参考分，不是 BFCL 实测" },
   ];
   dims.sort((a, b) => b.v - a.v);
   const top2 = dims.slice(0, 2);
@@ -934,7 +935,7 @@ function capabilityTagsForRouterModel(model) {
   if (info?.bandit_calls > 0 && info?.bandit_win_rate > 0) {
     const wr = (Number(info.bandit_win_rate) * 100).toFixed(0);
     const ttft = info.ewma_ttft_ms > 0 ? " · TTFT " + Math.round(info.ewma_ttft_ms) + "ms" : "";
-    html += '<span class="router-price-tag" style="background:rgba(16,185,129,0.12);color:#047857" title="Bandit 实测胜率 (' + info.bandit_calls + ' 次调用' + ttft + ')">胜率 ' + wr + '%</span>';
+    html += '<span class="router-price-tag" title="旧 Bandit 后验，不是回答正确率 (' + info.bandit_calls + ' 次调用' + ttft + ')">旧后验 ' + wr + '%</span>';
   }
   return html;
 }
@@ -981,7 +982,7 @@ function renderRouterAutonomousPoolEditor() {
 
     box.innerHTML = '<div class="router-tier-card">'
       + '<div class="router-tier-header">'
-      + '<div class="router-tier-title"><strong>自治候选模型池 (' + activeCount + ' / ' + allModels.length + ' 可用)</strong><small class="muted">展示内置校准的公开评测特长（SWE/UI/Math/Agent）、实时上下文窗口与在线 Bandit 胜率</small></div>'
+      + '<div class="router-tier-title"><strong>自治候选模型池 (' + activeCount + ' / ' + allModels.length + ' 可用)</strong><small class="muted">旧启发式画像（非实测）、上下文和渠道记录；真实 Arena 分榜依据见试运行明细</small></div>'
       + modePill
       + '</div>'
       + '<div class="router-candidate-list" style="max-height:290px;overflow-y:auto">' + rows + '</div>'
@@ -1001,11 +1002,11 @@ function renderRouterAutonomousPoolEditor() {
         const negHint = a.implicit_negative > 0 ? ' · 纠错-' + a.implicit_negative : '';
         const escHint = a.speculative_escalations > 0 ? ' · 探针升档-' + a.speculative_escalations : '';
         return '<span class="router-preset-chip" title="Bandit 实测后验 Beta(' + Number(a.alpha).toFixed(1) + ', ' + Number(a.beta).toFixed(1) + ')">'
-          + '<code>' + esc(a.model) + '</code> · ' + esc(domName) + ' · 胜率 <strong>' + wr + '%</strong> (' + a.calls + '次' + negHint + escHint + ')'
+          + '<code>' + esc(a.model) + '</code> · ' + esc(domName) + ' · 旧后验 <strong>' + wr + '%</strong> (' + a.calls + '次' + negHint + escHint + ')'
           + '</span>';
       }).join("");
       lbBox.innerHTML = '<div style="padding:8px 10px;border-radius:8px;background:var(--surface-2,#f8f7f4);border:1px solid var(--border,#e5e3df)">'
-        + '<div style="font-size:12px;font-weight:600;margin-bottom:6px">在线上下文 Bandit 实时领域学习看板 (Thompson Sampling 后验)：</div>'
+        + '<div style="font-size:12px;font-weight:600;margin-bottom:6px">旧 Bandit 后验记录（非回答正确率；Arena 模式不将其当质量分）：</div>'
         + '<div class="router-preset-chips">' + armChips + '</div>'
         + '</div>';
     }
@@ -1017,6 +1018,7 @@ function renderAutoRouterConfig() {
   setRouterMode(routerDraft.mode);
   $("routerVirtualModel").value = routerDraft.virtual_model || "auto";
   if ($("routerStrategyProfile")) $("routerStrategyProfile").value = routerDraft.strategy_profile || "balanced";
+  if ($("routerArenaMode")) $("routerArenaMode").value = routerDraft.arena_mode || "shadow";
   if ($("routerBanditEnabled")) $("routerBanditEnabled").checked = routerDraft.bandit_enabled !== false;
   if ($("routerSpeculativeCascade")) $("routerSpeculativeCascade").checked = routerDraft.speculative_cascade !== false;
   $("routerDefaultModel").value = routerDraft.default_model || "";
@@ -1049,6 +1051,7 @@ function collectRouterDraftFromInputs() {
   if (!routerDraft) return null;
   routerDraft.virtual_model = $("routerVirtualModel").value.trim() || "auto";
   if ($("routerStrategyProfile")) routerDraft.strategy_profile = $("routerStrategyProfile").value || "balanced";
+  if ($("routerArenaMode")) routerDraft.arena_mode = $("routerArenaMode").value || "shadow";
   if ($("routerBanditEnabled")) routerDraft.bandit_enabled = $("routerBanditEnabled").checked;
   if ($("routerSpeculativeCascade")) routerDraft.speculative_cascade = $("routerSpeculativeCascade").checked;
   routerDraft.default_model = $("routerDefaultModel").value.trim();
@@ -1209,13 +1212,21 @@ function renderRouterDryRunResult(res) {
       : '<span class="badge warn">已跳过 · ' + esc(st.reason || "不可用") + '</span>';
     const ctxTag = st.context_limit ? '<span class="router-price-tag">' + formatContextWindowTokens(st.context_limit) + ' ctx</span>' : '';
     const thinkTag = st.thinking ? '<span class="router-price-tag" title="实际适配思考档位">思考: ' + esc(st.thinking) + '</span>' : '';
-    const utilTag = st.utility_score ? '<span class="router-price-tag" style="background:rgba(14,165,233,0.12);color:#0369a1" title="综合效用分 U(m|x) = 能力匹配 ' + Number(st.capability_score || 0).toFixed(1) + ' · Bandit胜率 ' + ((Number(st.bandit_win_rate || 0)) * 100).toFixed(0) + '%">U=' + Number(st.utility_score).toFixed(1) + ' (能力 ' + Number(st.capability_score || 0).toFixed(0) + ' · 胜率 ' + ((Number(st.bandit_win_rate || 0)) * 100).toFixed(0) + '%)</span>' : '';
+    const utilTag = st.utility_score ? '<span class="router-price-tag" title="旧启发式策略参考，不是真实榜单评分">旧策略 U=' + Number(st.utility_score).toFixed(1) + '</span>' : '';
+    const evidence = st.arena;
+    const arenaTag = evidence ? '<span class="router-price-tag" title="' + esc(evidence.identity || evidence.status) + '">Arena: ' + (evidence.status === "matched" && evidence.score != null ? '#' + evidence.rank + ' · ' + Number(evidence.score).toFixed(dec.arena?.board === "agent" ? 4 : 2) : esc(evidence.status)) + '</span>' : '';
+    const runtimeTag = evidence ? '<span class="router-price-tag" title="费用只作相同输出预算下的比较参考，不是实付账单">'
+      + (evidence.price_known && evidence.comparison_cost_usd != null ? '费用参考 $' + Number(evidence.comparison_cost_usd).toPrecision(4) + ' · 输出 ' + Number(evidence.cost_reference_output_tokens || 0) + ' token' : evidence.price_source === 'byok_cost_unknown' ? '自带渠道费用未知' : '费率未知')
+      + (evidence.channel_response_ms != null ? ' · ' + (evidence.channel_response_kind === 'nonstream_total' ? '非流式响应 ' : '流式 TTFT ') + Math.round(evidence.channel_response_ms) + ' ms' : ' · 速度未知')
+      + (evidence.channel_unreliable ? ' · 主要渠道近期不稳定' : '') + '</span>' : '';
     return '<div class="router-step-row ' + esc(st.status) + '">'
       + '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
       + '<span class="router-tier-badge tier-' + esc(st.source_tier) + '">' + esc(st.source_tier) + '</span>'
       + modelIcon(st.model)
       + '<code>' + esc(st.model) + '</code>'
       + utilTag
+      + arenaTag
+      + runtimeTag
       + thinkTag
       + ctxTag
       + (st.upstream_name ? '<small class="muted">→ ' + esc(st.upstream_name) + '</small>' : '')
@@ -1226,8 +1237,13 @@ function renderRouterDryRunResult(res) {
 
   const domLabel = dec.primary_domain ? (ROUTER_DOMAIN_LABELS[dec.primary_domain] || dec.primary_domain) : "";
   const domBadge = domLabel ? '<span class="router-price-tag" style="background:rgba(139,92,246,0.14);color:#6d28d9" title="6维基准识别主领域">领域: ' + esc(domLabel) + '</span>' : '';
-  const diffBadge = dec.required_difficulty ? '<span class="router-price-tag" title="任务所需能力底线 D(x) (0-100)">D(x)=' + Number(dec.required_difficulty).toFixed(0) + '</span>' : '';
+  const diffBadge = dec.required_difficulty ? '<span class="router-price-tag" title="启发式任务难度，仅决定候选政策，不是 Arena 分数">难度参考 ' + Number(dec.required_difficulty).toFixed(0) + '</span>' : '';
   const poolBadge = dec.autonomous_pool ? '<span class="router-price-tag" style="background:rgba(16,185,129,0.14);color:#047857">全自动池寻优</span>' : '';
+  const arena = dec.arena;
+  const arenaNote = arena ? '<p class="muted" style="margin-top:8px">Arena ' + (arena.mode === "live" ? '正式启用' : '观察对照，不改变实际转发') + ' · ' + esc(arena.board || '无分榜') + (arena.published_at ? ' · 源榜 ' + esc(arena.published_at) : '')
+    + ' · 原候选 ' + esc(arena.baseline_model || '—') + ' → 建议 <strong>' + esc(arena.proposed_model || '—') + '</strong> · 实际 ' + esc(arena.actual_model || dec.selected_model || '—')
+    + (arena.quality_floor != null ? ' · 候选门槛 ' + Number(arena.quality_floor).toFixed(arena.board === 'agent' ? 4 : 2) + '（源榜分位政策，非准确率）' : '')
+    + (arena.general_reference_only ? ' · 仅通用弱参考，不代表专项能力' : '') + ' · ' + esc(arena.reason || '') + '</p>' : '';
 
   container.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding-bottom:8px;border-bottom:1px solid var(--border,#e5e3df)">'
     + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
@@ -1244,6 +1260,7 @@ function renderRouterDryRunResult(res) {
     + (dec.heuristic_score !== undefined && dec.heuristic_score !== null ? ' · 启发式分 ' + Number(dec.heuristic_score).toFixed(2) : '')
     + '</small>'
     + '</div>'
+    + arenaNote
     + (Object.keys(probs).length ? '<div class="router-prob-grid">' + probHtml + '</div>' : '')
-    + '<div class="router-steps-list"><strong>候选模型效用评估链（按 U(m|x) 降序 / Failover 顺序）：</strong>' + stepsHtml + '</div>';
+    + '<div class="router-steps-list"><strong>候选与 Failover 顺序（Arena 观察建议单独记录，不改变旧策略）：</strong>' + stepsHtml + '</div>';
 }

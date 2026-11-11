@@ -207,6 +207,10 @@ func publicRows(tx *sql.Tx, query string, scan func(*sql.Rows) error, args ...an
 // Share model discovery with the rankings page, including uncatalogued models
 // with no calls yet. Wildcard discovery stays asynchronous for public visitors.
 func publicModelCatalog(snapshot *routingSnapshot) (catalog map[string]string, wildcard, loading bool) {
+	return publicModelCatalogWithDiscovery(snapshot, true)
+}
+
+func publicModelCatalogWithDiscovery(snapshot *routingSnapshot, discover bool) (catalog map[string]string, wildcard, loading bool) {
 	catalog = make(map[string]string)
 	for _, u := range snapshot.upstreams {
 		if !u.Enabled || u.Weight <= 0 {
@@ -228,7 +232,17 @@ func publicModelCatalog(snapshot *routingSnapshot) (catalog map[string]string, w
 			}
 		} else {
 			wildcard = true
-			ids, pending := publicWildcardModels(u)
+			var ids []string
+			var pending bool
+			if discover {
+				ids, pending = publicWildcardModels(u)
+			} else {
+				key := upstreamModelCacheKey(&u)
+				modelsCache.Lock()
+				cached, ok := modelsCache.m[key]
+				modelsCache.Unlock()
+				ids, pending = cached.ids, !ok
+			}
 			loading = loading || pending
 			for _, id := range ids {
 				add(id)

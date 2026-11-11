@@ -329,6 +329,9 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			}
 			c.Header("X-APISHARE-Router-Tier", routerDecision.Tier)
 			c.Header("X-APISHARE-Router-Cause", routerDecision.Cause)
+			for name, value := range arenaRoutingHeaders(routerDecision) {
+				c.Header(name, value)
+			}
 			if routerDecision.PrimaryDomain != "" {
 				c.Header("X-APISHARE-Router-Domain", routerDecision.PrimaryDomain)
 			}
@@ -398,6 +401,9 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 		}
 		enableFirstProbe := routerDecision != nil && !routerDecision.Shadow &&
 			shouldEnableSpeculativeProbe(routerSpeculativeCascade, targetModelStrings, routerDemand, routerModelCaps)
+		if enableFirstProbe && len(targetModelStrings) >= 2 {
+			enableFirstProbe = arenaAllowsSpeculativeProbe(routerDecision, targetModelStrings[0], targetModelStrings[1])
+		}
 
 		for candIdx, target := range targets {
 			candRawModel := target.Model
@@ -512,12 +518,13 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 					continue
 				}
 				upstreamAttempted = true
-				if routerDecision != nil && routerBanditEnabled {
+				if routerDecision != nil && routerBanditEnabled && c.Request.Context().Err() == nil && !errors.Is(attemptErr, errDownstreamWrite) {
 					if attemptErr != nil && strings.Contains(attemptErr.Error(), "speculative_probe:") {
 						recordBanditSpeculativeEscalation(up.ID, candRawModel, task.primaryDomain)
 					} else {
 						okCall := attemptErr == nil && info.Status >= 200 && info.Status < 300
-						recordBanditExplicitOutcome(up.ID, candRawModel, task.primaryDomain, okCall, info.FirstTokenMS, info.LatencyMS, info.elapsedMS(), info.CompletionTok)
+						validTransport := !info.startedAt.IsZero() && ((info.Status >= 200 && info.Status < 300) || isRetryableStatus(info.Status) || (attemptErr != nil && info.Status == 0))
+						recordBanditExplicitOutcome(up.ID, candRawModel, task.primaryDomain, okCall, info.FirstTokenMS, info.LatencyMS, info.elapsedMS(), info.CompletionTok, banditTransportObservation{Valid: validTransport, Stream: task.stream})
 					}
 				}
 				if wrote || errors.Is(attemptErr, errDownstreamWrite) || errors.Is(attemptErr, errAutoRouterModelIncompatible) {

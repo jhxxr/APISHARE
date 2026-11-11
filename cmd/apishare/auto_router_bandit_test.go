@@ -219,11 +219,12 @@ func TestBanditResetClearsPersistenceAndPublicSnapshot(t *testing.T) {
 		recordBanditExplicitOutcome(up.ID, "claude-sonnet-4-5", DomainCodingSWE, true, 500, 500, 1000, 25)
 	}
 	r := gin.New()
+	setArenaFixture(t, "text", []arenaModel{{Rank: 1, Model: "claude-sonnet-4-5", Family: "Anthropic", Score: 1450}})
 	registerPublic(r)
 	registerAutoRouterAdminRoutes(r.Group("/api"))
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/public/rankings", nil))
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"bandit_calls":8`) {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"score":1450`) {
 		t.Fatalf("public snapshot did not include training: %d / %s", w.Code, w.Body)
 	}
 	w = httptest.NewRecorder()
@@ -237,7 +238,7 @@ func TestBanditResetClearsPersistenceAndPublicSnapshot(t *testing.T) {
 	}
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/public/rankings", nil))
-	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), `"bandit_calls":8`) {
-		t.Fatalf("stale public snapshot survived reset: %d / %s", w.Code, w.Body)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"score":1450`) {
+		t.Fatalf("Bandit reset must not change official Arena scores: %d / %s", w.Code, w.Body)
 	}
 }

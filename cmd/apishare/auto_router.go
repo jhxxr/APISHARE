@@ -53,6 +53,7 @@ type AutoRouterConfig struct {
 	Mode                         string                           `json:"mode"` // "off" | "shadow" | "live"
 	VirtualModel                 string                           `json:"virtual_model"`
 	StrategyProfile              string                           `json:"strategy_profile"` // "balanced" | "quality_first" | "cost_first" | "latency_first"
+	ArenaMode                    string                           `json:"arena_mode"`       // "off" | "shadow" | "live"; independent from gateway routing mode
 	ModelPool                    []string                         `json:"model_pool,omitempty"`
 	ExcludedModels               []string                         `json:"excluded_models,omitempty"`
 	BanditEnabled                bool                             `json:"bandit_enabled"`
@@ -119,6 +120,7 @@ type routerDecisionDetails struct {
 	SkippedCandidates     int                   `json:"skipped_candidates,omitempty"`
 	FallbacksTried        []string              `json:"fallbacks_tried,omitempty"`
 	Steps                 []routerCandidateStep `json:"steps,omitempty"`
+	Arena                 *arenaRoutingDecision `json:"arena,omitempty"`
 }
 
 func (d *routerDecisionDetails) syncOutcome(defaultModel string) {
@@ -204,23 +206,27 @@ func (d *routerDecisionDetails) markRuntimeFailover(failedModel string, failErr 
 	}
 	if !d.Shadow && nextModel != "" {
 		d.SelectedModel = nextModel
+		if d.Arena != nil {
+			d.Arena.ActualModel = nextModel
+		}
 	}
 	d.syncOutcome(defaultModel)
 }
 
 type routerCandidateStep struct {
-	Priority        int     `json:"priority"`
-	Model           string  `json:"model"`
-	SourceTier      string  `json:"source_tier"`
-	Status          string  `json:"status"` // "selected" | "standby" | "skipped" | "failed"
-	Reason          string  `json:"reason,omitempty"`
-	Thinking        string  `json:"thinking,omitempty"`
-	ContextLimit    int     `json:"context_limit,omitempty"`
-	CapabilityScore float64 `json:"capability_score,omitempty"`
-	BanditWinRate   float64 `json:"bandit_win_rate,omitempty"`
-	UtilityScore    float64 `json:"utility_score,omitempty"`
-	UpstreamID      int64   `json:"upstream_id,omitempty"`
-	UpstreamName    string  `json:"upstream_name,omitempty"`
+	Priority        int                   `json:"priority"`
+	Model           string                `json:"model"`
+	SourceTier      string                `json:"source_tier"`
+	Status          string                `json:"status"` // "selected" | "standby" | "skipped" | "failed"
+	Reason          string                `json:"reason,omitempty"`
+	Thinking        string                `json:"thinking,omitempty"`
+	ContextLimit    int                   `json:"context_limit,omitempty"`
+	CapabilityScore float64               `json:"capability_score,omitempty"`
+	BanditWinRate   float64               `json:"bandit_win_rate,omitempty"`
+	UtilityScore    float64               `json:"utility_score,omitempty"`
+	UpstreamID      int64                 `json:"upstream_id,omitempty"`
+	UpstreamName    string                `json:"upstream_name,omitempty"`
+	Arena           *arenaRoutingEvidence `json:"arena,omitempty"`
 }
 
 func defaultAutoRouterTierCriteria() map[string]string {
@@ -301,6 +307,7 @@ func defaultAutoRouterConfig() AutoRouterConfig {
 		Mode:                         "off",
 		VirtualModel:                 "auto",
 		StrategyProfile:              StrategyBalanced,
+		ArenaMode:                    "shadow",
 		ModelPool:                    []string{},
 		ExcludedModels:               []string{},
 		BanditEnabled:                true,
@@ -491,6 +498,11 @@ func normalizeAutoRouterConfig(cfg *AutoRouterConfig) error {
 	}
 
 	cfg.StrategyProfile = normalizeStrategyProfile(cfg.StrategyProfile)
+	if mode, err := normalizeArenaRoutingMode(cfg.ArenaMode); err != nil {
+		return err
+	} else {
+		cfg.ArenaMode = mode
+	}
 	cfg.ModelPool = normalizeModelSlice(cfg.ModelPool)
 	filteredPool := make([]string, 0, len(cfg.ModelPool))
 	for _, m := range cfg.ModelPool {
@@ -1045,6 +1057,9 @@ func resolveAutoRouteWithConfig(
 	isExcluded := routerModelExclusionFilter(cfg.ExcludedModels)
 
 	evalUtility := func(m string, stochastic bool) candidateUtilityBreakdown {
+		if cfg.ArenaMode == "live" {
+			return candidateUtilityBreakdown{RawModel: m}
+		}
 		cLim := effectiveModelContextLimit(m, cfg.ModelContextLimits)
 		isCacheHit := hasPrevSession && strings.EqualFold(parseRouterModelSpec(m).BaseModel, parseRouterModelSpec(prevSessionModel).BaseModel)
 		var upID int64
@@ -1120,7 +1135,7 @@ func resolveAutoRouteWithConfig(
 		}
 		for _, t := range orderedCascadeTiers(chosenTier, cfg.CascadeTiers) {
 			tierList := append([]string(nil), cfg.Tiers[t]...)
-			if len(tierList) > 1 && cfg.BanditEnabled && cfg.Mode != "shadow" && hasAnyBanditHistoryForModels(tierList, demand.PrimaryDomain) {
+			if len(tierList) > 1 && cfg.ArenaMode != "live" && cfg.BanditEnabled && cfg.Mode != "shadow" && hasAnyBanditHistoryForModels(tierList, demand.PrimaryDomain) {
 				// Dynamic intra-tier Bandit & 6D capability re-ranking
 				scored := make([]rawCandidate, 0, len(tierList))
 				for _, m := range tierList {
@@ -1267,6 +1282,12 @@ func resolveAutoRouteWithConfig(
 		}
 	}
 
+	eligible = applyArenaRoutePolicy(decision, eligible, arenaRoutingOptions{
+		Mode: cfg.ArenaMode, Strategy: strategyProfile, DefaultModel: cfg.DefaultModel,
+		TierThinking: cfg.TierThinking, PreserveTiers: totalTierModels > 0,
+		ConfiguredOrder: arenaConfiguredOrder(cfg.ModelPool, cfg.Tiers), BanditEnabled: cfg.BanditEnabled,
+		Format: format, NativeOnly: nativeOnly, PreviousModel: prevSessionModel,
+	}, cr, demand)
 	if len(eligible) > 0 {
 		decision.SelectedModel = eligible[0]
 	}
@@ -1286,6 +1307,9 @@ func resolveAutoRouteWithConfig(
 			return decision, nil, fmt.Errorf("quota exhausted for model %s", actual)
 		}
 		decision.SelectedModel = actual
+		if decision.Arena != nil {
+			decision.Arena.ActualModel = actual
+		}
 		if actual != "" {
 			return decision, []string{actual}, nil
 		}
@@ -1298,6 +1322,9 @@ func applyAutoRouterHeaders(c *gin.Context, cfg AutoRouterConfig, decision *rout
 		return
 	}
 	h := c.Writer.Header()
+	for name, value := range arenaRoutingHeaders(decision) {
+		h.Set(name, value)
+	}
 	if decision.Tier != "" {
 		h.Set("X-APISHARE-Router-Tier", decision.Tier)
 	}
@@ -1588,6 +1615,7 @@ func buildAutoRouterConfigView(ctx context.Context, cfg AutoRouterConfig) gin.H 
 		"mode":                             cfg.Mode,
 		"virtual_model":                    cfg.VirtualModel,
 		"strategy_profile":                 normalizeStrategyProfile(cfg.StrategyProfile),
+		"arena_mode":                       cfg.ArenaMode,
 		"model_pool":                       cfg.ModelPool,
 		"excluded_models":                  cfg.ExcludedModels,
 		"bandit_enabled":                   cfg.BanditEnabled,
@@ -1670,6 +1698,7 @@ func registerAutoRouterAdminRoutes(auth *gin.RouterGroup) {
 			Enabled                      *bool                             `json:"enabled"`
 			VirtualModel                 *string                           `json:"virtual_model"`
 			StrategyProfile              *string                           `json:"strategy_profile"`
+			ArenaMode                    *string                           `json:"arena_mode"`
 			ModelPool                    *[]string                         `json:"model_pool"`
 			ExcludedModels               *[]string                         `json:"excluded_models"`
 			BanditEnabled                *bool                             `json:"bandit_enabled"`
@@ -1726,6 +1755,9 @@ func registerAutoRouterAdminRoutes(auth *gin.RouterGroup) {
 		}
 		if req.StrategyProfile != nil {
 			cfg.StrategyProfile = *req.StrategyProfile
+		}
+		if req.ArenaMode != nil {
+			cfg.ArenaMode = *req.ArenaMode
 		}
 		if req.ModelPool != nil {
 			cfg.ModelPool = *req.ModelPool

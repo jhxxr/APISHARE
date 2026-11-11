@@ -215,7 +215,7 @@
             <div>
               <span class="eyebrow">PERSONAL SMART ROUTER 3.0</span>
               <h2>我的私人智能路由 <span id="userRouterStatusBadge" class="status-pill off">未启用</span></h2>
-              <p class="card-sub">自定义专属路由模型名（如 <code>my-auto</code>），结合 6 维公开评测能力矩阵、在线 Bandit 与投机探针自检升级，全自动寻优你的自带模型与站点模型。</p>
+              <p class="card-sub">自定义专属路由模型名（如 <code>my-auto</code>），组合你的自带渠道与站点模型。可启用真实 Arena 质量参考与渠道指标择优；默认仅观察对照，不改变实际转发。</p>
             </div>
             <div class="router-head-actions">
               <button id="clearUserTiersBtn" type="button" class="btn ghost mini" title="清空手动四档，切回 Smart Router 3.0 全自动模型池寻优">全自动池模式</button>
@@ -232,7 +232,7 @@
               </label>
               <label class="user-switch-row">
                 <input id="userRouterSpeculativeCascade" type="checkbox" checked>
-                <span><strong>投机探针自检升级</strong><small>快模型拒答/推诿时零感无缝升级强模型</small></span>
+                <span><strong>输出预检与候选升级</strong><small>Arena 正式启用时，仅在后继有可信更高参考分的候选时开启语义升级</small></span>
               </label>
               <button id="copyUserRouterCmdBtn" type="button" class="btn ghost mini">复制调用示例</button>
             </div>
@@ -247,11 +247,11 @@
                 <span>全局寻优偏好 (Strategy)</span>
                 <select id="userRouterStrategyProfile">
                   <option value="balanced">均衡智能寻优 (Balanced · 推荐)</option>
-                  <option value="quality_first">质量与评测基准优先 (Quality First)</option>
+                  <option value="quality_first">质量参考优先 (Quality First)</option>
                   <option value="cost_first">极致成本优先 (Cost First)</option>
                   <option value="latency_first">极速低延迟优先 (Latency First)</option>
                 </select>
-                <small>全自动模型池下按任务 6 维领域需求与偏好打分排序</small>
+                <small>真实榜单正式启用后，在质量可接受候选中按成本 / 延迟偏好选择</small>
               </label>
               <label class="user-field">
                 <span>同名模型渠道优先级</span>
@@ -264,6 +264,11 @@
               </label>
             </div>
             <div class="user-form-grid-2" style="margin-top:8px">
+              <label class="user-field">
+                <span>真实榜单路由 (Arena)</span>
+                <select id="userRouterArenaMode"><option value="shadow">观察对照（默认，不改变实际转发）</option><option value="live">正式启用真实榜单策略</option><option value="off">关闭，仅用旧策略</option></select>
+                <small>只使用每日缓存。数据或精确版本不匹配时保持未知；自带渠道的真实费用未知，不按站点费用推算。</small>
+              </label>
               <label class="user-field">
                 <span>兜底默认模型 (Default · 可选)</span>
                 <div class="user-model-select-combo">

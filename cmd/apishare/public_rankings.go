@@ -2,78 +2,123 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/gin-gonic/gin"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
-
-	"github.com/gin-gonic/gin"
+	"unicode"
 )
 
-// Only public model metadata and site-wide aggregate observations belong here.
-// In particular, never expose raw bandit arms, personal channels or upstream IDs.
 type PublicModelRanking struct {
-	Rank          int                   `json:"rank"`
-	Model         string                `json:"model"`
-	Family        string                `json:"family"`
-	Capabilities  ModelCapabilityVector `json:"capabilities"`
-	BanditCalls   int64                 `json:"bandit_calls"`
-	BanditWinRate float64               `json:"bandit_win_rate,omitempty"`
-	EWMATTFTMS    float64               `json:"ewma_ttft_ms,omitempty"`
-	EWMATPS       float64               `json:"ewma_tps,omitempty"`
+	arenaModel
+	SiteAvailable bool     `json:"site_available"`
+	SiteModels    []string `json:"site_models,omitempty"`
 }
-
 type PublicRankings struct {
 	UpdatedAt     string               `json:"updated_at"`
+	PublishedAt   string               `json:"published_at,omitempty"`
+	FetchedAt     string               `json:"fetched_at,omitempty"`
+	SourceName    string               `json:"source_name"`
+	SourceURL     string               `json:"source_url"`
+	Board         string               `json:"board"`
+	BoardLabel    string               `json:"board_label"`
+	ScoreKind     string               `json:"score_kind"`
+	ScoreLabel    string               `json:"score_label"`
+	SampleLabel   string               `json:"sample_label"`
+	Boards        []arenaBoard         `json:"boards"`
+	Loading       bool                 `json:"loading"`
+	Stale         bool                 `json:"stale"`
 	ModelsLoading bool                 `json:"models_loading"`
 	Models        []PublicModelRanking `json:"models"`
 }
 
-func buildPublicRankings(now time.Time) (*PublicRankings, error) {
-	snapshot, err := getRoutingSnapshot()
+// Ignore presentation separators, not versions, dates, Pro/Mini or thinking modes.
+func arenaModelIdentity(model string) string {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if index := strings.LastIndex(model, "/"); index >= 0 && !strings.ContainsAny(model[:index], " ()") {
+		model = model[index+1:]
+	}
+	var normalized strings.Builder
+	var previous rune
+	for _, r := range model {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			previous = 0
+			continue
+		}
+		if normalized.Len() > 0 && (previous == 0 || unicode.IsDigit(previous) != unicode.IsDigit(r)) {
+			normalized.WriteByte('-')
+		}
+		normalized.WriteRune(r)
+		previous = r
+	}
+	return normalized.String()
+}
+func arenaSiteModelIndex(snapshot *routingSnapshot, catalog map[string]string) map[string][]string {
+	index := make(map[string][]string)
+	add := func(identity, clientModel string) {
+		key := arenaModelIdentity(identity)
+		if key == "" {
+			return
+		}
+		for _, existing := range index[key] {
+			if existing == clientModel {
+				return
+			}
+		}
+		index[key] = append(index[key], clientModel)
+	}
+	for model := range catalog {
+		add(model, model)
+		for i := range snapshot.upstreams {
+			up := &snapshot.upstreams[i]
+			if up.Enabled && up.Weight > 0 && servesRouterCandidate(up, model) {
+				add(up.mapModel(resolveUpstreamCandidateModel(up, model)), model)
+			}
+		}
+	}
+	for _, models := range index {
+		sort.Strings(models)
+	}
+	return index
+}
+func buildPublicRankings(now time.Time, board arenaBoard) (*PublicRankings, error) {
+	routing, err := getRoutingSnapshot()
 	if err != nil {
 		return nil, err
 	}
-	catalog, _, loading := publicModelCatalog(snapshot)
-	cfg := getAutoRouterConfig()
-	result := &PublicRankings{
-		UpdatedAt:     now.In(beijingLocation).Format(time.RFC3339),
-		ModelsLoading: loading,
-		Models:        make([]PublicModelRanking, 0, len(catalog)),
+	catalog, _, loading := publicModelCatalogWithDiscovery(routing, false)
+	delete(catalog, getAutoRouterConfig().VirtualModel)
+	siteModels := arenaSiteModelIndex(routing, catalog)
+	snapshot, refreshing, failed := getArenaSnapshot(db, board.ID)
+	result := &PublicRankings{UpdatedAt: now.In(beijingLocation).Format(time.RFC3339), SourceName: "Arena 官方历史数据集 · overall", SourceURL: arenaDatasetURL, Board: board.ID, BoardLabel: board.Label, Boards: arenaBoards, Loading: refreshing, Stale: failed, ModelsLoading: loading, Models: []PublicModelRanking{}}
+	result.ScoreKind, result.ScoreLabel, result.SampleLabel = "arena", "Arena Score", "对战样本"
+	if board.ID == "agent" {
+		result.ScoreKind, result.ScoreLabel, result.SampleLabel = "ips", "Agent IPS Score", "观测样本"
 	}
-	for model, family := range catalog {
-		// Virtual routers are policies, not underlying model capabilities.
-		if model == cfg.VirtualModel {
-			continue
-		}
-		winRate, calls, ttft, tps := summarizeModelBanditStats(model)
-		result.Models = append(result.Models, PublicModelRanking{
-			Model:         model,
-			Family:        family,
-			Capabilities:  resolveModelCapabilityVector(model, cfg.ModelCapabilities),
-			BanditCalls:   calls,
-			BanditWinRate: winRate,
-			EWMATTFTMS:    ttft,
-			EWMATPS:       tps,
-		})
+	if snapshot == nil {
+		return result, nil
 	}
-	sort.Slice(result.Models, func(i, j int) bool {
-		a, b := result.Models[i], result.Models[j]
-		if a.Capabilities.OverallScore != b.Capabilities.OverallScore {
-			return a.Capabilities.OverallScore > b.Capabilities.OverallScore
-		}
-		return a.Model < b.Model
-	})
-	for i := range result.Models {
-		result.Models[i].Rank = i + 1
+	result.PublishedAt, result.FetchedAt = snapshot.PublishedAt, snapshot.FetchedAt
+	fetchedAt, err := time.Parse(time.RFC3339, snapshot.FetchedAt)
+	result.Stale = failed || err != nil || now.Sub(fetchedAt) > arenaRefreshTTL
+	// All source models, preserving source ranks and ties. Site membership is only a badge.
+	for _, model := range snapshot.Models {
+		matched := siteModels[arenaModelIdentity(model.Model)]
+		result.Models = append(result.Models, PublicModelRanking{arenaModel: model, SiteAvailable: len(matched) > 0, SiteModels: matched})
 	}
 	return result, nil
 }
-
 func publicRankingsHandler(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	c.Header("X-Content-Type-Options", "nosniff")
-	body, err := publicOverviews.get(c.Request.Context(), db, "rankings", func() ([]byte, error) {
-		rankings, err := buildPublicRankings(time.Now())
+	board, ok := findArenaBoard(c.DefaultQuery("board", "text"))
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "不支持此排行榜"})
+		return
+	}
+	body, err := publicOverviews.get(c.Request.Context(), db, "arena-rankings:"+board.ID, func() ([]byte, error) {
+		rankings, err := buildPublicRankings(time.Now(), board)
 		if err != nil {
 			return nil, err
 		}
