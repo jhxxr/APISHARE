@@ -18,9 +18,9 @@ function consoleContext() {
   return {$,context};
 }
 
-test("older site configurations default to observation and preserve explicit live/off",()=>{
+test("site configurations default to live and preserve explicit diagnostic modes",()=>{
   const {context}=consoleContext();
-  assert.equal(vm.runInContext("cloneRouterDraftFromConfig({}).arena_mode",context),"shadow");
+  assert.equal(vm.runInContext("cloneRouterDraftFromConfig({}).arena_mode",context),"live");
   for(const mode of ["live","off","shadow"]) {
     assert.equal(vm.runInContext(`cloneRouterDraftFromConfig({arena_mode:'${mode}'}).arena_mode`,context),mode);
   }
@@ -62,4 +62,34 @@ test("both site and personal pages expose all three modes and personal payload p
     for(const mode of ["shadow","live","off"])assert.ok(select.includes('value="'+mode+'"'));
   }
   assert.match(read("cmd/apishare/web/public/user.js"),/arena_mode:\s*\$\("#userRouterArenaMode"\)/);
+});
+
+
+test("unified pool migrates all legacy tiers without priority and preserves variants",()=>{
+  const {context}=consoleContext();
+  const draft=vm.runInContext('cloneRouterDraftFromConfig({model_pool:["z"],tiers:{SIMPLE:["b(high,128k)"],REASONING:["a","z"]}})',context);
+  assert.deepEqual(Array.from(draft.model_pool),["a","b(high,128k)","z"]);
+  assert.deepEqual(Object.keys(draft.tiers),[]);
+  const models=vm.runInContext('splitRouterPoolInput("z, b(high,128k)\\na\\nz")',context);
+  assert.deepEqual(Array.from(models),["a","b(high,128k)","z"]);
+});
+
+test("both settings pages remove manual tier editors and expose unordered candidate pools",()=>{
+  const admin=read("cmd/apishare/web/index.html"), personal=read("cmd/apishare/web/public/user.html");
+  assert.doesNotMatch(admin,/routerLegacyTiersDetails|routerTiersContainer|routerCascadeTiers|autoFillRouterTiers/);
+  assert.doesNotMatch(personal,/userTiersEditor|clearUserTiersBtn|autoFillUserTiersBtn/);
+  assert.match(admin,/id="routerModelPool"/);
+  assert.match(personal,/id="userRouterModelPool"/);
+  assert.doesNotMatch(read("cmd/apishare/web/public/user.js"),/data-tier-move|routerTiers|autoFillUserTiers/);
+});
+
+test("personal pool loading tolerates deprecated null tier arrays returned after saving",()=>{
+  const source=read("cmd/apishare/web/public/user.js");
+  const context=vm.createContext({state:{},renderUserByokList(){},renderUserRouterPanel(){}});
+  const fn=source.slice(source.indexOf("  function applyUserRouterView("),source.indexOf("  function renderUserByokList("));
+  vm.runInContext(fn,context);
+  context.saved={model_pool:["bench-b","bench-a(high,128k)"],tiers:{SIMPLE:null,REASONING:null},excluded_models:["bench-b"]};
+  vm.runInContext("applyUserRouterView(saved)",context);
+  assert.deepEqual(Array.from(context.state.routerPool),["bench-a(high,128k)","bench-b"]);
+  assert.deepEqual(Array.from(context.state.routerExcluded),["bench-b"]);
 });

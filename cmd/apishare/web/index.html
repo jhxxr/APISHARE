@@ -284,7 +284,7 @@
 
         <section id="tab-router" class="panel hidden">
           <div class="page-heading">
-            <div><span class="eyebrow">SMART ROUTER · ARENA PRIOR &amp; CHANNEL METRICS</span><h1>智能路由</h1><p>按任务分档，以真实 Arena 分榜作为可选质量参考，再结合渠道稳定性、成本和延迟选择。默认观察对照，不改变实际转发；旧人工能力画像不属于公开评测实测分数。</p></div>
+            <div><span class="eyebrow">SMART ROUTER · ARENA PRIOR &amp; CHANNEL METRICS</span><h1>智能路由</h1><p>在统一候选池内，按任务对应的真实 Arena 分榜、渠道稳定性、成本与延迟择优。默认正式启用榜单策略，不再手动分档或排列模型优先级。</p></div>
             <div class="heading-actions">
               <div class="dash-segmented dash-segmented-small" role="group" aria-label="路由统计周期">
                 <button type="button" class="active" data-router-period="24h" aria-pressed="true" onclick="setRouterStatsPeriod('24h')">近 24H</button>
@@ -352,20 +352,20 @@
                     <span class="section-icon"><svg class="icon"><use href="#i-layers"/></svg></span>
                     <div>
                       <h2>自治模型池与真实 Arena 榜单策略</h2>
-                      <p>按任务选择对应的真实分榜，筛选可信候选后再比较成本与渠道延迟。默认仅观察：保留旧策略实际转发，记录 Arena 建议用于对照；人工能力画像不属于真实评测分数。</p>
+                      <p>按任务选择对应的真实分榜，筛选可信候选后再比较成本与渠道延迟。默认正式使用榜单策略，在统一候选池内择优，不再手动分档或设定模型先后顺序。</p>
                     </div>
                   </div>
                   <div class="router-section-heading-actions">
-                    <button type="button" class="btn mini ghost" onclick="resetAutoRouterBanditState(this)" title="清空在线 Bandit 历史学习权重，恢复评测基准先验">重置 Bandit 记忆</button>
+                    <button type="button" class="btn mini ghost" onclick="resetAutoRouterBanditState(this)" title="清空历史表现记录，不改变真实榜单">重置 Bandit 记忆</button>
                   </div>
                 </div>
 
                 <div class="form-grid" style="margin-bottom:10px">
                   <label class="field" style="grid-column:1/-1">
                     <span>真实榜单路由 (Arena)</span>
-                    <select id="routerArenaMode" onchange="if(routerDraft){routerDraft.arena_mode=this.value;}markRouterDirty(true)">
-                      <option value="shadow">观察对照（默认：记录建议，不改变实际选模）</option>
-                      <option value="live">正式启用（真实榜单质量参考 + 成本 / 延迟择优）</option>
+                    <select id="routerArenaMode" onchange="if(routerDraft){routerDraft.arena_mode=this.value;}renderRouterAutonomousPoolEditor();markRouterDirty(true)">
+                      <option value="live">正式启用（默认：真实榜单 + 成本 / 延迟择优）</option>
+                      <option value="shadow">观察对照（仅调试，不改变实际选模）</option>
                       <option value="off">关闭（只使用旧策略）</option>
                     </select>
                     <small>仅使用每日缓存，请求处理不联网拉榜；版本或思考模式不匹配、样本不足、过期和同名歧义均不套分。代码 / 数学仅把 Text 作为通用弱参考。</small>
@@ -385,7 +385,7 @@
                       <select id="routerDefaultModelSelect" aria-label="从可用模型选择兜底默认模型" onchange="onSelectRouterDefaultModel(this.value)">
                         <option value="">选择可用模型作为兜底模型…</option>
                       </select>
-                      <input id="routerDefaultModel" type="text" list="routerAvailableModelsList" placeholder="留空则自动选池内最优模型" spellcheck="false" oninput="routerDraft.default_model=this.value.trim();syncRouterDefaultModelSelect();renderRouterTiersEditor();markRouterDirty(true)">
+                      <input id="routerDefaultModel" type="text" list="routerAvailableModelsList" placeholder="留空则自动选池内最优模型" spellcheck="false" oninput="routerDraft.default_model=this.value.trim();syncRouterDefaultModelSelect();refreshRouterModelControls();markRouterDirty(true)">
                       <span id="routerDefaultModelHealth" class="router-default-health-wrap"></span>
                     </div>
                   </label>
@@ -403,17 +403,11 @@
                 <div id="routerAutonomousPoolContainer" style="margin-top:12px"></div>
                 <div id="routerBanditLeaderboardBox" style="margin-top:10px"></div>
 
-                <details id="routerLegacyTiersDetails" class="router-tier-criteria" style="margin-top:14px">
-                  <summary style="font-weight:600;cursor:pointer">高级模式：传统四档手动候选覆盖 (SIMPLE / MEDIUM / COMPLEX / REASONING · 留空则使用上方全自动模型池)</summary>
-                  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin:8px 0">
-                    <small class="muted">当四档列表全部为空时，系统运行在 Smart Router 3.0 <strong>全自动模型池模式</strong>；若手动填入档位模型，则优先按所填档位池筛选并在同档内结合 Bandit 动态排序。</small>
-                    <div style="display:flex;gap:6px">
-                      <button type="button" class="btn mini ghost" onclick="clearRouterTiersToAutonomousPool()">清空四档（切回全自动模型池）</button>
-                      <button type="button" class="btn mini ghost" onclick="autoFillRouterTiersFromUpstreams()">一键按可用模型填充四档</button>
-                    </div>
-                  </div>
-                  <div id="routerTiersContainer" class="router-tiers-stack"></div>
-                </details>
+                <label class="field" style="margin-top:14px">
+                  <span>参与选模的模型池 <span class="optional">可选</span></span>
+                  <textarea id="routerModelPool" rows="3" spellcheck="false" placeholder="留空使用全部已绑定模型；指定时每行一个模型，例如 model(high,128k)" oninput="updateRouterModelPool(this.value)"></textarea>
+                  <small>这是候选集合，不是优先级列表。旧四档模型会自动合并到此处；留空可恢复全部模型参与。榜单缺失时只走已配置兜底或稳定顺序，不虚构评分。</small>
+                </label>
 
                 <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border,#e5e3df)">
                   <div class="form-grid">
@@ -423,10 +417,6 @@
                       <small>用户消息包含此关键词时直接拉满任务难度地板 $D(x)$ 并路由至高阶推理模型。</small>
                     </label>
                   </div>
-                  <label class="switch-row compact">
-                    <span><strong>允许同级耗尽时向更高档位顺延 (Cascade Tiers)</strong><small>手动四档模式下若当前档位候选均不可用，依次尝试更高档位。</small></span>
-                    <input id="routerCascadeTiers" type="checkbox" class="switch-input" checked onchange="markRouterDirty(true)"><span class="switch-track"></span>
-                  </label>
                   <label class="switch-row compact">
                     <span><strong>密钥绑定 <code>auto</code> 时允许路由至任意候选模型</strong><small>推荐开启：API 密钥只需勾选绑定虚拟模型 <code>auto</code>，即可路由至池内真实模型，同时严格检查该密钥的共享额度与模型独立额度（防 402）。</small></span>
                     <input id="routerAllowUnlisted" type="checkbox" class="switch-input" checked onchange="markRouterDirty(true)"><span class="switch-track"></span>
@@ -556,7 +546,7 @@
                     <select id="routerSessionMode" onchange="markRouterDirty(true)">
                       <option value="user_turn">仅用户新提问重评，工具回传沿用上轮模型 (推荐)</option>
                       <option value="session_lock">会话锁定首轮模型（仅更难问题升档）</option>
-                      <option value="every_turn">每一轮请求均重新分档</option>
+                      <option value="every_turn">每一轮请求均重新分析任务难度</option>
                     </select>
                   </label>
                 </div>
@@ -568,7 +558,7 @@
                 <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border,#e5e3df)">
                   <h3 style="margin:0 0 6px;font-size:14px">XAuth 用户私人路由与决策模型隔离</h3>
                   <label class="switch-row compact">
-                    <span><strong>允许 XAuth 用户配置私人智能路由与自带渠道 (BYOK)</strong><small>开启后，XAuth 用户可在 /user/ 控制台添加私人渠道、自定义私人路由模型名（禁止与站点 auto 重名）并编排四档策略。</small></span>
+                    <span><strong>允许 XAuth 用户配置私人智能路由与自带渠道 (BYOK)</strong><small>开启后，XAuth 用户可在 /user/ 控制台添加私人渠道、自定义私人路由模型名（禁止与站点 auto 重名）并配置统一候选模型池。</small></span>
                     <input id="routerAllowUserRouter" type="checkbox" class="switch-input" checked onchange="markRouterDirty(true)"><span class="switch-track"></span>
                   </label>
                   <label class="switch-row compact">
@@ -599,8 +589,8 @@
                 <div class="section-heading">
                   <span class="section-icon"><svg class="icon"><use href="#i-code"/></svg></span>
                   <div>
-                    <h2>实时分档试算台 (Dry-Run)</h2>
-                    <p>输入任意 Prompt 或点击示例，实时查看分类器各档概率、启发式打分与按优先级过滤 402/冷却后的最终选模链路（不产生模型调用扣费）。</p>
+                    <h2>任务分析与选模试算台 (Dry-Run)</h2>
+                    <p>输入 Prompt 查看任务难度、真实榜单证据与权限 / 额度过滤后的选模链路。不转发到候选模型；使用外部分类器时可能产生分类费用。</p>
                   </div>
                 </div>
                 <div class="router-dryrun-samples">
@@ -621,7 +611,7 @@
                       <option value="0">不绑定特定密钥（仅检查上游健康度）</option>
                     </select>
                   </label>
-                  <button id="routerDryRunBtn" type="button" class="btn" onclick="runAutoRouterDryRun(this)"><svg class="icon"><use href="#i-spark"/></svg> 试算分档与选模</button>
+                  <button id="routerDryRunBtn" type="button" class="btn" onclick="runAutoRouterDryRun(this)"><svg class="icon"><use href="#i-spark"/></svg> 试算任务与选模</button>
                 </div>
                 <div id="routerDryRunOutput" class="probe-info hidden" style="margin-top:12px" role="status"></div>
               </div>

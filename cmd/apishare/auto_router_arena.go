@@ -60,9 +60,8 @@ type arenaRoutingDecision struct {
 type arenaRoutingOptions struct {
 	Mode, Strategy, DefaultModel, PreviousModel, UserSub string
 	Format                                               clientFormat
-	NativeOnly, PreserveTiers, BanditEnabled             bool
+	NativeOnly, BanditEnabled                            bool
 	TierThinking                                         map[string]string
-	ConfiguredOrder                                      map[string]int
 	Targets                                              map[string]userRouteTarget
 }
 
@@ -75,7 +74,7 @@ type arenaRoutePlan struct {
 func normalizeArenaRoutingMode(mode string) (string, error) {
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	if mode == "" {
-		return "shadow", nil
+		return "live", nil
 	}
 	switch mode {
 	case "off", "shadow", "live":
@@ -83,18 +82,6 @@ func normalizeArenaRoutingMode(mode string) (string, error) {
 	default:
 		return "", errors.New("真实榜单路由模式仅支持 off、shadow 或 live")
 	}
-}
-
-func arenaConfiguredOrder(pool []string, tiers map[string][]string) map[string]int {
-	order := make(map[string]int)
-	for _, list := range append([][]string{pool}, tiers[TierSimple], tiers[TierMedium], tiers[TierComplex], tiers[TierReasoning]) {
-		for _, model := range list {
-			if _, ok := order[model]; !ok {
-				order[model] = len(order)
-			}
-		}
-	}
-	return order
 }
 
 func arenaRequestBoard(demand TaskDemandProfile, cr *canonReq) (string, bool) {
@@ -562,16 +549,8 @@ func orderArenaSegment(plans []*arenaRoutePlan, opts arenaRoutingOptions, floor 
 		}
 		sort.SliceStable(unknown, func(i, j int) bool {
 			a, b := unknown[i].model, unknown[j].model
-			if !opts.PreserveTiers && (a == opts.DefaultModel) != (b == opts.DefaultModel) {
+			if (a == opts.DefaultModel) != (b == opts.DefaultModel) {
 				return a == opts.DefaultModel
-			}
-			ai, aok := opts.ConfiguredOrder[a]
-			bi, bok := opts.ConfiguredOrder[b]
-			if aok != bok {
-				return aok
-			}
-			if aok && ai != bi {
-				return ai < bi
 			}
 			return a < b
 		})
@@ -612,25 +591,13 @@ func applyArenaRoutePolicy(d *routerDecisionDetails, models []string, opts arena
 		evaluation.PublishedAt = source.PublishedAt
 		evaluation.FetchedAt = source.FetchedAt
 	}
-	var ordered []*arenaRoutePlan
-	for start := 0; start < len(plans); {
-		end := len(plans)
-		if opts.PreserveTiers {
-			end = start + 1
-			for end < len(plans) && plans[end].tier == plans[start].tier {
-				end++
-			}
-		}
-		ordered = append(ordered, orderArenaSegment(plans[start:end], opts, floor)...)
-		start = end
-	}
+	ordered := orderArenaSegment(plans, opts, floor)
 	// The first model follows the requested cost/speed strategy. If it fails,
 	// prefer the strongest remaining member of that accepted quality band.
 	if len(ordered) > 1 && ordered[0].trusted && ordered[0].evidence.QualityGroup != nil {
 		end := 1
 		for end < len(ordered) && ordered[end].trusted && ordered[end].evidence.QualityGroup != nil &&
-			*ordered[end].evidence.QualityGroup == *ordered[0].evidence.QualityGroup &&
-			(!opts.PreserveTiers || ordered[end].tier == ordered[0].tier) {
+			*ordered[end].evidence.QualityGroup == *ordered[0].evidence.QualityGroup {
 			end++
 		}
 		sort.SliceStable(ordered[1:end], func(i, j int) bool { return arenaScoreLess(ordered[i+1], ordered[j+1]) })

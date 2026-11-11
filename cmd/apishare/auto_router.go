@@ -78,7 +78,7 @@ type AutoRouterConfig struct {
 	CascadeTiers                 bool                             `json:"cascade_tiers"`
 	AllowUnlistedTargetModels    bool                             `json:"allow_unlisted_target_models"`
 	DefaultModel                 string                           `json:"default_model"`
-	Tiers                        map[string][]string              `json:"tiers"`
+	Tiers                        map[string][]string              `json:"tiers"` // Deprecated: decoded only to migrate candidates into ModelPool.
 	TierThinking                 map[string]string                `json:"tier_thinking"`
 	TierCriteria                 map[string]string                `json:"tier_criteria"`
 	ModelContextLimits           map[string]int                   `json:"model_context_limits,omitempty"`
@@ -159,7 +159,7 @@ func (d *routerDecisionDetails) syncOutcome(defaultModel string) {
 		d.SelectedSourceTier = matchedStepTier
 	}
 	if d.SelectedModel != "" && defaultModel != "" && strings.EqualFold(d.SelectedModel, defaultModel) {
-		if d.SelectedSourceTier == "" || d.SelectedSourceTier == TierDefault || (d.Tier != "" && d.SelectedSourceTier != d.Tier && len(failed) > 0) {
+		if d.SelectedSourceTier == "" || d.SelectedSourceTier == TierDefault || len(failed) > 0 {
 			d.SelectedSourceTier = TierDefault
 			d.DegradedToDefault = true
 		}
@@ -307,7 +307,7 @@ func defaultAutoRouterConfig() AutoRouterConfig {
 		Mode:                         "off",
 		VirtualModel:                 "auto",
 		StrategyProfile:              StrategyBalanced,
-		ArenaMode:                    "shadow",
+		ArenaMode:                    "live",
 		ModelPool:                    []string{},
 		ExcludedModels:               []string{},
 		BanditEnabled:                true,
@@ -325,7 +325,7 @@ func defaultAutoRouterConfig() AutoRouterConfig {
 		LongContextThreshold:         32000,
 		RouteHousekeeping:            true,
 		SessionMode:                  "user_turn",
-		CascadeTiers:                 true,
+		CascadeTiers:                 false,
 		AllowUnlistedTargetModels:    true,
 		DefaultModel:                 "",
 		Tiers:                        defaultAutoRouterTiers(),
@@ -363,6 +363,18 @@ func normalizeModelSlice(items []string) []string {
 		}
 	}
 	return out
+}
+
+// routerUnifiedModelPool migrates legacy tier members without retaining tier or
+// list priority. Thinking/context suffixes are preserved as explicit variants.
+func routerUnifiedModelPool(pool []string, tiers map[string][]string) []string {
+	models := append([]string(nil), pool...)
+	for _, tier := range allRouterTiers {
+		models = append(models, tiers[tier]...)
+	}
+	models = normalizeModelSlice(models)
+	sort.Strings(models)
+	return models
 }
 
 func routerModelExclusionFilter(models []string) func(string) bool {
@@ -548,7 +560,9 @@ func normalizeAutoRouterConfig(cfg *AutoRouterConfig) error {
 		}
 		normalizedTiers[tier] = filtered
 	}
-	cfg.Tiers = normalizedTiers
+	cfg.ModelPool = routerUnifiedModelPool(cfg.ModelPool, normalizedTiers)
+	cfg.Tiers = defaultAutoRouterTiers()
+	cfg.CascadeTiers = false
 	cfg.TierThinking = normalizeTierThinkingMap(cfg.TierThinking)
 	cfg.TierCriteria = cfg.effectiveTierCriteria()
 	normCtxLimits := make(map[string]int, len(cfg.ModelContextLimits))
@@ -777,23 +791,6 @@ func autoRouterCandidateQuotaExhausted(ak ApiKey, virtualModel, candidate string
 		}
 	}
 	return ak.QuotaUSD > 0 && ak.SharedUsedUSD >= ak.QuotaUSD
-}
-
-func orderedCascadeTiers(startTier string, cascade bool) []string {
-	idx := -1
-	for i, t := range allRouterTiers {
-		if t == startTier {
-			idx = i
-			break
-		}
-	}
-	if idx < 0 {
-		return nil
-	}
-	if !cascade {
-		return []string{startTier}
-	}
-	return allRouterTiers[idx:]
 }
 
 func escalateTierOneStep(tier string) string {
@@ -1041,12 +1038,8 @@ func resolveAutoRouteWithConfig(
 	decision.RequiredDifficulty = demand.RequiredDifficulty
 	decision.DomainWeights = demand.Weights
 
-	// 2. Build priority-ordered candidate list:
-	//    - Autonomous Pool Mode (Smart Router 3.0 default when no manual Tiers are configured):
-	//      Automatically gathers all models from cfg.ModelPool or bound upstreams (minus ExcludedModels)
-	//      and ranks them via 6D Benchmark Capability Match + Online Contextual Bandit + Strategy Profile.
-	//    - Legacy Manual Tiers Mode (when cfg.Tiers has configured models):
-	//      Uses orderedCascadeTiers, enhanced with intra-tier Bandit/Domain utility ranking when active.
+	// 2. Build one unified candidate pool. Difficulty controls quality policy and
+	// thinking, never manual model membership or cascading tier boundaries.
 	type rawCandidate struct {
 		model      string
 		sourceTier string
@@ -1078,105 +1071,49 @@ func resolveAutoRouteWithConfig(
 		ordered = append(ordered, rawCandidate{model: m, sourceTier: srcTier, utility: u})
 	}
 
-	totalTierModels := 0
-	for _, list := range cfg.Tiers {
-		totalTierModels += len(list)
+	// Autonomous Pool Mode (no manual 4-tier classification needed)
+	decision.AutonomousPool = true
+	pool := routerUnifiedModelPool(cfg.ModelPool, cfg.Tiers)
+	if len(pool) == 0 {
+		boundModels, _ := collectGatewayUpstreamBoundModels(ctx, cfg.VirtualModel)
+		pool = append(pool, boundModels...)
+	}
+	if cfg.DefaultModel != "" {
+		pool = append(pool, cfg.DefaultModel)
+	}
+	pool = normalizeModelSlice(pool)
+
+	scoredPool := make([]rawCandidate, 0, len(pool))
+	for _, m := range pool {
+		if m == "" || m == cfg.VirtualModel || parseRouterModelSpec(m).BaseModel == cfg.VirtualModel || isExcluded(m) {
+			continue
+		}
+		u := evalUtility(m, !bypassBreaker && cfg.BanditEnabled)
+		scoredPool = append(scoredPool, rawCandidate{
+			model:      m,
+			sourceTier: chosenTier,
+			utility:    u,
+		})
 	}
 
-	if totalTierModels == 0 {
-		// Autonomous Pool Mode (no manual 4-tier classification needed)
-		decision.AutonomousPool = true
-		pool := append([]string(nil), cfg.ModelPool...)
-		if len(pool) == 0 {
-			boundModels, _ := collectGatewayUpstreamBoundModels(ctx, cfg.VirtualModel)
-			pool = append(pool, boundModels...)
-		}
-		if cfg.DefaultModel != "" {
-			pool = append(pool, cfg.DefaultModel)
-		}
-		pool = normalizeModelSlice(pool)
-
-		scoredPool := make([]rawCandidate, 0, len(pool))
-		for _, m := range pool {
-			if m == "" || m == cfg.VirtualModel || parseRouterModelSpec(m).BaseModel == cfg.VirtualModel || isExcluded(m) {
-				continue
-			}
-			u := evalUtility(m, !bypassBreaker && cfg.BanditEnabled)
-			scoredPool = append(scoredPool, rawCandidate{
-				model:      m,
-				sourceTier: chosenTier,
-				utility:    u,
-			})
-		}
-
-		sort.SliceStable(scoredPool, func(i, j int) bool {
-			// Preserve sticky session model at #1 if it is still healthy in Bandit
-			if decision.Cause == "session_affinity" && decision.SelectedModel != "" {
-				if scoredPool[i].model == decision.SelectedModel && scoredPool[i].utility.BanditWinRate >= 0.45 {
-					return true
-				}
-				if scoredPool[j].model == decision.SelectedModel && scoredPool[j].utility.BanditWinRate >= 0.45 {
-					return false
-				}
-			}
-			if scoredPool[i].utility.UtilityScore != scoredPool[j].utility.UtilityScore {
-				return scoredPool[i].utility.UtilityScore > scoredPool[j].utility.UtilityScore
-			}
-			return scoredPool[i].utility.CapabilityScore > scoredPool[j].utility.CapabilityScore
-		})
-
-		for _, item := range scoredPool {
-			addRaw(item.model, item.sourceTier, item.utility)
-		}
-	} else {
-		// Legacy / Hybrid Tier Mode
+	sort.SliceStable(scoredPool, func(i, j int) bool {
+		// Preserve sticky session model at #1 if it is still healthy in Bandit
 		if decision.Cause == "session_affinity" && decision.SelectedModel != "" {
-			addRaw(decision.SelectedModel, chosenTier, evalUtility(decision.SelectedModel, false))
-		}
-		for _, t := range orderedCascadeTiers(chosenTier, cfg.CascadeTiers) {
-			tierList := append([]string(nil), cfg.Tiers[t]...)
-			if len(tierList) > 1 && cfg.ArenaMode != "live" && cfg.BanditEnabled && cfg.Mode != "shadow" && hasAnyBanditHistoryForModels(tierList, demand.PrimaryDomain) {
-				// Dynamic intra-tier Bandit & 6D capability re-ranking
-				scored := make([]rawCandidate, 0, len(tierList))
-				for _, m := range tierList {
-					scored = append(scored, rawCandidate{
-						model:      m,
-						sourceTier: t,
-						utility:    evalUtility(m, !bypassBreaker),
-					})
-				}
-				sort.SliceStable(scored, func(i, j int) bool {
-					return scored[i].utility.UtilityScore > scored[j].utility.UtilityScore
-				})
-				for _, sc := range scored {
-					addRaw(sc.model, t, sc.utility)
-				}
-				continue
+			if scoredPool[i].model == decision.SelectedModel && scoredPool[i].utility.BanditWinRate >= 0.45 {
+				return true
 			}
-			if len(tierList) > 1 && estimatedTokens >= 4000 {
-				reordered := make([]string, 0, len(tierList))
-				var dangerZone []string
-				for _, m := range tierList {
-					if hasPrevSession && strings.EqualFold(parseRouterModelSpec(m).BaseModel, parseRouterModelSpec(prevSessionModel).BaseModel) {
-						reordered = append([]string{m}, reordered...)
-						continue
-					}
-					cLim := effectiveModelContextLimit(m, cfg.ModelContextLimits)
-					if cLim > 0 && estimatedTokens <= cLim && float64(estimatedTokens)/float64(cLim) > 0.82 {
-						dangerZone = append(dangerZone, m)
-					} else {
-						reordered = append(reordered, m)
-					}
-				}
-				tierList = append(reordered, dangerZone...)
-			}
-			for _, m := range tierList {
-				addRaw(m, t, evalUtility(m, false))
+			if scoredPool[j].model == decision.SelectedModel && scoredPool[j].utility.BanditWinRate >= 0.45 {
+				return false
 			}
 		}
-		if cfg.DefaultModel != "" {
-			addRaw(cfg.DefaultModel, TierDefault, evalUtility(cfg.DefaultModel, false))
+		if scoredPool[i].utility.UtilityScore != scoredPool[j].utility.UtilityScore {
+			return scoredPool[i].utility.UtilityScore > scoredPool[j].utility.UtilityScore
 		}
+		return scoredPool[i].utility.CapabilityScore > scoredPool[j].utility.CapabilityScore
+	})
+
+	for _, item := range scoredPool {
+		addRaw(item.model, item.sourceTier, item.utility)
 	}
 
 	// 3. Filter candidates in priority order
@@ -1284,9 +1221,9 @@ func resolveAutoRouteWithConfig(
 
 	eligible = applyArenaRoutePolicy(decision, eligible, arenaRoutingOptions{
 		Mode: cfg.ArenaMode, Strategy: strategyProfile, DefaultModel: cfg.DefaultModel,
-		TierThinking: cfg.TierThinking, PreserveTiers: totalTierModels > 0,
-		ConfiguredOrder: arenaConfiguredOrder(cfg.ModelPool, cfg.Tiers), BanditEnabled: cfg.BanditEnabled,
-		Format: format, NativeOnly: nativeOnly, PreviousModel: prevSessionModel,
+		TierThinking:  cfg.TierThinking,
+		BanditEnabled: cfg.BanditEnabled,
+		Format:        format, NativeOnly: nativeOnly, PreviousModel: prevSessionModel,
 	}, cr, demand)
 	if len(eligible) > 0 {
 		decision.SelectedModel = eligible[0]

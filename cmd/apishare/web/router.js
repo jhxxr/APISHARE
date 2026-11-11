@@ -72,10 +72,10 @@ function cloneRouterDraftFromConfig(cfg) {
     mode: cfg.mode || (cfg.enabled ? "live" : "off"),
     virtual_model: cfg.virtual_model || "auto",
     strategy_profile: cfg.strategy_profile || "balanced",
-    arena_mode: cfg.arena_mode || "shadow",
+    arena_mode: cfg.arena_mode || "live",
     bandit_enabled: cfg.bandit_enabled !== false,
     speculative_cascade: cfg.speculative_cascade !== false,
-    model_pool: Array.isArray(cfg.model_pool) ? [...cfg.model_pool] : [],
+    model_pool: [...new Set([...(cfg.model_pool || []), ...Object.values(tiers).flat()])].sort(),
     excluded_models: Array.isArray(cfg.excluded_models) ? [...cfg.excluded_models] : [],
     model_capabilities: cfg.model_capabilities ? { ...cfg.model_capabilities } : {},
     classifier: cfg.classifier || "cloudflare",
@@ -94,10 +94,10 @@ function cloneRouterDraftFromConfig(cfg) {
     long_context_threshold: Number(cfg.long_context_threshold ?? 32000),
     route_housekeeping: cfg.route_housekeeping !== false,
     session_mode: cfg.session_mode || "user_turn",
-    cascade_tiers: cfg.cascade_tiers !== false,
+    cascade_tiers: false,
     allow_unlisted_target_models: cfg.allow_unlisted_target_models !== false,
     default_model: cfg.default_model || "",
-    tiers,
+    tiers: {},
     tier_thinking: tierThinking,
     tier_criteria: criteria,
     model_context_limits: cfg.model_context_limits ? { ...cfg.model_context_limits } : {},
@@ -424,7 +424,7 @@ function onSelectRouterDefaultModel(val) {
   if (!routerDraft) return;
   routerDraft.default_model = (val || "").trim();
   if ($("routerDefaultModel")) $("routerDefaultModel").value = routerDraft.default_model;
-  renderRouterTiersEditor();
+  refreshRouterModelControls();
   markRouterDirty(true);
 }
 
@@ -500,233 +500,38 @@ function syncRouterSharedClassifierModelsFromInput() {
   renderRouterSharedClassifierControls();
 }
 
-function autoFillRouterTiersFromUpstreams() {
+function refreshRouterModelControls() {
   if (!routerDraft) return;
-  const pool = availableGatewayModelOptions();
-  if (!pool.length) {
-    toast("当前还没有在上游服务中绑定任何模型，请先在「上游服务」中配置模型", "error");
-    return;
-  }
-  const fast = pool.filter((m) => /flash|mini|haiku|lite|turbo|instant|nano/i.test(m));
-  const reason = pool.filter((m) => /reasoner|r1|o1|o3|o4|thinking|grok-4|opus|qwq/i.test(m));
-  const strong = pool.filter((m) => !fast.includes(m));
-
-  routerDraft.tiers.SIMPLE = (fast.length ? fast : pool).slice(0, 3);
-  routerDraft.tiers.MEDIUM = (fast.length ? [...fast, ...strong] : pool).slice(0, 3);
-  routerDraft.tiers.COMPLEX = (strong.length ? strong : pool).slice(0, 3);
-  routerDraft.tiers.REASONING = (reason.length ? reason : (strong.length ? strong : pool)).slice(0, 2);
-  if (!routerDraft.default_model || !pool.includes(routerDraft.default_model)) {
-    routerDraft.default_model = routerDraft.tiers.COMPLEX[0] || pool[0] || "";
-    if ($("routerDefaultModel")) $("routerDefaultModel").value = routerDraft.default_model;
-  }
-  renderRouterTiersEditor();
-  markRouterDirty(true);
-  toast("已根据上游绑定的模型特征智能填充四档候选与默认模型，请点击「保存设置」生效");
-}
-
-function renderRouterTiersEditor() {
-  const container = $("routerTiersContainer");
-  if (!container || !routerDraft) return;
   const allModels = availableGatewayModelOptions();
   const datalist = $("routerAvailableModelsList");
-  if (datalist) {
-    datalist.innerHTML = allModels.map((m) => '<option value="' + esc(m) + '"></option>').join("");
-  }
+  if (datalist) datalist.innerHTML = allModels.map((m) => '<option value="' + esc(m) + '"></option>').join("");
   populateRouterDefaultModelSelect();
   renderRouterSharedClassifierControls();
-
-  const noUpstreamBanner = !allModels.length
-    ? '<div class="router-candidate-empty" style="margin-bottom:8px;border-style:dashed">'
-      + '当前尚未检测到可用模型。请先前往左侧 <strong>上游服务</strong> 配置模型，即可在下方模型列表中直接选择。'
-      + '</div>'
-    : '';
-
-  container.innerHTML = noUpstreamBanner + ROUTER_TIERS.map(({ id, label, subtitle }) => {
-    const list = routerDraft.tiers[id] || [];
-    const criteria = routerDraft.tier_criteria[id] || "";
-    const tierThinking = (routerDraft.tier_thinking && routerDraft.tier_thinking[id]) || "auto";
-    const thinkingOptions = [
-      { v: "auto", l: "思考：按档位自动" },
-      { v: "none", l: "思考：关闭 (none)" },
-      { v: "low", l: "思考：低 (low)" },
-      { v: "medium", l: "思考：中 (medium)" },
-      { v: "high", l: "思考：高 (high)" },
-      { v: "xhigh", l: "思考：超高 (xhigh)" },
-      { v: "max", l: "思考：最大 (max)" },
-      { v: "adaptive", l: "思考：自适应 (adaptive)" },
-      { v: "keep", l: "思考：保留原参 (keep)" },
-    ];
-    const tierThinkingSelectHtml = '<select class="router-tier-thinking-select" title="本档默认思考强度（自动按目标模型协议适配）" style="font-size:12px;padding:2px 6px;border-radius:6px;height:26px" onchange="updateRouterTierThinking(\'' + id + '\', this.value)">'
-      + thinkingOptions.map((o) => '<option value="' + o.v + '"' + (tierThinking === o.v ? " selected" : "") + '>' + o.l + '</option>').join("")
-      + '</select>';
-
-    const candidatesHtml = list.length
-      ? list.map((model, idx) => {
-          const spec = parseRouterCandidateSpecJS(model);
-          const candThinkOpts = [
-            { v: "", l: "跟随档位" },
-            { v: "none", l: "关闭思考 (none)" },
-            { v: "low", l: "低思考 (low)" },
-            { v: "medium", l: "中思考 (medium)" },
-            { v: "high", l: "高思考 (high)" },
-            { v: "xhigh", l: "超高 (xhigh)" },
-            { v: "max", l: "最大 (max)" },
-            { v: "adaptive", l: "自适应 (adaptive)" },
-          ];
-          const candThinkSelect = '<select class="router-cand-thinking-select" title="单独覆盖此候选模型的思考档位，也支持手动写 model(4096,128k)" style="font-size:11px;padding:1px 4px;border-radius:5px;height:22px;max-width:108px" onchange="updateRouterCandidateThinking(\'' + id + '\',' + idx + ',this.value)">'
-            + candThinkOpts.map((o) => '<option value="' + o.v + '"' + (spec.thinking === o.v ? " selected" : "") + '>' + o.l + '</option>').join("")
-            + '</select>';
-          return '<div class="router-candidate-item">'
-            + '<div class="router-candidate-main">'
-            + '<span class="router-priority-rank" title="优先级 #' + (idx + 1) + '">#' + (idx + 1) + '</span>'
-            + modelIcon(spec.base)
-            + '<span class="router-candidate-name" title="' + esc(model) + '">' + esc(model) + '</span>'
-            + '</div>'
-            + '<div class="router-candidate-meta">'
-            + candThinkSelect
-            + priceHintForRouterModel(model)
-            + healthBadgeForRouterModel(model)
-            + '<div class="router-candidate-actions">'
-            + '<button type="button" class="router-order-btn" title="提高优先级（上移）" aria-label="上移 ' + esc(model) + '" ' + (idx === 0 ? "disabled" : "") + ' onclick="moveRouterCandidate(\'' + id + '\',' + idx + ',-1)">↑</button>'
-            + '<button type="button" class="router-order-btn" title="降低优先级（下移）" aria-label="下移 ' + esc(model) + '" ' + (idx === list.length - 1 ? "disabled" : "") + ' onclick="moveRouterCandidate(\'' + id + '\',' + idx + ',1)">↓</button>'
-            + '<button type="button" class="router-order-btn remove" title="从本档移除" aria-label="移除 ' + esc(model) + '" onclick="removeRouterCandidate(\'' + id + '\',' + idx + ')">×</button>'
-            + '</div></div></div>';
-        }).join("")
-      : '<div class="router-candidate-empty">当前档位暂无候选模型，可从下方可用模型列表中选择添加（为空时自动顺延到更高档位或兜底默认模型）</div>';
-
-    const quickSelectHtml = '<select class="router-tier-select" aria-label="选择可用模型添加到 ' + id + '" onchange="if(this.value){addRouterCandidate(\'' + id + '\',this.value);this.value=\'\';}">'
-      + buildUpstreamModelSelectOptionsHTML(list, "+ 选择可用模型加入 " + id + "…")
-      + '</select>';
-
-    return '<div class="router-tier-card" data-tier="' + id + '">'
-      + '<div class="router-tier-header">'
-      + '<div class="router-tier-title"><span class="router-tier-badge tier-' + id + '">' + esc(label) + '</span><small class="muted">' + esc(subtitle) + '</small></div>'
-      + '<div style="display:flex;align-items:center;gap:6px">' + tierThinkingSelectHtml + '<span class="count-pill">' + list.length + ' 个候选</span></div>'
-      + '</div>'
-      + '<div class="router-candidate-list">' + candidatesHtml + '</div>'
-      + '<div class="router-tier-add-bar">'
-      + quickSelectHtml
-      + '<input id="routerAddInput_' + id + '" class="router-tier-input" type="text" list="routerAvailableModelsList" placeholder="或输入 model / model(high,128k) 回车添加…" onkeydown="if(event.key===\'Enter\'){event.preventDefault();addRouterCandidateFromInput(\'' + id + '\');}">'
-      + '<button type="button" class="btn mini ghost router-tier-add-btn" onclick="addRouterCandidateFromInput(\'' + id + '\')">添加候选</button>'
-      + '</div>'
-      + '<details class="router-tier-criteria">'
-      + '<summary>自定义本档给分类器的判定标准说明</summary>'
-      + '<textarea rows="2" maxlength="500" oninput="updateRouterTierCriteria(\'' + id + '\', this.value)">' + esc(criteria) + '</textarea>'
-      + '<div style="margin-top:4px;text-align:right"><button type="button" class="text-btn" onclick="resetRouterTierCriteria(\'' + id + '\')">恢复本档默认说明</button></div>'
-      + '</details>'
-      + '</div>';
-  }).join("");
-
   const defHealth = $("routerDefaultModelHealth");
-  if (defHealth) {
-    defHealth.innerHTML = routerDraft.default_model
-      ? healthBadgeForRouterModel(routerDraft.default_model)
-      : '<span class="router-health-pill healthy" title="留空时由自治模型池自动选出最优模型">自动寻优</span>';
-  }
+  if (defHealth) defHealth.innerHTML = routerDraft.default_model
+    ? healthBadgeForRouterModel(routerDraft.default_model) : '<span class="router-health-pill healthy">自动寻优</span>';
   renderRouterAutonomousPoolEditor();
 }
 
-function moveRouterCandidate(tier, idx, delta) {
-  if (!routerDraft || !Array.isArray(routerDraft.tiers[tier])) return;
-  const list = routerDraft.tiers[tier];
-  const target = idx + delta;
-  if (target < 0 || target >= list.length) return;
-  const tmp = list[idx];
-  list[idx] = list[target];
-  list[target] = tmp;
-  renderRouterTiersEditor();
-  markRouterDirty(true);
-}
-
-function removeRouterCandidate(tier, idx) {
-  if (!routerDraft || !Array.isArray(routerDraft.tiers[tier])) return;
-  routerDraft.tiers[tier].splice(idx, 1);
-  renderRouterTiersEditor();
-  markRouterDirty(true);
-}
-
-function addRouterCandidate(tier, rawModel) {
-  if (!routerDraft) return;
-  const rawStr = String(rawModel || "").trim();
-  if (!rawStr) return;
-  // Split commas outside parentheses so model(high,128k) stays intact
-  const parts = [];
-  let cur = "";
-  let depth = 0;
-  for (let i = 0; i < rawStr.length; i++) {
-    const ch = rawStr[i];
+// Commas in explicit variants such as model(high,128k) are not delimiters.
+function splitRouterPoolInput(raw) {
+  const models = []; let current = "", depth = 0;
+  for (const ch of String(raw || "")) {
     if (ch === "(") depth++;
     else if (ch === ")" && depth > 0) depth--;
-    if (depth === 0 && (ch === "," || ch === "，" || ch === "\n" || ch === "\r")) {
-      if (cur.trim()) parts.push(cur.trim());
-      cur = "";
-    } else {
-      cur += ch;
-    }
+    if (depth === 0 && /[,，\r\n]/.test(ch)) {
+      if (current.trim()) models.push(current.trim());
+      current = "";
+    } else current += ch;
   }
-  if (cur.trim()) parts.push(cur.trim());
-  if (!parts.length) return;
-  if (!Array.isArray(routerDraft.tiers[tier])) routerDraft.tiers[tier] = [];
-  const list = routerDraft.tiers[tier];
-  let added = 0;
-  parts.forEach((m) => {
-    const spec = parseRouterCandidateSpecJS(m);
-    if (spec.base === routerDraft.virtual_model) {
-      toast("候选模型不能是虚拟模型自身 (" + m + ")", "error");
-      return;
-    }
-    if (!list.includes(m)) {
-      list.push(m);
-      added++;
-    }
-  });
-  if (added > 0) {
-    renderRouterTiersEditor();
-    markRouterDirty(true);
-  }
+  if (current.trim()) models.push(current.trim());
+  return [...new Set(models)].sort();
 }
 
-function updateRouterTierThinking(tier, val) {
+function updateRouterModelPool(value) {
   if (!routerDraft) return;
-  if (!routerDraft.tier_thinking) routerDraft.tier_thinking = {};
-  routerDraft.tier_thinking[tier] = val || "auto";
-  markRouterDirty(true);
-}
-
-function updateRouterCandidateThinking(tier, idx, level) {
-  if (!routerDraft || !Array.isArray(routerDraft.tiers[tier])) return;
-  const list = routerDraft.tiers[tier];
-  if (idx < 0 || idx >= list.length) return;
-  const spec = parseRouterCandidateSpecJS(list[idx]);
-  const parts = [];
-  if (level) parts.push(level);
-  if (spec.otherParts && spec.otherParts.length) parts.push(...spec.otherParts);
-  list[idx] = parts.length ? spec.base + "(" + parts.join(",") + ")" : spec.base;
-  renderRouterTiersEditor();
-  markRouterDirty(true);
-}
-
-function addRouterCandidateFromInput(tier) {
-  const input = $("routerAddInput_" + tier);
-  if (!input) return;
-  const val = input.value.trim();
-  if (!val) return;
-  addRouterCandidate(tier, val);
-  input.value = "";
-}
-
-function updateRouterTierCriteria(tier, value) {
-  if (!routerDraft) return;
-  routerDraft.tier_criteria[tier] = value;
-  markRouterDirty(true);
-}
-
-function resetRouterTierCriteria(tier) {
-  if (!routerDraft) return;
-  const meta = ROUTER_TIERS.find((t) => t.id === tier);
-  if (!meta) return;
-  routerDraft.tier_criteria[tier] = meta.defaultCriteria;
-  renderRouterTiersEditor();
+  routerDraft.model_pool = splitRouterPoolInput(value);
+  renderRouterAutonomousPoolEditor();
   markRouterDirty(true);
 }
 
@@ -878,23 +683,13 @@ const ROUTER_DOMAIN_LABELS = {
   long_context_mm: "超长上下文/多模态",
 };
 
-function clearRouterTiersToAutonomousPool() {
-  if (!routerDraft) return;
-  ROUTER_TIERS.forEach(({ id }) => {
-    routerDraft.tiers[id] = [];
-  });
-  renderRouterTiersEditor();
-  renderRouterAutonomousPoolEditor();
-  markRouterDirty(true);
-  toast("已清空手动四档列表，切换为 Smart Router 3.0 全自动模型池寻优模式");
-}
-
 function toggleExcludeAutonomousModel(model) {
   if (!routerDraft || !model) return;
   if (!Array.isArray(routerDraft.excluded_models)) routerDraft.excluded_models = [];
-  const idx = routerDraft.excluded_models.indexOf(model);
-  if (idx >= 0) {
-    routerDraft.excluded_models.splice(idx, 1);
+  const raw = model.toLowerCase(), base = parseRouterCandidateSpecJS(model).base.toLowerCase();
+  const matches = (m) => m.toLowerCase() === raw || m.toLowerCase() === base;
+  if (routerDraft.excluded_models.some(matches)) {
+    routerDraft.excluded_models = routerDraft.excluded_models.filter((m) => !matches(m));
   } else {
     routerDraft.excluded_models.push(model);
   }
@@ -907,7 +702,7 @@ async function resetAutoRouterBanditState(button) {
   try {
     await api("api/auto-router/bandit/reset", { method: "POST", body: "{}" });
     await loadAutoRouter();
-    toast("已清空在线 Bandit 历史学习数据，恢复 6 维公开评测先验");
+    toast("已清空在线 Bandit 历史学习数据，清空历史表现记录（不修改真实榜单）");
   } catch (error) {
     reportError(error, "重置 Bandit 失败");
   } finally {
@@ -944,25 +739,19 @@ function renderRouterAutonomousPoolEditor() {
   const box = $("routerAutonomousPoolContainer");
   const lbBox = $("routerBanditLeaderboardBox");
   if (!box || !routerDraft) return;
-  const allModels = availableGatewayModelOptions();
-  const excludedSet = new Set(routerDraft.excluded_models || []);
-  let totalManualTiers = 0;
-  ROUTER_TIERS.forEach(({ id }) => {
-    totalManualTiers += (routerDraft.tiers?.[id] || []).length;
-  });
-  const isAutonomous = totalManualTiers === 0;
-  const modePill = isAutonomous
-    ? '<span class="badge on">当前生效：全自动模型池寻优</span>'
-    : '<span class="badge warn">当前生效：手动四档覆盖模式（已配置 ' + totalManualTiers + ' 个档位候选）</span>';
+  const allModels = routerDraft.model_pool?.length ? [...routerDraft.model_pool] : availableGatewayModelOptions();
+  const excludedSet = new Set((routerDraft.excluded_models || []).map((m) => m.toLowerCase()));
+  const isExcluded = (m) => excludedSet.has(m.toLowerCase()) || excludedSet.has(parseRouterCandidateSpecJS(m).base.toLowerCase());
+  const modePill = '<span class="badge on">统一候选池 · 无手动优先级</span>';
 
   if (!allModels.length) {
     box.innerHTML = '<div class="router-candidate-empty" style="border-style:dashed">'
-      + '当前尚未检测到可用上游模型。请先前往左侧 <strong>上游服务</strong> 绑定模型，系统将自动加载其 6 维评测能力画像与 Bandit 状态。'
+      + '当前尚未检测到可用上游模型。请先前往左侧 <strong>上游服务</strong> 绑定模型，系统会在可用模型之间按真实榜单与策略择优。'
       + '</div>';
   } else {
-    const activeCount = allModels.filter((m) => !excludedSet.has(m)).length;
+    const activeCount = allModels.filter((m) => !isExcluded(m)).length;
     const rows = allModels.map((m) => {
-      const excluded = excludedSet.has(m);
+      const excluded = isExcluded(m);
       const spec = parseRouterCandidateSpecJS(m);
       return '<div class="router-candidate-item" style="' + (excluded ? 'opacity:0.52;' : '') + '">'
         + '<div class="router-candidate-main">'
@@ -971,10 +760,10 @@ function renderRouterAutonomousPoolEditor() {
         + (excluded ? '<span class="badge warn" style="font-size:10px">已从自动池排除</span>' : '')
         + '</div>'
         + '<div class="router-candidate-meta">'
-        + capabilityTagsForRouterModel(m)
+        + (routerDraft.arena_mode === "live" ? "" : capabilityTagsForRouterModel(m))
         + priceHintForRouterModel(m)
         + healthBadgeForRouterModel(m)
-        + '<button type="button" class="btn mini ghost" style="padding:2px 8px;font-size:11px" onclick="toggleExcludeAutonomousModel(\'' + esc(m) + '\')">'
+        + '<button type="button" class="btn mini ghost" style="padding:2px 8px;font-size:11px" data-router-exclude="' + esc(m) + '">'
         + (excluded ? '恢复参与寻优' : '排除')
         + '</button>'
         + '</div></div>';
@@ -982,16 +771,19 @@ function renderRouterAutonomousPoolEditor() {
 
     box.innerHTML = '<div class="router-tier-card">'
       + '<div class="router-tier-header">'
-      + '<div class="router-tier-title"><strong>自治候选模型池 (' + activeCount + ' / ' + allModels.length + ' 可用)</strong><small class="muted">旧启发式画像（非实测）、上下文和渠道记录；真实 Arena 分榜依据见试运行明细</small></div>'
+      + '<div class="router-tier-title"><strong>自治候选模型池 (' + activeCount + ' / ' + allModels.length + ' 可用)</strong><small class="muted">只控制模型是否参与；列表顺序不是优先级。榜单证据见试运行明细</small></div>'
       + modePill
       + '</div>'
       + '<div class="router-candidate-list" style="max-height:290px;overflow-y:auto">' + rows + '</div>'
       + '</div>';
+    box.querySelectorAll("[data-router-exclude]").forEach((button) => {
+      button.addEventListener("click", () => toggleExcludeAutonomousModel(button.dataset.routerExclude));
+    });
   }
 
   if (lbBox) {
     const lb = Array.isArray(routerConfigCache?.bandit_leaderboard) ? routerConfigCache.bandit_leaderboard : [];
-    const activeArms = lb.filter((a) => a.upstream_id === 0 && (a.calls > 0 || a.implicit_negative > 0 || a.speculative_escalations > 0)).slice(0, 8);
+    const activeArms = (routerDraft.arena_mode === "live" ? [] : lb).filter((a) => a.upstream_id === 0 && (a.calls > 0 || a.implicit_negative > 0 || a.speculative_escalations > 0)).slice(0, 8);
     if (!activeArms.length) {
       lbBox.innerHTML = "";
     } else {
@@ -1018,11 +810,11 @@ function renderAutoRouterConfig() {
   setRouterMode(routerDraft.mode);
   $("routerVirtualModel").value = routerDraft.virtual_model || "auto";
   if ($("routerStrategyProfile")) $("routerStrategyProfile").value = routerDraft.strategy_profile || "balanced";
-  if ($("routerArenaMode")) $("routerArenaMode").value = routerDraft.arena_mode || "shadow";
+  if ($("routerArenaMode")) $("routerArenaMode").value = routerDraft.arena_mode || "live";
   if ($("routerBanditEnabled")) $("routerBanditEnabled").checked = routerDraft.bandit_enabled !== false;
   if ($("routerSpeculativeCascade")) $("routerSpeculativeCascade").checked = routerDraft.speculative_cascade !== false;
   $("routerDefaultModel").value = routerDraft.default_model || "";
-  $("routerCascadeTiers").checked = routerDraft.cascade_tiers !== false;
+  if ($("routerModelPool")) $("routerModelPool").value = (routerDraft.model_pool || []).join("\n");
   $("routerAllowUnlisted").checked = routerDraft.allow_unlisted_target_models !== false;
   $("routerResponseHeaders").checked = routerDraft.response_headers !== false;
 
@@ -1042,7 +834,7 @@ function renderAutoRouterConfig() {
   $("routerClearAPIKey").checked = false;
 
   renderRouterAutonomousPoolEditor();
-  renderRouterTiersEditor();
+  refreshRouterModelControls();
   renderRouterClassifierForm();
   markRouterDirty(false);
 }
@@ -1051,11 +843,13 @@ function collectRouterDraftFromInputs() {
   if (!routerDraft) return null;
   routerDraft.virtual_model = $("routerVirtualModel").value.trim() || "auto";
   if ($("routerStrategyProfile")) routerDraft.strategy_profile = $("routerStrategyProfile").value || "balanced";
-  if ($("routerArenaMode")) routerDraft.arena_mode = $("routerArenaMode").value || "shadow";
+  if ($("routerArenaMode")) routerDraft.arena_mode = $("routerArenaMode").value || "live";
   if ($("routerBanditEnabled")) routerDraft.bandit_enabled = $("routerBanditEnabled").checked;
   if ($("routerSpeculativeCascade")) routerDraft.speculative_cascade = $("routerSpeculativeCascade").checked;
   routerDraft.default_model = $("routerDefaultModel").value.trim();
-  routerDraft.cascade_tiers = $("routerCascadeTiers").checked;
+  routerDraft.model_pool = splitRouterPoolInput($("routerModelPool")?.value || "");
+  routerDraft.tiers = {};
+  routerDraft.cascade_tiers = false;
   routerDraft.allow_unlisted_target_models = $("routerAllowUnlisted").checked;
   routerDraft.response_headers = $("routerResponseHeaders").checked;
 
@@ -1126,7 +920,7 @@ async function testAutoRouterClassifier(button) {
       .filter((k) => probs[k] !== undefined)
       .map((k) => k + ": " + (Number(probs[k]) * 100).toFixed(1) + "%")
       .join(" · ");
-    out.innerHTML = '<strong>连接成功</strong> · 分类器 <code>' + esc(res.provider) + ' / ' + esc(res.model) + '</code> · 延迟 <strong>' + Number(res.latency_ms || 0) + ' ms</strong> · 判定档位 <span class="router-tier-badge tier-' + esc(res.tier) + '">' + esc(res.tier) + '</span>'
+    out.innerHTML = '<strong>连接成功</strong> · 分类器 <code>' + esc(res.provider) + ' / ' + esc(res.model) + '</code> · 延迟 <strong>' + Number(res.latency_ms || 0) + ' ms</strong> · 任务难度 <span class="router-tier-badge tier-' + esc(res.tier) + '">' + esc(res.tier) + '</span>'
       + (probText ? '<br><small class="muted">各档概率：' + esc(probText) + '</small>' : '');
   } catch (error) {
     out.innerHTML = '<span style="color:#dc2626"><strong>连接失败：</strong>' + esc(error.message) + '</span>';
@@ -1180,7 +974,7 @@ async function runAutoRouterDryRun(button) {
     });
     renderRouterDryRunResult(res);
   } catch (error) {
-    reportError(error, "试算分档失败");
+    reportError(error, "选模试算失败");
   } finally {
     setBusy(btn, false);
   }

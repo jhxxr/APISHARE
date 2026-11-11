@@ -215,11 +215,9 @@
             <div>
               <span class="eyebrow">PERSONAL SMART ROUTER 3.0</span>
               <h2>我的私人智能路由 <span id="userRouterStatusBadge" class="status-pill off">未启用</span></h2>
-              <p class="card-sub">自定义专属路由模型名（如 <code>my-auto</code>），组合你的自带渠道与站点模型。可启用真实 Arena 质量参考与渠道指标择优；默认仅观察对照，不改变实际转发。</p>
+              <p class="card-sub">自定义专属路由模型名（如 <code>my-auto</code>），组合你的自带渠道与站点模型。默认使用真实 Arena 质量参考与渠道指标，在统一模型池内择优，不再手动分档。</p>
             </div>
             <div class="router-head-actions">
-              <button id="clearUserTiersBtn" type="button" class="btn ghost mini" title="清空手动四档，切回 Smart Router 3.0 全自动模型池寻优">全自动池模式</button>
-              <button id="autoFillUserTiersBtn" type="button" class="btn ghost mini" title="根据我的渠道模型与站点绑定模型自动填充四档">一键填充四档</button>
               <button id="saveUserRouterBtn" type="button" class="btn primary mini">保存路由策略</button>
             </div>
           </div>
@@ -266,7 +264,7 @@
             <div class="user-form-grid-2" style="margin-top:8px">
               <label class="user-field">
                 <span>真实榜单路由 (Arena)</span>
-                <select id="userRouterArenaMode"><option value="shadow">观察对照（默认，不改变实际转发）</option><option value="live">正式启用真实榜单策略</option><option value="off">关闭，仅用旧策略</option></select>
+                <select id="userRouterArenaMode"><option value="live">正式启用真实榜单策略（默认）</option><option value="shadow">观察对照（仅调试，不改变实际转发）</option><option value="off">关闭，仅用旧策略</option></select>
                 <small>只使用每日缓存。数据或精确版本不匹配时保持未知；自带渠道的真实费用未知，不按站点费用推算。</small>
               </label>
               <label class="user-field">
@@ -282,7 +280,7 @@
 
             <div class="user-classifier-box">
               <div class="user-classifier-head">
-                <strong>决策分类器来源（决定如何判断请求属于 SIMPLE / MEDIUM / COMPLEX / REASONING）</strong>
+                <strong>任务难度判断（只决定质量要求与思考强度，不限定模型档位）</strong>
               </div>
               <div class="user-form-grid-2">
                 <label class="user-field">
@@ -304,7 +302,7 @@
                 <div id="userUpstreamClassifierWrap" class="user-field hidden">
                   <input type="hidden" id="userClassifierUpstreamSelect" value="0">
                   <label class="user-field">
-                    <span>选择用于分档的决策模型</span>
+                    <span>选择用于判断任务难度的模型</span>
                     <div class="user-model-select-combo">
                       <select id="userUpstreamClassifierModelSelect" aria-label="从可用模型列表中选择决策模型">
                         <option value="">选择可用模型…</option>
@@ -349,11 +347,23 @@
             <datalist id="userAllCandidateModelsList"></datalist>
             <datalist id="userPersonalModelsList"></datalist>
 
-            <div id="userTiersEditor" class="user-tiers-grid"></div>
+            <div class="user-form-grid-2">
+              <label class="user-field">
+                <span>参与选模的模型池（可选）</span>
+                <textarea id="userRouterModelPool" rows="3" placeholder="留空使用全部可用模型；指定时每行一个，支持 model(high,128k)"></textarea>
+                <small>只控制是否参与，不设先后顺序。旧四档模型自动合并至统一候选池。</small>
+              </label>
+              <label class="user-field">
+                <span>排除的模型（可选）</span>
+                <textarea id="userRouterExcludedModels" rows="3" placeholder="每行一个；排除基础型号时也排除其思考变体"></textarea>
+                <small>排除项始终不参与自动选模；不会绕过权限、额度及可用性检查。</small>
+              </label>
+            </div>
+            <div id="userModelPoolPreview" class="user-cand-list"></div>
 
             <div class="user-dryrun-box">
               <div class="user-dryrun-head">
-                <strong>实时分档与选模试算 (Dry-Run)</strong>
+                <strong>任务分析与选模试算 (Dry-Run)</strong>
                 <div class="user-dryrun-samples">
                   <button type="button" class="btn ghost mini" data-user-sample="把下面这句话翻译成英文：今天下午三点讨论上线方案。">简单问答</button>
                   <button type="button" class="btn ghost mini" data-user-sample="请帮我重构一个跨多文件的 Go 微服务网关模块，包含连接池、会话粘性与指数退避冷却，并给出完整并发安全设计。">复杂工程</button>
@@ -361,7 +371,7 @@
                 </div>
               </div>
               <div class="user-dryrun-input-row">
-                <input id="userDryRunPrompt" type="text" value="请帮我重构一个跨多文件的 Go 微服务网关模块，包含连接池、会话粘性与指数退避冷却，并给出完整并发安全设计。" placeholder="输入测试提问，检验分档结果与候选模型优先级…">
+                <input id="userDryRunPrompt" type="text" value="请帮我重构一个跨多文件的 Go 微服务网关模块，包含连接池、会话粘性与指数退避冷却，并给出完整并发安全设计。" placeholder="输入测试提问，检验任务分析与模型选择…">
                 <button id="userDryRunBtn" type="button" class="btn ghost mini">试算选模</button>
               </div>
               <div id="userDryRunResult" class="user-dryrun-result hidden"></div>

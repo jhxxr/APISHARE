@@ -71,7 +71,7 @@ func defaultUserAutoRouterConfig() UserAutoRouterConfig {
 		Enabled:                false,
 		VirtualModel:           "my-auto",
 		StrategyProfile:        StrategyBalanced,
-		ArenaMode:              "shadow",
+		ArenaMode:              "live",
 		ModelPool:              []string{},
 		ExcludedModels:         []string{},
 		BanditEnabled:          true,
@@ -84,7 +84,7 @@ func defaultUserAutoRouterConfig() UserAutoRouterConfig {
 		MinConfidence:          0.55,
 		SkipShortChars:         60,
 		LongContextThreshold:   32000,
-		CascadeTiers:           true,
+		CascadeTiers:           false,
 		DefaultModel:           "",
 		Tiers: map[string][]string{
 			TierSimple:    {},
@@ -608,7 +608,9 @@ func normalizeUserAutoRouterConfig(sub string, ucfg *UserAutoRouterConfig, stric
 		normalizedTiers[tier] = filtered
 		totalCandidates += len(filtered)
 	}
-	ucfg.Tiers = normalizedTiers
+	ucfg.ModelPool = routerUnifiedModelPool(ucfg.ModelPool, normalizedTiers)
+	ucfg.Tiers = defaultAutoRouterTiers()
+	ucfg.CascadeTiers = false
 	ucfg.TierThinking = normalizeTierThinkingMap(ucfg.TierThinking)
 	ucfg.TierCriteria = ucfg.effectiveTierCriteria()
 
@@ -1247,6 +1249,7 @@ func resolveUserAutoRouteWithConfig(ctx context.Context, sub string, ucfg UserAu
 		RequestedModel:       requested,
 		ClassifierProvider:   ucfg.ClassifierSource,
 		EstimatedInputTokens: estimatedTokens,
+		AutonomousPool:       true,
 	}
 
 	latestUser, stateText := extractClassifierState(cr, 2, 6000)
@@ -1403,15 +1406,11 @@ func resolveUserAutoRouteWithConfig(ctx context.Context, sub string, ucfg UserAu
 		models = append(models, target.Model)
 		targetByModel[target.Model] = target
 	}
-	manual := false
-	for _, list := range ucfg.Tiers {
-		manual = manual || len(list) > 0
-	}
 	models = applyArenaRoutePolicy(decision, models, arenaRoutingOptions{
 		Mode: ucfg.ArenaMode, Strategy: ucfg.StrategyProfile, DefaultModel: ucfg.DefaultModel,
-		TierThinking: ucfg.TierThinking, PreserveTiers: manual, UserSub: sub, Targets: targetByModel,
-		ConfiguredOrder: arenaConfiguredOrder(ucfg.ModelPool, ucfg.Tiers), BanditEnabled: ucfg.BanditEnabled,
-		Format: format, NativeOnly: nativeOnly, PreviousModel: prevSessionModel,
+		TierThinking: ucfg.TierThinking, UserSub: sub, Targets: targetByModel,
+		BanditEnabled: ucfg.BanditEnabled,
+		Format:        format, NativeOnly: nativeOnly, PreviousModel: prevSessionModel,
 	}, cr, demand)
 	targets = targets[:0]
 	for _, model := range models {
@@ -1565,67 +1564,49 @@ func selectUserTierTargets(ctx context.Context, sub string, ucfg UserAutoRouterC
 		ordered = append(ordered, tierCandidate{model: m, sourceTier: tier, utility: u})
 	}
 
-	totalTierModels := 0
-	for _, list := range ucfg.Tiers {
-		totalTierModels += len(list)
+	pool := routerUnifiedModelPool(ucfg.ModelPool, ucfg.Tiers)
+	if len(pool) == 0 {
+		pool = append(pool, userAvailableModels(sub)...)
+		if ucfg.ChannelPreference != "personal_only" {
+			siteModels := normalizeModelSlice([]string{ak.Models})
+			siteVM := strings.TrimSpace(getAutoRouterConfig().VirtualModel)
+			if siteVM == "" {
+				siteVM = "auto"
+			}
+			if len(siteModels) == 0 && strings.TrimSpace(ak.Models) == "" {
+				siteModels, _ = collectGatewayUpstreamBoundModels(ctx, siteVM)
+			}
+			for _, sm := range siteModels {
+				if sm != siteVM {
+					pool = append(pool, sm)
+				}
+			}
+		}
 	}
-
-	if totalTierModels == 0 {
-		pool := append([]string(nil), ucfg.ModelPool...)
-		if len(pool) == 0 {
-			pool = append(pool, userAvailableModels(sub)...)
-			if ucfg.ChannelPreference != "personal_only" {
-				siteModels := normalizeModelSlice([]string{ak.Models})
-				siteVM := strings.TrimSpace(getAutoRouterConfig().VirtualModel)
-				if siteVM == "" {
-					siteVM = "auto"
-				}
-				if len(siteModels) == 0 && strings.TrimSpace(ak.Models) == "" {
-					siteModels, _ = collectGatewayUpstreamBoundModels(ctx, siteVM)
-				}
-				for _, sm := range siteModels {
-					if sm != siteVM {
-						pool = append(pool, sm)
-					}
-				}
-			}
+	if ucfg.DefaultModel != "" {
+		pool = append(pool, ucfg.DefaultModel)
+	}
+	pool = normalizeModelSlice(pool)
+	scored := make([]tierCandidate, 0, len(pool))
+	for _, m := range pool {
+		spec := parseRouterModelSpec(m)
+		if spec.BaseModel == "" || strings.EqualFold(spec.BaseModel, ucfg.VirtualModel) || isExcluded(m) {
+			continue
 		}
-		if ucfg.DefaultModel != "" {
-			pool = append(pool, ucfg.DefaultModel)
-		}
-		pool = normalizeModelSlice(pool)
-		scored := make([]tierCandidate, 0, len(pool))
-		for _, m := range pool {
-			spec := parseRouterModelSpec(m)
-			if spec.BaseModel == "" || strings.EqualFold(spec.BaseModel, ucfg.VirtualModel) || isExcluded(m) {
-				continue
-			}
-			scored = append(scored, tierCandidate{
-				model:      m,
-				sourceTier: startTier,
-				utility:    evalUtility(m, !dryRun && ucfg.BanditEnabled),
-			})
-		}
-		sort.SliceStable(scored, func(i, j int) bool {
-			if scored[i].utility.UtilityScore != scored[j].utility.UtilityScore {
-				return scored[i].utility.UtilityScore > scored[j].utility.UtilityScore
-			}
-			return scored[i].utility.CapabilityScore > scored[j].utility.CapabilityScore
+		scored = append(scored, tierCandidate{
+			model:      m,
+			sourceTier: startTier,
+			utility:    evalUtility(m, !dryRun && ucfg.BanditEnabled),
 		})
-		for _, sc := range scored {
-			addCandidate(sc.model, sc.sourceTier, sc.utility)
+	}
+	sort.SliceStable(scored, func(i, j int) bool {
+		if scored[i].utility.UtilityScore != scored[j].utility.UtilityScore {
+			return scored[i].utility.UtilityScore > scored[j].utility.UtilityScore
 		}
-	} else {
-		if startTier != TierDefault {
-			for _, t := range orderedCascadeTiers(startTier, ucfg.CascadeTiers) {
-				for _, m := range ucfg.Tiers[t] {
-					addCandidate(m, t, evalUtility(m, false))
-				}
-			}
-		}
-		if ucfg.DefaultModel != "" {
-			addCandidate(ucfg.DefaultModel, TierDefault, evalUtility(ucfg.DefaultModel, false))
-		}
+		return scored[i].utility.CapabilityScore > scored[j].utility.CapabilityScore
+	})
+	for _, sc := range scored {
+		addCandidate(sc.model, sc.sourceTier, sc.utility)
 	}
 
 	steps := make([]routerCandidateStep, 0, len(ordered))

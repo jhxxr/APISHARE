@@ -176,7 +176,7 @@ func TestAutoRouterMultiClassifierProtocolsAndLowConfidence(t *testing.T) {
 	}
 }
 
-func TestAutoRouterPriorityCandidatesSkipQuotaAndFailover(t *testing.T) {
+func TestAutoRouterUnifiedCandidatesSkipQuotaAndFailover(t *testing.T) {
 	setupAutoRouterTestDB(t)
 
 	var dsFlashCalls, glmFlashCalls, grokCalls int32
@@ -238,12 +238,17 @@ func TestAutoRouterPriorityCandidatesSkipQuotaAndFailover(t *testing.T) {
 	}
 	invalidateRoutingSnapshot()
 
+	arenaRoutingTestSource(t, "text",
+		arenaRoutingTestModel("deepseek-v4.1-flash", 1, 1500, 1490, 1510),
+		arenaRoutingTestModel("glm-5.3-flash", 2, 1400, 1390, 1410),
+		arenaRoutingTestModel("mimo-v2.6-flash", 3, 1300, 1290, 1310))
 	cfg := defaultAutoRouterConfig()
+	cfg.StrategyProfile = StrategyQualityFirst
 	cfg.Enabled = true
 	cfg.Mode = "live"
 	cfg.Classifier = "heuristic"
 	cfg.SkipShortChars = 60
-	cfg.Tiers[TierSimple] = []string{"mimo-v2.6-flash", "deepseek-v4.1-flash", "glm-5.3-flash"}
+	cfg.ModelPool = []string{"mimo-v2.6-flash", "deepseek-v4.1-flash", "glm-5.3-flash"}
 	cfg.DefaultModel = "grok-4.7"
 	if err := saveAutoRouterConfig(cfg); err != nil {
 		t.Fatalf("saveAutoRouterConfig: %v", err)
@@ -284,8 +289,8 @@ func TestAutoRouterPriorityCandidatesSkipQuotaAndFailover(t *testing.T) {
 	}
 
 	// 2. Send POST /v1/chat/completions with model="auto"
-	// Priority #1 (mimo-v2.6-flash) should be skipped at selection time due to 402 quota exhausted.
-	// Priority #2 (deepseek-v4.1-flash) should be attempted first, fail with 502, and failover to Priority #3 (glm-5.3-flash) which succeeds!
+	// Exhausted mimo-v2.6-flash is skipped regardless of source score or pool order.
+	// Synthetic source evidence prefers deepseek-v4.1-flash; its 502 triggers failover to glm-5.3-flash.
 	reqBody := `{"model":"auto","messages":[{"role":"user","content":"你好，帮我翻译 hello"}]}`
 	reqChat := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
 	reqChat.Header.Set("Authorization", "Bearer "+rawKey)
@@ -318,9 +323,9 @@ func TestAutoRouterPriorityCandidatesSkipQuotaAndFailover(t *testing.T) {
 		t.Fatalf("expected billing_json to contain router metadata and fallbacks_tried, got %s", billingJSON)
 	}
 
-	// 3b. Verify final backup model (DefaultModel = "grok-4.7") when ALL models in the matched tier (SIMPLE) are down:
-	// Set SIMPLE to only ["mimo-v2.6-flash" (402 exhausted), "deepseek-v4.1-flash" (returns 502)] with CascadeTiers=false.
-	cfg.Tiers[TierSimple] = []string{"mimo-v2.6-flash", "deepseek-v4.1-flash"}
+	// 3b. Verify final backup model (DefaultModel = "grok-4.7") when ALL other models in the unified pool are down:
+	// Restrict the unified pool to ["mimo-v2.6-flash" (402 exhausted), "deepseek-v4.1-flash" (returns 502)] with CascadeTiers=false.
+	cfg.ModelPool = []string{"mimo-v2.6-flash", "deepseek-v4.1-flash"}
 	cfg.CascadeTiers = false
 	cfg.DefaultModel = "grok-4.7"
 	if err := saveAutoRouterConfig(cfg); err != nil {
@@ -350,8 +355,8 @@ func TestAutoRouterPriorityCandidatesSkipQuotaAndFailover(t *testing.T) {
 		t.Fatalf("expected call_log to record degraded_to_default=true, selected_source_tier=DEFAULT, and failed_models, got model=%q billing=%s",
 			fallbackModel, fallbackBilling)
 	}
-	// Restore SIMPLE tier for subsequent subtests
-	cfg.Tiers[TierSimple] = []string{"mimo-v2.6-flash", "deepseek-v4.1-flash", "glm-5.3-flash"}
+	// Restore the unified pool for subsequent subtests
+	cfg.ModelPool = []string{"mimo-v2.6-flash", "deepseek-v4.1-flash", "glm-5.3-flash"}
 	cfg.CascadeTiers = true
 
 	// 4. Test Shadow mode: classifies as SIMPLE (glm-5.3-flash/deepseek-v4.1-flash), but actually forwards to default_model (grok-4.7)
@@ -862,9 +867,10 @@ func TestAutoRouterUpstreamBoundModelsAndNoPlaceholders(t *testing.T) {
 	}
 
 	var parsed struct {
-		DefaultModel    string                          `json:"default_model"`
-		Tiers           map[string][]string             `json:"tiers"`
-		AvailableModels []string                        `json:"available_models"`
+		ModelPool       []string                       `json:"model_pool"`
+		DefaultModel    string                         `json:"default_model"`
+		Tiers           map[string][]string            `json:"tiers"`
+		AvailableModels []string                       `json:"available_models"`
 		UpstreamModels  []autoRouterUpstreamModelGroup `json:"upstream_models"`
 	}
 	if err := json.Unmarshal(wCfg2.Body.Bytes(), &parsed); err != nil {
@@ -873,11 +879,8 @@ func TestAutoRouterUpstreamBoundModelsAndNoPlaceholders(t *testing.T) {
 	if parsed.DefaultModel != "" {
 		t.Fatalf("expected unbound legacy placeholder default_model grok-4.7 to be stripped, got %q", parsed.DefaultModel)
 	}
-	if len(parsed.Tiers[TierSimple]) != 1 || parsed.Tiers[TierSimple][0] != "qwen-turbo" {
-		t.Fatalf("expected SIMPLE tier to keep bound qwen-turbo and strip unbound deepseek-v4.1-flash, got %v", parsed.Tiers[TierSimple])
-	}
-	if len(parsed.Tiers[TierReasoning]) != 0 {
-		t.Fatalf("expected REASONING tier to strip unbound grok-4.7, got %v", parsed.Tiers[TierReasoning])
+	if strings.Join(parsed.ModelPool, ",") != "qwen-turbo" || len(parsed.Tiers[TierSimple]) != 0 || len(parsed.Tiers[TierReasoning]) != 0 {
+		t.Fatalf("expected bound qwen-turbo migrated into the unified pool and unbound placeholders removed: %+v", parsed)
 	}
 	expectedAvail := "claude-3-7-sonnet,qwen-alias,qwen-plus,qwen-turbo"
 	if strings.Join(parsed.AvailableModels, ",") != expectedAvail {
@@ -1245,8 +1248,8 @@ func TestAutoRouterContextWindowFilteringAndLongContextUpgrade(t *testing.T) {
 	if !dec.ContextUpgraded || dec.Tier != TierComplex || !strings.Contains(dec.Cause, "long_context") {
 		t.Fatalf("expected long context auto-upgrade to COMPLEX, got tier=%s cause=%s upgraded=%v", dec.Tier, dec.Cause, dec.ContextUpgraded)
 	}
-	if len(cands) == 0 || cands[0] != "gemini-2.5-pro(high)" {
-		t.Fatalf("expected small-context candidate deepseek-chat(medium,6k) to be filtered out and gemini-2.5-pro(high) selected, got cands=%v steps=%+v", cands, dec.Steps)
+	if len(cands) == 0 || parseRouterModelSpec(cands[0]).BaseModel != "gemini-2.5-pro" {
+		t.Fatalf("expected small-context candidate deepseek-chat(medium,6k) to be filtered out and a large-context gemini-2.5-pro variant selected, got cands=%v steps=%+v", cands, dec.Steps)
 	}
 	sawContextExceeded := false
 	for _, st := range dec.Steps {
@@ -1402,6 +1405,7 @@ func TestAutoRouterThinkingTierAndRuntimeFailover(t *testing.T) {
 	}
 	invalidateRoutingSnapshot()
 
+	arenaRoutingTestSource(t, "text", arenaRoutingTestModel("deepseek-chat", 1, 1500, 1490, 1510))
 	cfg := defaultAutoRouterConfig()
 	cfg.Enabled = true
 	cfg.Mode = "live"
@@ -1766,6 +1770,7 @@ func TestSmartRouterV3AutonomousPoolBenchmarkDomainAndBanditLearning(t *testing.
 
 	// Configure Smart Router 3.0 in pure Autonomous Pool Mode (no manual Tiers!)
 	cfg := defaultAutoRouterConfig()
+	cfg.ArenaMode = "off" // Explicit legacy diagnostics; production defaults to Arena live.
 	cfg.Enabled = true
 	cfg.Mode = "live"
 	cfg.Classifier = "heuristic"
@@ -1933,6 +1938,7 @@ func TestSmartRouterV3SpeculativeCascadeZeroDisruptionEscalation(t *testing.T) {
 	invalidateRoutingSnapshot()
 
 	cfg := defaultAutoRouterConfig()
+	cfg.ArenaMode = "off" // Explicit legacy diagnostics; production defaults to Arena live.
 	cfg.Enabled = true
 	cfg.Mode = "live"
 	cfg.Classifier = "heuristic"

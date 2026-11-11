@@ -15,15 +15,9 @@
     logStatus: "",
     toastTimer: 0,
     routerView: null,
-    routerTiers: { SIMPLE: [], MEDIUM: [], COMPLEX: [], REASONING: [] },
+    routerPool: [],
+    routerExcluded: [],
   };
-
-  const USER_TIER_META = [
-    { id: "SIMPLE", title: "SIMPLE · 快档（简单问答/翻译）" },
-    { id: "MEDIUM", title: "MEDIUM · 中等（日常写作/短代码）" },
-    { id: "COMPLEX", title: "COMPLEX · 强档（多文件重构/调试）" },
-    { id: "REASONING", title: "REASONING · 推理档（证明/深度规划）" },
-  ];
 
   const numFmt = new Intl.NumberFormat("zh-CN");
   const compactFmt = new Intl.NumberFormat("zh-CN", { notation: "compact", maximumFractionDigits: 1 });
@@ -454,12 +448,12 @@
       : Array.isArray(r.fallbacks_tried) ? r.fallbacks_tried : [];
     const degradedDefault = Boolean(r.degraded_to_default) || r.selected_source_tier === "DEFAULT";
     const tierName = r.tier || "AUTO";
-    const routePill = `<span class="user-log-route-pill" title="请求模型 ${esc(r.requested_model)} → 判定档位 ${esc(tierName)} (${esc(r.cause || "")})">${esc(r.requested_model)} → ${esc(tierName)}</span>`;
+    const routePill = `<span class="user-log-route-pill" title="请求模型 ${esc(r.requested_model)} → 任务难度 ${esc(tierName)} (${esc(r.cause || "")})">${esc(r.requested_model)} → ${esc(tierName)}</span>`;
 
     if (degradedDefault) {
-      const failedText = failedList.length ? `原 ${tierName} 档模型异常 (${failedList.join(", ")})，` : `原 ${tierName} 档无可用模型，`;
+      const failedText = failedList.length ? `候选模型异常 (${failedList.join(", ")})，` : `候选池无可用模型，`;
       const tip = `${failedText}已自动降级路由至最终后备模型 ${row.model || ""}`;
-      return `<div class="user-log-route-wrap">${routePill}<span class="user-log-fallback-badge danger" title="${esc(tip)}">⚠️ 档位模型异常 · 已降级至后备模型</span></div>`
+      return `<div class="user-log-route-wrap">${routePill}<span class="user-log-fallback-badge danger" title="${esc(tip)}">⚠️ 候选模型异常 · 已回退至兜底模型</span></div>`
         + (failedList.length ? `<div class="user-log-failed-note" title="${esc(tip)}">异常模型: <code>${esc(failedList.join(", "))}</code></div>` : "");
     }
     if (failedList.length > 0) {
@@ -583,20 +577,9 @@
 
   function applyUserRouterView(data) {
     state.routerView = data;
-    const tiers = data.tiers || {};
-    state.routerTiers = {
-      SIMPLE: Array.isArray(tiers.SIMPLE) ? [...tiers.SIMPLE] : [],
-      MEDIUM: Array.isArray(tiers.MEDIUM) ? [...tiers.MEDIUM] : [],
-      COMPLEX: Array.isArray(tiers.COMPLEX) ? [...tiers.COMPLEX] : [],
-      REASONING: Array.isArray(tiers.REASONING) ? [...tiers.REASONING] : [],
-    };
-    const tt = data.tier_thinking || {};
-    state.routerTierThinking = {
-      SIMPLE: tt.SIMPLE || "none",
-      MEDIUM: tt.MEDIUM || "low",
-      COMPLEX: tt.COMPLEX || "medium",
-      REASONING: tt.REASONING || "high",
-    };
+    state.routerPool = [...new Set([...(data.model_pool || []), ...Object.values(data.tiers || {}).filter(Array.isArray).flat()])]
+      .filter((m) => typeof m === "string" && m.trim()).sort();
+    state.routerExcluded = [...(data.excluded_models || [])];
     renderUserByokList();
     renderUserRouterPanel();
   }
@@ -922,7 +905,7 @@
     if ($("#userRouterVirtualModel")) $("#userRouterVirtualModel").value = v.virtual_model || "my-auto";
     if ($("#siteVirtualModelCode")) $("#siteVirtualModelCode").textContent = v.site_virtual_model || "auto";
     if ($("#userRouterStrategyProfile")) $("#userRouterStrategyProfile").value = v.strategy_profile || "balanced";
-    if ($("#userRouterArenaMode")) $("#userRouterArenaMode").value = v.arena_mode || "shadow";
+    if ($("#userRouterArenaMode")) $("#userRouterArenaMode").value = v.arena_mode || "live";
     if ($("#userRouterChannelPref")) $("#userRouterChannelPref").value = v.channel_preference || "personal_first";
     if ($("#userRouterDefaultModel")) $("#userRouterDefaultModel").value = v.default_model || "";
 
@@ -954,7 +937,7 @@
     if ($("#userExternalKeyHint")) {
       $("#userExternalKeyHint").textContent = v.user_classifier_api_key_saved
         ? `已保存外部决策密钥 (${v.user_classifier_api_key_masked || "***"})；留空保留原密钥`
-        : "仅用于你的私人路由分档请求";
+        : "仅用于你的私人路由任务分析请求";
     }
 
     // Populate datalists & bound model selects
@@ -971,7 +954,9 @@
     populateUserUpstreamClassifierModelSelect();
 
     syncUserClassifierVisibility();
-    renderUserTiersEditor();
+    if ($("#userRouterModelPool")) $("#userRouterModelPool").value = state.routerPool.join("\n");
+    if ($("#userRouterExcludedModels")) $("#userRouterExcludedModels").value = state.routerExcluded.join("\n");
+    renderUserPoolEditor();
   }
 
   function collectUserAvailableModelList() {
@@ -1116,209 +1101,28 @@
     return `${ctxTag}<span class="user-source-pill warn" title="当前未在自带渠道或密钥授权模型中找到">未绑定来源</span>`;
   }
 
-  function renderUserTiersEditor() {
-    const host = $("#userTiersEditor");
+  function splitUserPoolInput(raw) {
+    const models = []; let current = "", depth = 0;
+    for (const ch of String(raw || "")) {
+      if (ch === "(") depth++;
+      else if (ch === ")" && depth > 0) depth--;
+      if (depth === 0 && /[,，\r\n]/.test(ch)) {
+        if (current.trim()) models.push(current.trim());
+        current = "";
+      } else current += ch;
+    }
+    if (current.trim()) models.push(current.trim());
+    return [...new Set(models)].sort();
+  }
+
+  function renderUserPoolEditor() {
+    const host = $("#userModelPoolPreview");
     if (!host) return;
-    const allModels = collectUserAvailableModelList();
-    if (!state.routerTierThinking) {
-      state.routerTierThinking = { SIMPLE: "none", MEDIUM: "low", COMPLEX: "medium", REASONING: "high" };
-    }
-    const tierThinkOpts = [
-      { v: "auto", l: "思考:自动" },
-      { v: "none", l: "思考:关(none)" },
-      { v: "low", l: "思考:低(low)" },
-      { v: "medium", l: "思考:中(med)" },
-      { v: "high", l: "思考:高(high)" },
-      { v: "xhigh", l: "思考:超高" },
-      { v: "max", l: "思考:最大" },
-      { v: "adaptive", l: "思考:自适应" },
-      { v: "keep", l: "思考:原参" },
-    ];
-    const candThinkOpts = [
-      { v: "", l: "随档位" },
-      { v: "none", l: "none" },
-      { v: "low", l: "low" },
-      { v: "medium", l: "medium" },
-      { v: "high", l: "high" },
-      { v: "xhigh", l: "xhigh" },
-      { v: "max", l: "max" },
-      { v: "adaptive", l: "adaptive" },
-    ];
-
-    host.innerHTML = USER_TIER_META.map(({ id, title }) => {
-      const list = state.routerTiers[id] || [];
-      const curTierThink = state.routerTierThinking[id] || "auto";
-      const tierThinkSel = `<select data-user-tier-thinking="${id}" title="本档默认思考档位" style="font-size:11px;padding:1px 4px;border-radius:5px;height:22px">`
-        + tierThinkOpts.map((o) => `<option value="${o.v}"${curTierThink === o.v ? " selected" : ""}>${o.l}</option>`).join("")
-        + `</select>`;
-
-      const rowsHTML = list.length
-        ? list.map((m, idx) => {
-            const spec = parseUserCandidateSpec(m);
-            const cSel = `<select data-user-cand-thinking="${id}" data-idx="${idx}" title="单独覆盖此模型的思考档位" style="font-size:11px;padding:0 3px;border-radius:4px;height:20px;max-width:74px">`
-              + candThinkOpts.map((o) => `<option value="${o.v}"${spec.thinking === o.v ? " selected" : ""}>${o.l}</option>`).join("")
-              + `</select>`;
-            return `<div class="user-cand-row">
-            <div class="user-cand-left">
-              <span class="user-cand-rank">#${idx + 1}</span>
-              <span class="user-cand-name" title="${esc(m)}">${esc(m)}</span>
-              ${cSel}
-              ${sourceBadgeForCandidate(m)}
-            </div>
-            <div class="user-cand-btns">
-              <button type="button" data-tier-move="${id}" data-idx="${idx}" data-dir="-1" ${idx === 0 ? "disabled" : ""} title="上移优先级">↑</button>
-              <button type="button" data-tier-move="${id}" data-idx="${idx}" data-dir="1" ${idx === list.length - 1 ? "disabled" : ""} title="下移优先级">↓</button>
-              <button type="button" data-tier-del="${id}" data-idx="${idx}" title="移除">×</button>
-            </div>
-          </div>`;
-          }).join("")
-        : `<div class="muted" style="font-size:11px;padding:6px 2px">暂无候选模型，命中本档时将顺延下一档或默认模型</div>`;
-
-      const unusedModels = allModels.filter((m) => !list.includes(m));
-      const optGroups = unusedModels.length
-        ? `<option value="">+ 选择可用模型加入本档…</option>`
-          + unusedModels.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join("")
-        : `<option value="">${allModels.length ? "（所有可用模型均已添加）" : "（当前无可用模型）"}</option>`;
-
-      return `<div class="user-tier-card" data-user-tier="${id}">
-        <div class="user-tier-head">
-          <span class="user-tier-badge ${id}">${esc(title)}</span>
-          <div style="display:flex;align-items:center;gap:6px">${tierThinkSel}<small class="muted">${list.length} 个候选</small></div>
-        </div>
-        <div class="user-cand-list">${rowsHTML}</div>
-        <div class="user-tier-add">
-          <select data-tier-select="${id}" aria-label="向 ${id} 添加候选模型">${optGroups}</select>
-          <input type="text" data-tier-input="${id}" list="userAllCandidateModelsList" placeholder="或输入 model / model(high) 回车…">
-          <button type="button" class="btn ghost mini" data-tier-add-btn="${id}">添加</button>
-        </div>
-      </div>`;
-    }).join("");
-
-    $$("[data-user-tier-thinking]", host).forEach((sel) => {
-      sel.addEventListener("change", () => {
-        if (!state.routerTierThinking) state.routerTierThinking = {};
-        state.routerTierThinking[sel.dataset.userTierThinking] = sel.value || "auto";
-      });
-    });
-    $$("[data-user-cand-thinking]", host).forEach((sel) => {
-      sel.addEventListener("change", () => {
-        const t = sel.dataset.userCandThinking;
-        const idx = Number(sel.dataset.idx);
-        const list = state.routerTiers[t] || [];
-        if (idx >= 0 && idx < list.length) {
-          const spec = parseUserCandidateSpec(list[idx]);
-          const parts = [];
-          if (sel.value) parts.push(sel.value);
-          if (spec.otherParts && spec.otherParts.length) parts.push(...spec.otherParts);
-          list[idx] = parts.length ? `${spec.base}(${parts.join(",")})` : spec.base;
-          renderUserTiersEditor();
-        }
-      });
-    });
-
-    $$("[data-tier-move]", host).forEach((btn) => {
-      btn.addEventListener("click", () => {
-        moveUserTierModel(btn.dataset.tierMove, Number(btn.dataset.idx), Number(btn.dataset.dir));
-      });
-    });
-    $$("[data-tier-del]", host).forEach((btn) => {
-      btn.addEventListener("click", () => {
-        removeUserTierModel(btn.dataset.tierDel, Number(btn.dataset.idx));
-      });
-    });
-    $$("[data-tier-select]", host).forEach((sel) => {
-      sel.addEventListener("change", () => {
-        if (sel.value) {
-          addUserTierModel(sel.dataset.tierSelect, sel.value);
-          sel.value = "";
-        }
-      });
-    });
-    $$("[data-tier-input]", host).forEach((inp) => {
-      inp.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          if (inp.value.trim()) {
-            addUserTierModel(inp.dataset.tierInput, inp.value.trim());
-            inp.value = "";
-          }
-        }
-      });
-    });
-    $$("[data-tier-add-btn]", host).forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const t = btn.dataset.tierAddBtn;
-        const inp = $(`[data-tier-input='${t}']`, host);
-        if (inp && inp.value.trim()) {
-          addUserTierModel(t, inp.value.trim());
-          inp.value = "";
-        }
-      });
-    });
-  }
-
-  function addUserTierModel(tier, rawModel) {
-    const vm = ($("#userRouterVirtualModel")?.value || "my-auto").trim();
-    const siteVM = state.routerView?.site_virtual_model || "auto";
-    const list = state.routerTiers[tier] || [];
-    const parts = String(rawModel || "").split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean);
-    parts.forEach((m) => {
-      if (m.toLowerCase() === vm.toLowerCase() || m.toLowerCase() === siteVM.toLowerCase()) {
-        toast(`候选模型不能包含路由虚拟模型 (${m})`);
-        return;
-      }
-      if (!list.includes(m)) list.push(m);
-    });
-    state.routerTiers[tier] = list;
-    renderUserTiersEditor();
-  }
-
-  function moveUserTierModel(tier, idx, dir) {
-    const list = state.routerTiers[tier] || [];
-    const target = idx + dir;
-    if (target < 0 || target >= list.length) return;
-    const tmp = list[idx];
-    list[idx] = list[target];
-    list[target] = tmp;
-    renderUserTiersEditor();
-  }
-
-  function removeUserTierModel(tier, idx) {
-    const list = state.routerTiers[tier] || [];
-    list.splice(idx, 1);
-    renderUserTiersEditor();
-  }
-
-  function autoFillUserTiers() {
-    const personalModels = Array.isArray(state.routerView?.personal_models) ? state.routerView.personal_models : [];
-    const siteModels = Array.isArray(state.routerView?.site_models) ? state.routerView.site_models : [];
-    const pool = Array.from(new Set([...personalModels, ...siteModels]));
-    if (!pool.length) {
-      toast("请先添加个人自带渠道或联系管理员绑定站点模型");
-      return;
-    }
-    const fast = pool.filter((m) => /flash|mini|haiku|lite|turbo|instant|nano/i.test(m));
-    const reason = pool.filter((m) => /reasoner|r1|o1|o3|o4|thinking|grok-4|opus/i.test(m));
-    const strong = pool.filter((m) => !fast.includes(m));
-
-    state.routerTiers.SIMPLE = (fast.length ? fast : pool).slice(0, 3);
-    state.routerTiers.MEDIUM = (fast.length ? [...fast, ...strong] : pool).slice(0, 3);
-    state.routerTiers.COMPLEX = (strong.length ? strong : pool).slice(0, 3);
-    state.routerTiers.REASONING = (reason.length ? reason : (strong.length ? strong : pool)).slice(0, 2);
-    if ($("#userRouterDefaultModel") && !$("#userRouterDefaultModel").value.trim()) {
-      $("#userRouterDefaultModel").value = state.routerTiers.COMPLEX[0] || pool[0] || "";
-    }
-    populateUserDefaultModelSelect();
-    renderUserTiersEditor();
-    toast("已按模型特征自动排布四档候选，请点击「保存路由策略」生效");
-  }
-
-  function clearUserTiersToAutonomous() {
-    USER_TIER_META.forEach(({ id }) => {
-      state.routerTiers[id] = [];
-    });
-    renderUserTiersEditor();
-    toast("已清空手动四档列表，私人路由将按 Smart Router 3.0 全自动模型池寻优");
+    const all = state.routerPool.length ? state.routerPool : collectUserAvailableModelList();
+    const excluded = new Set(state.routerExcluded.map((m) => m.toLowerCase()));
+    const models = all.filter((m) => !excluded.has(m.toLowerCase()) && !excluded.has(parseUserCandidateSpec(m).base.toLowerCase()));
+    host.innerHTML = `<p class="muted">统一候选池 · ${models.length} 个模型参与 · 不设手动档位或模型优先级</p>`
+      + models.map((m) => `<div class="user-cand-row"><span class="user-cand-name">${esc(m)}</span>${sourceBadgeForCandidate(m)}</div>`).join("");
   }
 
   function collectUserRouterPayload() {
@@ -1331,7 +1135,7 @@
       enabled: Boolean($("#userRouterEnabled")?.checked),
       virtual_model: ($("#userRouterVirtualModel")?.value || "my-auto").trim(),
       strategy_profile: $("#userRouterStrategyProfile")?.value || "balanced",
-      arena_mode: $("#userRouterArenaMode")?.value || state.routerView?.arena_mode || "shadow",
+      arena_mode: $("#userRouterArenaMode")?.value || state.routerView?.arena_mode || "live",
       speculative_cascade: $("#userRouterSpeculativeCascade") ? Boolean($("#userRouterSpeculativeCascade").checked) : true,
       channel_preference: $("#userRouterChannelPref")?.value || "personal_first",
       default_model: ($("#userRouterDefaultModel")?.value || "").trim(),
@@ -1343,8 +1147,10 @@
       user_cloudflare_account_id: ($("#userExternalCfAccount")?.value || "").trim(),
       user_classifier_endpoint: ($("#userExternalEndpoint")?.value || "").trim(),
       user_classifier_api_key: ($("#userExternalApiKey")?.value || "").trim(),
-      tiers: state.routerTiers,
-      tier_thinking: state.routerTierThinking,
+      model_pool: splitUserPoolInput($("#userRouterModelPool")?.value || ""),
+      excluded_models: splitUserPoolInput($("#userRouterExcludedModels")?.value || ""),
+      tiers: {},
+      cascade_tiers: false,
     };
   }
 
@@ -1390,7 +1196,7 @@
     }
     if (btn) btn.disabled = true;
     if (out) {
-      out.textContent = "正在试算分档与选模链路…";
+      out.textContent = "正在试算任务分析与选模链路…";
       out.classList.remove("hidden");
     }
     try {
@@ -1424,7 +1230,7 @@
               ${stText}
             </div>`;
           }).join("")
-        : `<div class="muted">当前档位未找到可用候选模型${data.quota_error ? ` (${esc(data.quota_error)})` : ""}</div>`;
+        : `<div class="muted">候选池中未找到可用模型${data.quota_error ? ` (${esc(data.quota_error)})` : ""}</div>`;
 
       if (out) {
         const domHint = dec.primary_domain ? ` · 领域: <code>${esc(dec.primary_domain)}</code>` : "";
@@ -1552,8 +1358,14 @@
       }
     });
     $("#userUpstreamClassifierModel")?.addEventListener("input", () => populateUserUpstreamClassifierModelSelect());
-    $("#clearUserTiersBtn")?.addEventListener("click", clearUserTiersToAutonomous);
-    $("#autoFillUserTiersBtn")?.addEventListener("click", autoFillUserTiers);
+    $("#userRouterModelPool")?.addEventListener("input", (e) => {
+      state.routerPool = splitUserPoolInput(e.target.value);
+      renderUserPoolEditor();
+    });
+    $("#userRouterExcludedModels")?.addEventListener("input", (e) => {
+      state.routerExcluded = splitUserPoolInput(e.target.value);
+      renderUserPoolEditor();
+    });
     $("#saveUserRouterBtn")?.addEventListener("click", saveUserRouter);
     $("#copyUserRouterCmdBtn")?.addEventListener("click", copyUserRouterCommand);
     $("#userDryRunBtn")?.addEventListener("click", runUserDryRun);

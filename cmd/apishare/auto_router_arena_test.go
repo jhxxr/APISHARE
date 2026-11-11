@@ -40,7 +40,7 @@ func arenaRoutingTestSetup(t *testing.T, models ...string) (*Upstream, arenaRout
 		t.Fatal(err)
 	}
 	opts := arenaRoutingOptions{Mode: "live", Strategy: StrategyQualityFirst, Format: FormatOpenAIChat,
-		BanditEnabled: true, ConfiguredOrder: arenaConfiguredOrder(models, nil)}
+		BanditEnabled: true}
 	cr := &canonReq{Model: "auto", Messages: []canonMsg{{Role: "user", Text: "hello"}}, MaxTokens: 1024, Stream: true}
 	demand := TaskDemandProfile{PrimaryDomain: DomainWritingKnowledge, RequiredDifficulty: 85, EquivalentTier: TierComplex}
 	return up, opts, cr, demand
@@ -396,7 +396,7 @@ func TestArenaRoutingDomainScaleAndGeneralFallback(t *testing.T) {
 	}
 }
 
-func TestArenaRoutingTaskFloorManualTiersAndSession(t *testing.T) {
+func TestArenaRoutingTaskFloorIgnoresLegacyTiersAndPreservesSession(t *testing.T) {
 	_, opts, cr, demand := arenaRoutingTestSetup(t, "bench-a", "bench-b")
 	arenaRoutingTestPrices(t, map[string]Price{"bench-a": {In: 10, Out: 40}, "bench-b": {In: 0.1, Out: 1}})
 	arenaRoutingTestSource(t, "text", arenaRoutingTestModel("Bench A", 1, 1500, 1490, 1510), arenaRoutingTestModel("Bench B", 2, 1400, 1390, 1410),
@@ -412,14 +412,12 @@ func TestArenaRoutingTaskFloorManualTiersAndSession(t *testing.T) {
 	if got := applyArenaRoutePolicy(d, []string{"bench-a", "bench-b"}, opts, cr, demand); got[0] != "bench-a" {
 		t.Fatal("hard task used relaxed simple-task floor")
 	}
-	opts.PreserveTiers = true
 	d = arenaRoutingTestDecision("bench-b", "bench-a")
 	d.Steps[0].SourceTier = TierSimple
 	d.Steps[1].SourceTier = TierReasoning
-	if got := applyArenaRoutePolicy(d, []string{"bench-b", "bench-a"}, opts, cr, demand); got[0] != "bench-b" {
-		t.Fatal("manual tier boundary bypassed")
+	if got := applyArenaRoutePolicy(d, []string{"bench-b", "bench-a"}, opts, cr, demand); got[0] != "bench-a" {
+		t.Fatal("obsolete manual tier blocked the strongest model")
 	}
-	opts.PreserveTiers = false
 	d = arenaRoutingTestDecision("bench-b", "bench-a")
 	d.Cause = "session_affinity"
 	d.SelectedModel = "bench-b"
@@ -520,13 +518,14 @@ func TestArenaRoutingModeAPIAndZeroExtraModelCalls(t *testing.T) {
 	cfg.Classifier = "heuristic"
 	cfg.ModelPool = []string{"bench-a", "bench-b"}
 	cfg.Tiers[TierSimple] = []string{"bench-a", "bench-b"}
+	cfg.ArenaMode = "shadow" // Observation is explicitly selected, never a mandatory launch phase.
 	cfg.StrategyProfile = StrategyQualityFirst
 	cfg.BanditEnabled = false
 	if err := saveAutoRouterConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
 	if getAutoRouterConfig().ArenaMode != "shadow" {
-		t.Fatal("default mode must not change transfers")
+		t.Fatal("explicit observation mode must remain available")
 	}
 	r := gin.New()
 	ak := ApiKey{Models: "auto,bench-a,bench-b"}

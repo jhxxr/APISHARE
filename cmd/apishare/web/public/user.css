@@ -130,6 +130,7 @@ body {
 }
 .user-dashboard { display: flex; flex-direction: column; gap: 20px; }
 .user-card {
+  min-width: 0;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -607,6 +608,7 @@ body {
   gap: 12px;
 }
 .user-field {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -620,6 +622,9 @@ body {
 .user-field input,
 .user-field select,
 .user-field textarea {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 35px;
   padding: 6px 10px;
   border-radius: 8px;
@@ -700,6 +705,10 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+#userModelPoolPreview {
+  max-height: 320px;
+  overflow-y: auto;
 }
 .user-cand-row {
   display: flex;
@@ -882,7 +891,7 @@ body {
   .user-hero-grid,
   .user-mid-grid,
   .user-router-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
