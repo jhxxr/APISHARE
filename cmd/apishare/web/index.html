@@ -400,13 +400,14 @@
                   <input id="routerSpeculativeCascade" type="checkbox" class="switch-input" checked onchange="if(routerDraft){routerDraft.speculative_cascade=this.checked;}markRouterDirty(true)"><span class="switch-track"></span>
                 </label>
 
+                <div id="routerManualOrderContainer" style="margin-top:12px"></div>
                 <div id="routerAutonomousPoolContainer" style="margin-top:12px"></div>
                 <div id="routerBanditLeaderboardBox" style="margin-top:10px"></div>
 
                 <label class="field" style="margin-top:14px">
                   <span>参与选模的模型池 <span class="optional">可选</span></span>
                   <textarea id="routerModelPool" rows="3" spellcheck="false" placeholder="留空使用全部已绑定模型；指定时每行一个模型，例如 model(high,128k)" oninput="updateRouterModelPool(this.value)"></textarea>
-                  <small>这是候选集合，不是优先级列表。旧四档模型会自动合并到此处；留空可恢复全部模型参与。榜单缺失时只走已配置兜底或稳定顺序，不虚构评分。</small>
+                  <small>这是候选集合，不是优先级列表：先后顺序请在“手动优先级”里调整。旧四档模型会自动合并到此处；留空可恢复全部模型参与。榜单缺失时只走已配置兜底或稳定顺序，不虚构评分。</small>
                 </label>
 
                 <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border,#e5e3df)">

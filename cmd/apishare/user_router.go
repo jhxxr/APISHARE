@@ -34,6 +34,7 @@ type UserAutoRouterConfig struct {
 	StrategyProfile         string              `json:"strategy_profile"` // "balanced" | "quality_first" | "cost_first" | "latency_first"
 	ArenaMode               string              `json:"arena_mode"`
 	ModelPool               []string            `json:"model_pool,omitempty"`
+	ModelOrder              []string            `json:"model_order,omitempty"` // manual priority inside a quality band
 	ExcludedModels          []string            `json:"excluded_models,omitempty"`
 	BanditEnabled           bool                `json:"bandit_enabled"`
 	SpeculativeCascade      bool                `json:"speculative_cascade"`
@@ -100,6 +101,7 @@ func defaultUserAutoRouterConfig() UserAutoRouterConfig {
 func cloneUserAutoRouterConfig(src UserAutoRouterConfig) UserAutoRouterConfig {
 	dst := src
 	dst.ModelPool = append([]string(nil), src.ModelPool...)
+	dst.ModelOrder = append([]string(nil), src.ModelOrder...)
 	dst.ExcludedModels = append([]string(nil), src.ExcludedModels...)
 	dst.Tiers = make(map[string][]string, len(src.Tiers))
 	for k, v := range src.Tiers {
@@ -579,6 +581,15 @@ func normalizeUserAutoRouterConfig(sub string, ucfg *UserAutoRouterConfig, stric
 	}
 	ucfg.ModelPool = cleanPool
 	ucfg.ExcludedModels = normalizeModelSlice(ucfg.ExcludedModels)
+	excludedFromPool := routerModelExclusionFilter(ucfg.ExcludedModels)
+	manual := make([]string, 0, len(ucfg.ModelOrder))
+	for _, m := range normalizeModelSlice(ucfg.ModelOrder) {
+		if strings.EqualFold(m, ucfg.VirtualModel) || strings.EqualFold(parseRouterModelSpec(m).BaseModel, ucfg.VirtualModel) || excludedFromPool(m) {
+			continue
+		}
+		manual = append(manual, m)
+	}
+	ucfg.ModelOrder = manual
 
 	ucfg.DefaultModel = strings.TrimSpace(ucfg.DefaultModel)
 	if (strings.EqualFold(ucfg.DefaultModel, ucfg.VirtualModel) || strings.EqualFold(parseRouterModelSpec(ucfg.DefaultModel).BaseModel, ucfg.VirtualModel)) && ucfg.DefaultModel != "" {
@@ -1411,6 +1422,7 @@ func resolveUserAutoRouteWithConfig(ctx context.Context, sub string, ucfg UserAu
 		TierThinking: ucfg.TierThinking, UserSub: sub, Targets: targetByModel,
 		BanditEnabled: ucfg.BanditEnabled,
 		Format:        format, NativeOnly: nativeOnly, PreviousModel: prevSessionModel,
+		ModelOrder: ucfg.ModelOrder,
 	}, cr, demand)
 	targets = targets[:0]
 	for _, model := range models {
@@ -1953,6 +1965,7 @@ func buildUserAutoRouterView(ctx context.Context, sub string, ak ApiKey) gin.H {
 		"strategy_profile":                 normalizeStrategyProfile(ucfg.StrategyProfile),
 		"arena_mode":                       ucfg.ArenaMode,
 		"model_pool":                       ucfg.ModelPool,
+		"model_order":                      ucfg.ModelOrder,
 		"excluded_models":                  ucfg.ExcludedModels,
 		"bandit_enabled":                   ucfg.BanditEnabled,
 		"speculative_cascade":              ucfg.SpeculativeCascade,
@@ -2409,6 +2422,7 @@ func registerUserRouterRoutes(userAPI *gin.RouterGroup) {
 			StrategyProfile         *string              `json:"strategy_profile"`
 			ArenaMode               *string              `json:"arena_mode"`
 			ModelPool               *[]string            `json:"model_pool"`
+			ModelOrder              *[]string            `json:"model_order"`
 			ExcludedModels          *[]string            `json:"excluded_models"`
 			BanditEnabled           *bool                `json:"bandit_enabled"`
 			SpeculativeCascade      *bool                `json:"speculative_cascade"`
@@ -2452,6 +2466,9 @@ func registerUserRouterRoutes(userAPI *gin.RouterGroup) {
 		}
 		if req.ModelPool != nil {
 			ucfg.ModelPool = *req.ModelPool
+		}
+		if req.ModelOrder != nil {
+			ucfg.ModelOrder = *req.ModelOrder
 		}
 		if req.ExcludedModels != nil {
 			ucfg.ExcludedModels = *req.ExcludedModels

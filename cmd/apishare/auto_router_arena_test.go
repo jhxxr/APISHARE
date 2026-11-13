@@ -301,14 +301,18 @@ func TestArenaRoutingVariantsAliasesAndAmbiguousMappings(t *testing.T) {
 	arenaRoutingTestSource(t, "text", arenaRoutingTestModel("GPT-5.2 (High)", 1, 1500, 1490, 1510), arenaRoutingTestModel("GPT-5.2-skyhigh", 2, 1495, 1485, 1505))
 	d := arenaRoutingTestDecision("gpt-5.2")
 	applyArenaRoutePolicy(d, []string{"gpt-5.2"}, opts, cr, demand)
-	if d.Steps[0].Arena.Status == "matched" {
-		t.Fatal("plain provider default borrowed High score")
+	// The board only publishes (High). A plain provider default may use it as a
+	// clearly-labelled conservative prior, never as its own measurement.
+	if e := d.Steps[0].Arena; e.Status != "thinking_variant_reference" || !e.ThinkingVariantInferred ||
+		e.Score == nil || e.SourceModel != "GPT-5.2 (High)" {
+		t.Fatalf("plain provider default was not given a labelled variant prior: %+v", e)
 	}
+	// And it must not overtake a candidate that really was measured.
 	opts.TierThinking = map[string]string{TierComplex: "high"}
 	d = arenaRoutingTestDecision("gpt-5.2")
 	applyArenaRoutePolicy(d, []string{"gpt-5.2"}, opts, cr, demand)
-	if d.Steps[0].Arena.Status != "matched" {
-		t.Fatalf("resolved High variant did not match: %+v", d.Steps[0].Arena)
+	if e := d.Steps[0].Arena; e.Status != "matched" || e.ThinkingVariantInferred {
+		t.Fatalf("resolved High variant did not match: %+v", e)
 	}
 	d = arenaRoutingTestDecision("gpt-5.2-skyhigh")
 	applyArenaRoutePolicy(d, []string{"gpt-5.2-skyhigh"}, opts, cr, demand)
@@ -335,10 +339,31 @@ func TestArenaRoutingVariantsAliasesAndAmbiguousMappings(t *testing.T) {
 	if err := dbInsertUpstream(&Upstream{Name: "other-target", Type: "openai", BaseURL: "http://127.0.0.1:9998", Models: "public-alias", ModelMap: `{"public-alias":"bench-b"}`, Weight: 1, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
+	otherID := int64(0)
+	if rows, err := db.Query(`SELECT id FROM upstreams WHERE name = ?`, "other-target"); err == nil {
+		for rows.Next() {
+			_ = rows.Scan(&otherID)
+		}
+		rows.Close()
+	}
+	// Two channels publish different wire names for one candidate. The score
+	// follows the primary channel and the divergence is reported, instead of
+	// discarding an otherwise measurable candidate.
 	d = arenaRoutingTestDecision("public-alias")
 	applyArenaRoutePolicy(d, []string{"public-alias"}, opts, cr, demand)
-	if d.Steps[0].Arena.Status != "ambiguous_upstream_mapping" {
-		t.Fatalf("mixed wire aliases chose best score: %+v", d.Steps[0].Arena)
+	if e := d.Steps[0].Arena; e.Identity != "bench-a" || e.Status != "matched" || !e.IdentityConflict {
+		t.Fatalf("score did not follow the primary channel: %+v", e)
+	}
+	// Promotion of the other channel moves the identity with it; that channel's
+	// alias has no usable measurement, so the candidate must not inherit Bench A.
+	if _, err := db.Exec(`UPDATE upstreams SET priority=-1 WHERE id=?`, otherID); err != nil {
+		t.Fatal(err)
+	}
+	invalidateRoutingSnapshot()
+	d = arenaRoutingTestDecision("public-alias")
+	applyArenaRoutePolicy(d, []string{"public-alias"}, opts, cr, demand)
+	if e := d.Steps[0].Arena; e.Identity != "bench-b" || e.Status == "matched" {
+		t.Fatalf("promoted channel did not own the identity: %+v", e)
 	}
 }
 
@@ -423,6 +448,55 @@ func TestArenaRoutingTaskFloorIgnoresLegacyTiersAndPreservesSession(t *testing.T
 	d.SelectedModel = "bench-b"
 	if got := applyArenaRoutePolicy(d, []string{"bench-b", "bench-a"}, opts, cr, demand); got[0] != "bench-b" || d.Arena.Reason != "session_affinity_preserved" {
 		t.Fatal("active session affinity lost")
+	}
+}
+
+func TestArenaRoutingManualPriorityDoesNotLabelPreservedSession(t *testing.T) {
+	models := []string{"bench-a", "bench-b"}
+	_, opts, cr, demand := arenaRoutingTestSetup(t, models...)
+	opts.Strategy = StrategyQualityFirst
+	opts.ModelOrder = []string{"bench-b", "bench-a"}
+	arenaRoutingTestSource(t, "text",
+		arenaRoutingTestModel("Bench A", 1, 1500, 1490, 1510),
+		arenaRoutingTestModel("Bench B", 2, 1400, 1390, 1410))
+	d := arenaRoutingTestDecision(models...)
+	d.Cause = "session_affinity"
+	d.SelectedModel = "bench-a"
+	if got := applyArenaRoutePolicy(d, models, opts, cr, demand); got[0] != "bench-a" {
+		t.Fatalf("session affinity not preserved: %v", got)
+	}
+	if d.Arena.Reason != "session_affinity_preserved" {
+		t.Fatalf("evidence labels leaked onto a preserved session: %q", d.Arena.Reason)
+	}
+	if d.Arena.ManualPriority || d.Arena.ScoreInferred || d.Arena.VersionReference {
+		t.Fatalf("preserved session carried evidence flags: %+v", d.Arena)
+	}
+}
+
+func TestAutoRouterConfigCloneKeepsManualOrder(t *testing.T) {
+	src := defaultAutoRouterConfig()
+	src.ModelOrder = []string{"glm-5.3", "deepseek-v4-flash"}
+	dst := cloneAutoRouterConfig(src)
+	if len(dst.ModelOrder) != len(src.ModelOrder) || dst.ModelOrder[0] != "glm-5.3" {
+		t.Fatalf("manual order lost on clone: %v", dst.ModelOrder)
+	}
+	// The clone must own its slice, so later edits cannot mutate the source.
+	dst.ModelOrder[0] = "changed"
+	if src.ModelOrder[0] != "glm-5.3" {
+		t.Fatal("clone shares the manual order slice with its source")
+	}
+}
+
+func TestUserAutoRouterConfigCloneKeepsManualOrder(t *testing.T) {
+	src := defaultUserAutoRouterConfig()
+	src.ModelOrder = []string{"glm-5.3"}
+	dst := cloneUserAutoRouterConfig(src)
+	if len(dst.ModelOrder) != 1 || dst.ModelOrder[0] != "glm-5.3" {
+		t.Fatalf("manual order lost on user clone: %v", dst.ModelOrder)
+	}
+	dst.ModelOrder[0] = "changed"
+	if src.ModelOrder[0] != "glm-5.3" {
+		t.Fatal("user clone shares the manual order slice with its source")
 	}
 }
 
@@ -555,5 +629,238 @@ func TestArenaRoutingModeAPIAndZeroExtraModelCalls(t *testing.T) {
 	ucfg.ArenaMode = "LIVE"
 	if err := saveUserAutoRouterConfig("owner", ucfg); err != nil || getUserAutoRouterConfig("owner").ArenaMode != "live" {
 		t.Fatalf("personal mode did not persist: %v", err)
+	}
+}
+
+func TestArenaRoutingSimpleTaskTradesScoreForPrice(t *testing.T) {
+	models := []string{"strong-pricier", "cheap-slower"}
+	_, opts, cr, demand := arenaRoutingTestSetup(t, models...)
+	opts.Strategy = StrategyBalanced
+	arenaRoutingTestSource(t, "text",
+		arenaRoutingTestModel("Strong Pricier", 1, 1500, 1490, 1510),
+		arenaRoutingTestModel("Cheap Slower", 2, 1480, 1470, 1490),
+		arenaRoutingTestModel("Filler A", 3, 1240, 1230, 1250),
+		arenaRoutingTestModel("Filler B", 4, 1230, 1220, 1240),
+		arenaRoutingTestModel("Filler C", 5, 1220, 1210, 1230))
+	snapshot, _, _ := getArenaSnapshot(db, "text")
+	plans := func() []*arenaRoutePlan {
+		p := prepareArenaPlans(arenaRoutingTestDecision(models...), models, opts, cr, demand)
+		assignArenaEvidence(p, snapshot, time.Now())
+		strongCost, cheapCost := 0.02, 0.002
+		strongMS, cheapMS := 800.0, 2000.0
+		p[0].evidence.ComparisonCost, p[0].evidence.ResponseMS = &strongCost, &strongMS
+		p[1].evidence.ComparisonCost, p[1].evidence.ResponseMS = &cheapCost, &cheapMS
+		return p
+	}
+	simple := demand
+	simple.RequiredDifficulty, simple.EquivalentTier = 20, TierSimple
+	floor, policy := arenaTaskQualityFloor(snapshot, simple, opts.Strategy)
+	if policy != "source_median_for_simple" {
+		t.Fatalf("simple task did not get the median floor: %s", policy)
+	}
+	if got := orderArenaSegment(plans(), opts, floor, arenaSimpleTask(simple), simple.EquivalentTier); got[0].model != "cheap-slower" {
+		t.Fatalf("simple task did not trade surplus quality for price: %v", got[0].model)
+	}
+	// A medium task keeps the quality preference: both candidates are on the
+	// Pareto front (cheaper/slower vs pricier/faster), so score decides.
+	medium := demand
+	medium.RequiredDifficulty, medium.EquivalentTier = 45, TierMedium
+	floor, _ = arenaTaskQualityFloor(snapshot, medium, opts.Strategy)
+	if got := orderArenaSegment(plans(), opts, floor, arenaSimpleTask(medium), medium.EquivalentTier); got[0].model != "strong-pricier" {
+		t.Fatalf("medium task abandoned quality order: %v", got[0].model)
+	}
+}
+
+func TestArenaRoutingUnknownTailFollowsEvidenceNotAlphabet(t *testing.T) {
+	models := []string{"aaa-expensive", "zzz-reliable", "mmm-tier-fit"}
+	_, opts, cr, demand := arenaRoutingTestSetup(t, models...)
+	arenaRoutingTestSource(t, "text", arenaRoutingTestModel("Filler", 1, 1500, 1490, 1510))
+	demand.RequiredDifficulty, demand.EquivalentTier = 85, TierReasoning
+	p := prepareArenaPlans(arenaRoutingTestDecision(models...), models, opts, cr, demand)
+	snapshot, _, _ := getArenaSnapshot(db, "text")
+	assignArenaEvidence(p, snapshot, time.Now())
+	for _, plan := range p {
+		if plan.trusted {
+			t.Fatalf("unexpected benchmark match for %s", plan.model)
+		}
+	}
+	expensive, cheap := 0.05, 0.001
+	reliable, flaky := 0.97, 0.2
+	p[0].evidence.ComparisonCost = &expensive
+	p[1].evidence.RecentService, p[1].evidence.ComparisonCost = &reliable, &cheap
+	p[2].evidence.RecentService, p[2].evidence.ComparisonCost = &flaky, &cheap
+	p[2].tier = TierReasoning
+	if got := orderArenaSegment(p, opts, nil, false, demand.EquivalentTier); got[0].model != "zzz-reliable" {
+		t.Fatalf("observed reliability did not lead the unmatched tail: %v", got[0].model)
+	} else if got[len(got)-1].model != "mmm-tier-fit" && got[len(got)-1].model != "aaa-expensive" {
+		t.Fatalf("unexpected tail: %v", got[len(got)-1].model)
+	}
+}
+
+func TestArenaRoutingManualPriorityOrdersWithinABand(t *testing.T) {
+	models := []string{"bench-strong", "bench-twin", "bench-lower"}
+	_, opts, cr, demand := arenaRoutingTestSetup(t, models...)
+	arenaRoutingTestSource(t, "text",
+		arenaRoutingTestModel("Bench Strong", 1, 1500, 1490, 1510),
+		arenaRoutingTestModel("Bench Twin", 2, 1497, 1487, 1507),
+		arenaRoutingTestModel("Bench Lower", 3, 1300, 1290, 1310))
+	d := arenaRoutingTestDecision(models...)
+	if got := applyArenaRoutePolicy(d, models, opts, cr, demand); got[0] != "bench-strong" {
+		t.Fatalf("automatic order did not prefer the measured leader: %v", got)
+	}
+	// The operator lists the lower-band model first: it may reorder the tied band
+	// but must never lift a weaker candidate over a stronger measured band.
+	opts.ModelOrder = []string{"bench-lower", "bench-twin"}
+	d = arenaRoutingTestDecision(models...)
+	got := applyArenaRoutePolicy(d, models, opts, cr, demand)
+	if got[0] != "bench-twin" {
+		t.Fatalf("manual priority did not order the quality band: %v", got)
+	}
+	if got[len(got)-1] != "bench-lower" {
+		t.Fatalf("manual priority crossed a quality band: %v", got)
+	}
+	if !d.Arena.ManualPriority || !strings.Contains(d.Arena.Reason, "manual_priority") {
+		t.Fatalf("manual priority was not reported: %+v", d.Arena)
+	}
+}
+
+func TestArenaRoutingManualPriorityPrecedesBalancedParetoWithinBand(t *testing.T) {
+	models := []string{"preferred", "cheap-fast"}
+	_, opts, cr, demand := arenaRoutingTestSetup(t, models...)
+	opts.Strategy = StrategyBalanced
+	opts.ModelOrder = []string{"preferred"}
+	arenaRoutingTestSource(t, "text",
+		arenaRoutingTestModel("Preferred", 1, 1500, 1490, 1510),
+		arenaRoutingTestModel("Cheap Fast", 2, 1497, 1487, 1507))
+	snapshot, _, _ := getArenaSnapshot(db, "text")
+	plans := prepareArenaPlans(arenaRoutingTestDecision(models...), models, opts, cr, demand)
+	assignArenaEvidence(plans, snapshot, time.Now())
+	preferredCost, preferredMS := 0.02, 800.0
+	cheapCost, cheapMS := 0.002, 200.0
+	plans[0].evidence.ComparisonCost, plans[0].evidence.ResponseMS = &preferredCost, &preferredMS
+	plans[1].evidence.ComparisonCost, plans[1].evidence.ResponseMS = &cheapCost, &cheapMS
+	got := orderArenaSegment(plans, opts, nil, false, demand.EquivalentTier)
+	if got[0].model != "preferred" {
+		t.Fatalf("balanced Pareto ordering overrode manual priority within a band: %v", got)
+	}
+}
+
+func TestArenaRoutingManualPriorityCannotCrossTaskFloorBands(t *testing.T) {
+	models := []string{"leader", "floor-model"}
+	_, opts, cr, demand := arenaRoutingTestSetup(t, models...)
+	opts.Strategy = StrategyBalanced
+	opts.ModelOrder = []string{"floor-model"}
+	arenaRoutingTestSource(t, "text",
+		arenaRoutingTestModel("Leader", 1, 1500, 1490, 1510),
+		arenaRoutingTestModel("Floor Model", 2, 1400, 1390, 1410),
+		arenaRoutingTestModel("Filler A", 3, 1200, 1190, 1210),
+		arenaRoutingTestModel("Filler B", 4, 1100, 1090, 1110),
+		arenaRoutingTestModel("Filler C", 5, 1000, 990, 1010))
+	demand.RequiredDifficulty, demand.EquivalentTier = 45, TierMedium
+	snapshot, _, _ := getArenaSnapshot(db, "text")
+	floor, _ := arenaTaskQualityFloor(snapshot, demand, opts.Strategy)
+	if floor == nil || *floor != 1400 {
+		t.Fatalf("unexpected test floor: %v", floor)
+	}
+	plans := prepareArenaPlans(arenaRoutingTestDecision(models...), models, opts, cr, demand)
+	assignArenaEvidence(plans, snapshot, time.Now())
+	got := orderArenaSegment(plans, opts, floor, false, demand.EquivalentTier)
+	if got[0].model != "leader" {
+		t.Fatalf("manual priority crossed distinct measured bands above floor: %v", got)
+	}
+	if got[0].evidence.QualityGroup == nil || got[1].evidence.QualityGroup == nil || *got[0].evidence.QualityGroup == *got[1].evidence.QualityGroup {
+		t.Fatalf("distinct quality bands were incorrectly merged: %v / %v", got[0].evidence.QualityGroup, got[1].evidence.QualityGroup)
+	}
+}
+
+func TestArenaManualRankPrefersExactVariantBeforeBaseFallback(t *testing.T) {
+	order := []string{"glm-5.3(high)", "glm-5.3"}
+	if got := arenaManualRank(order, "glm-5.3(high)"); got != 0 {
+		t.Fatalf("variant got rank %d, want exact rank 0", got)
+	}
+	if got := arenaManualRank(order, "glm-5.3"); got != 1 {
+		t.Fatalf("base model got rank %d, want exact rank 1", got)
+	}
+}
+
+func TestArenaRoutingManualPriorityOrdersUnknownTail(t *testing.T) {
+	models := []string{"aaa-unmeasured", "zzz-unmeasured"}
+	_, opts, cr, demand := arenaRoutingTestSetup(t, models...)
+	arenaRoutingTestSource(t, "text", arenaRoutingTestModel("Filler", 1, 1500, 1490, 1510))
+	d := arenaRoutingTestDecision(models...)
+	if got := applyArenaRoutePolicy(d, models, opts, cr, demand); got[0] != "aaa-unmeasured" {
+		t.Fatalf("unexpected automatic tail order: %v", got)
+	}
+	opts.ModelOrder = []string{"zzz-unmeasured"}
+	d = arenaRoutingTestDecision(models...)
+	if got := applyArenaRoutePolicy(d, models, opts, cr, demand); got[0] != "zzz-unmeasured" {
+		t.Fatalf("manual priority did not order the unmeasured tail: %v", got)
+	}
+}
+
+func TestAutoRouterManualModelOrderNormalizedAndPersisted(t *testing.T) {
+	setupAutoRouterTestDB(t)
+	cfg := defaultAutoRouterConfig()
+	cfg.Enabled, cfg.Mode = true, "live"
+	cfg.VirtualModel, cfg.ModelPool, cfg.DefaultModel = "auto", []string{"a", "b"}, "a"
+	cfg.ModelOrder = []string{" b ", "a", "b", "auto", "auto(high)"}
+	if err := normalizeAutoRouterConfig(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.ModelOrder) != 2 || cfg.ModelOrder[0] != "b" || cfg.ModelOrder[1] != "a" {
+		t.Fatalf("manual order was not normalized: %v", cfg.ModelOrder)
+	}
+	if err := saveAutoRouterConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if stored := getAutoRouterConfig().ModelOrder; len(stored) != 2 || stored[0] != "b" {
+		t.Fatalf("manual order did not persist: %v", stored)
+	}
+	ucfg := defaultUserAutoRouterConfig()
+	ucfg.Enabled, ucfg.VirtualModel = true, "my-auto"
+	ucfg.ModelOrder = []string{"x", "my-auto", "x"}
+	if err := normalizeUserAutoRouterConfig("owner", &ucfg, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(ucfg.ModelOrder) != 1 || ucfg.ModelOrder[0] != "x" {
+		t.Fatalf("personal manual order was not normalized: %v", ucfg.ModelOrder)
+	}
+}
+
+func TestAutoRouterManualModelOrderAdminAPIRoundTrip(t *testing.T) {
+	setupAutoRouterTestDB(t)
+	r := gin.New()
+	registerAutoRouterAdminRoutes(r.Group("/api"))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/api/auto-router/config",
+		strings.NewReader(`{"model_pool":["bench-a","bench-b"],"model_order":["bench-b","bench-a"]}`)))
+	if w.Code != 200 {
+		t.Fatalf("manual order rejected: %d / %s", w.Code, w.Body)
+	}
+	cfg := getAutoRouterConfig()
+	if len(cfg.ModelOrder) != 2 || cfg.ModelOrder[0] != "bench-b" {
+		t.Fatalf("manual order not stored: %v", cfg.ModelOrder)
+	}
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/auto-router/config", nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"manual_order"`) && !strings.Contains(w.Body.String(), `"model_order"`) {
+		t.Fatalf("manual order missing from config response: %d / %s", w.Code, w.Body)
+	}
+}
+
+func TestAutoRouterManualModelOrderDropsExcludedAndVirtual(t *testing.T) {
+	setupAutoRouterTestDB(t)
+	cfg := defaultAutoRouterConfig()
+	cfg.Enabled, cfg.Mode = true, "live"
+	cfg.VirtualModel = "auto"
+	cfg.ModelPool = []string{"a", "b", "c"}
+	cfg.ExcludedModels = []string{"c"}
+	cfg.DefaultModel = "a"
+	cfg.ModelOrder = []string{"c", "auto", "a(high)"}
+	if err := normalizeAutoRouterConfig(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.ModelOrder) != 1 || cfg.ModelOrder[0] != "a(high)" {
+		t.Fatalf("an unrankable model stayed in the manual order: %v", cfg.ModelOrder)
 	}
 }

@@ -361,6 +361,12 @@
             </div>
             <div id="userModelPoolPreview" class="user-cand-list"></div>
 
+            <label class="user-field" style="margin-top:10px;display:block">
+              <span>手动优先级（可选）</span>
+              <textarea id="userRouterModelOrder" rows="3" placeholder="每行一个，从上到下即优先级；留空则完全按榜单与策略自动排序"></textarea>
+              <small>只在同一个榜单质量带内生效，或决定“无榜单证据”候选的先后；不会让更弱的模型越过实测更强的一档。候选池之外的模型仍自动排序。</small>
+            </label>
+
             <div class="user-dryrun-box">
               <div class="user-dryrun-head">
                 <strong>任务分析与选模试算 (Dry-Run)</strong>

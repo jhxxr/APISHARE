@@ -73,7 +73,7 @@ func TestArenaVersionReferenceRemainsStrategyAwareAndShadowOnlyWhenRequested(t *
 	assignArenaEvidence(plans, snapshot, time.Now())
 	oldCost, newCost := 0.001, 0.01
 	plans[0].evidence.ComparisonCost, plans[1].evidence.ComparisonCost = &oldCost, &newCost
-	if got := orderArenaSegment(plans, opts, nil); got[0].model != old {
+	if got := orderArenaSegment(plans, opts, nil, false, ""); got[0].model != old {
 		t.Fatal("version preference overrode cheaper model within the accepted group")
 	}
 	opts.Strategy, opts.Mode = StrategyQualityFirst, "shadow"

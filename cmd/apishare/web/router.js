@@ -76,6 +76,7 @@ function cloneRouterDraftFromConfig(cfg) {
     bandit_enabled: cfg.bandit_enabled !== false,
     speculative_cascade: cfg.speculative_cascade !== false,
     model_pool: [...new Set([...(cfg.model_pool || []), ...Object.values(tiers).flat()])].sort(),
+    model_order: Array.isArray(cfg.model_order) ? [...cfg.model_order] : [],
     excluded_models: Array.isArray(cfg.excluded_models) ? [...cfg.excluded_models] : [],
     model_capabilities: cfg.model_capabilities ? { ...cfg.model_capabilities } : {},
     classifier: cfg.classifier || "cloudflare",
@@ -531,6 +532,7 @@ function splitRouterPoolInput(raw) {
 function updateRouterModelPool(value) {
   if (!routerDraft) return;
   routerDraft.model_pool = splitRouterPoolInput(value);
+  pruneRouterManualOrderToEligible();
   renderRouterAutonomousPoolEditor();
   markRouterDirty(true);
 }
@@ -693,6 +695,10 @@ function toggleExcludeAutonomousModel(model) {
   } else {
     routerDraft.excluded_models.push(model);
   }
+  // Excluded models cannot be ranked, so drop them from the manual order too.
+  if (Array.isArray(routerDraft.model_order) && routerDraft.excluded_models.some(matches)) {
+    routerDraft.model_order = routerDraft.model_order.filter((m) => !matches(m));
+  }
   renderRouterAutonomousPoolEditor();
   markRouterDirty(true);
 }
@@ -742,7 +748,8 @@ function renderRouterAutonomousPoolEditor() {
   const allModels = routerDraft.model_pool?.length ? [...routerDraft.model_pool] : availableGatewayModelOptions();
   const excludedSet = new Set((routerDraft.excluded_models || []).map((m) => m.toLowerCase()));
   const isExcluded = (m) => excludedSet.has(m.toLowerCase()) || excludedSet.has(parseRouterCandidateSpecJS(m).base.toLowerCase());
-  const modePill = '<span class="badge on">统一候选池 · 无手动优先级</span>';
+  const manualCount = (routerDraft.model_order || []).filter((m) => allModels.some((a) => String(a).toLowerCase() === String(m).toLowerCase())).length;
+  const modePill = '<span class="badge on">统一候选池 · ' + (manualCount ? '手动优先级 ' + manualCount + ' 项' : '无手动优先级') + '</span>';
 
   if (!allModels.length) {
     box.innerHTML = '<div class="router-candidate-empty" style="border-style:dashed">'
@@ -771,7 +778,7 @@ function renderRouterAutonomousPoolEditor() {
 
     box.innerHTML = '<div class="router-tier-card">'
       + '<div class="router-tier-header">'
-      + '<div class="router-tier-title"><strong>自治候选模型池 (' + activeCount + ' / ' + allModels.length + ' 可用)</strong><small class="muted">只控制模型是否参与；列表顺序不是优先级。榜单证据见试运行明细</small></div>'
+      + '<div class="router-tier-title"><strong>自治候选模型池 (' + activeCount + ' / ' + allModels.length + ' 可用)</strong><small class="muted">只控制模型是否参与；优先级请在上方的“手动优先级”里排序。榜单证据见试运行明细</small></div>'
       + modePill
       + '</div>'
       + '<div class="router-candidate-list" style="max-height:290px;overflow-y:auto">' + rows + '</div>'
@@ -780,6 +787,7 @@ function renderRouterAutonomousPoolEditor() {
       button.addEventListener("click", () => toggleExcludeAutonomousModel(button.dataset.routerExclude));
     });
   }
+  renderRouterManualOrderEditor();
 
   if (lbBox) {
     const lb = Array.isArray(routerConfigCache?.bandit_leaderboard) ? routerConfigCache.bandit_leaderboard : [];
@@ -803,6 +811,112 @@ function renderRouterAutonomousPoolEditor() {
         + '</div>';
     }
   }
+}
+
+// Manual priority: the operator's own order, applied only inside one benchmark
+// quality band (or to candidates that have no evidence at all). It never lifts a
+// model above a band with stronger measured quality.
+function routerManualOrderEligible() {
+  if (!routerDraft) return [];
+  const pool = routerDraft.model_pool?.length ? [...routerDraft.model_pool] : availableGatewayModelOptions();
+  const excluded = new Set((routerDraft.excluded_models || []).map((m) => m.toLowerCase()));
+  const seen = new Set();
+  return pool.filter((m) => {
+    const base = parseRouterCandidateSpecJS(m).base.toLowerCase();
+    if (excluded.has(m.toLowerCase()) || excluded.has(base) || seen.has(m.toLowerCase())) return false;
+    seen.add(m.toLowerCase());
+    return true;
+  });
+}
+
+function renderRouterManualOrderEditor() {
+  const box = $("routerManualOrderContainer");
+  if (!box || !routerDraft) return;
+  const eligible = routerManualOrderEligible();
+  const eligibleByKey = new Map(eligible.map((m) => [m.toLowerCase(), m]));
+  routerDraft.model_order = (routerDraft.model_order || [])
+    .map((m) => eligibleByKey.get(String(m).toLowerCase()))
+    .filter(Boolean);
+  const order = routerDraft.model_order;
+  const remaining = eligible.filter((m) => !order.some((o) => o.toLowerCase() === m.toLowerCase()));
+
+  const rows = order.map((m, i) => {
+    const spec = parseRouterCandidateSpecJS(m);
+    return '<div class="router-candidate-item">'
+      + '<div class="router-candidate-main">'
+      + '<span class="badge on" style="font-size:10px;min-width:20px;text-align:center">' + (i + 1) + '</span>'
+      + modelIcon(spec.base)
+      + '<span class="router-candidate-name" title="' + esc(m) + '">' + esc(m) + '</span>'
+      + '</div>'
+      + '<div class="router-candidate-meta">'
+      + '<button type="button" class="btn mini ghost" style="padding:2px 7px;font-size:11px" data-order-up="' + esc(m) + '"' + (i === 0 ? ' disabled' : '') + '>▲</button>'
+      + '<button type="button" class="btn mini ghost" style="padding:2px 7px;font-size:11px" data-order-down="' + esc(m) + '"' + (i === order.length - 1 ? ' disabled' : '') + '>▼</button>'
+      + '<button type="button" class="btn mini ghost" style="padding:2px 8px;font-size:11px" data-order-remove="' + esc(m) + '">移出</button>'
+      + '</div></div>';
+  }).join("");
+
+  const addOptions = remaining.map((m) => '<option value="' + esc(m) + '">' + esc(m) + '</option>').join("");
+  box.innerHTML = '<div class="router-tier-card">'
+    + '<div class="router-tier-header">'
+    + '<div class="router-tier-title"><strong>手动优先级 (' + order.length + ' 项)</strong>'
+    + '<small class="muted">只在同一个榜单质量带内生效，或决定“无榜单证据”候选的先后；不会让更弱的模型越过实测更强的一档。未列入的模型仍按榜单与策略自动排序。</small></div>'
+    + '<span class="badge ' + (order.length ? 'on' : '') + '">' + (order.length ? '已启用' : '未设置') + '</span>'
+    + '</div>'
+    + (rows ? '<div class="router-candidate-list" style="max-height:250px;overflow-y:auto">' + rows + '</div>' : '')
+    + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">'
+    + '<select id="routerManualOrderAdd" style="min-width:220px;flex:0 1 auto">' + (addOptions || '<option value="">（没有可添加的模型）</option>') + '</select>'
+    + '<button type="button" class="btn mini" id="routerManualOrderAddBtn"' + (addOptions ? '' : ' disabled') + '>加入排序</button>'
+    + (order.length ? '<button type="button" class="btn mini ghost" id="routerManualOrderClear">清空排序</button>' : '')
+    + '</div>'
+    + '</div>';
+
+  box.querySelectorAll("[data-order-up]").forEach((b) => b.addEventListener("click", () => moveRouterManualOrder(b.dataset.orderUp, -1)));
+  box.querySelectorAll("[data-order-down]").forEach((b) => b.addEventListener("click", () => moveRouterManualOrder(b.dataset.orderDown, 1)));
+  box.querySelectorAll("[data-order-remove]").forEach((b) => b.addEventListener("click", () => removeRouterManualOrder(b.dataset.orderRemove)));
+  if ($("routerManualOrderAddBtn")) $("routerManualOrderAddBtn").addEventListener("click", addRouterManualOrder);
+  if ($("routerManualOrderClear")) $("routerManualOrderClear").addEventListener("click", () => {
+    routerDraft.model_order = [];
+    renderRouterManualOrderEditor();
+    markRouterDirty(true);
+  });
+}
+
+function pruneRouterManualOrderToEligible() {
+  if (!routerDraft) return;
+  const eligible = new Set(routerManualOrderEligible().map((m) => m.toLowerCase()));
+  routerDraft.model_order = (routerDraft.model_order || []).filter((m) => eligible.has(String(m).toLowerCase()));
+}
+
+function moveRouterManualOrder(model, delta) {
+  if (!routerDraft) return;
+  const list = [...(routerDraft.model_order || [])];
+  const index = list.findIndex((m) => m.toLowerCase() === String(model).toLowerCase());
+  const target = index + delta;
+  if (index < 0 || target < 0 || target >= list.length) return;
+  [list[index], list[target]] = [list[target], list[index]];
+  routerDraft.model_order = list;
+  renderRouterManualOrderEditor();
+  markRouterDirty(true);
+}
+
+function removeRouterManualOrder(model) {
+  if (!routerDraft) return;
+  const key = String(model).toLowerCase();
+  routerDraft.model_order = (routerDraft.model_order || []).filter((m) => m.toLowerCase() !== key);
+  renderRouterManualOrderEditor();
+  markRouterDirty(true);
+}
+
+function addRouterManualOrder() {
+  if (!routerDraft) return;
+  const model = $("routerManualOrderAdd")?.value || "";
+  if (!model) return;
+  const list = [...(routerDraft.model_order || [])];
+  if (list.some((m) => m.toLowerCase() === model.toLowerCase())) return;
+  list.push(model);
+  routerDraft.model_order = list;
+  renderRouterManualOrderEditor();
+  markRouterDirty(true);
 }
 
 function renderAutoRouterConfig() {
@@ -848,6 +962,16 @@ function collectRouterDraftFromInputs() {
   if ($("routerSpeculativeCascade")) routerDraft.speculative_cascade = $("routerSpeculativeCascade").checked;
   routerDraft.default_model = $("routerDefaultModel").value.trim();
   routerDraft.model_pool = splitRouterPoolInput($("routerModelPool")?.value || "");
+  // The pool textarea can change without re-rendering the manual editor, so the
+  // manual list is pruned here too: an excluded or no-longer-pooled model must
+  // never be submitted, and the backend would silently drop it anyway.
+  routerDraft.model_order = (routerDraft.model_order || []).filter((m) => {
+    const base = parseRouterCandidateSpecJS(m).base.toLowerCase();
+    const excluded = (routerDraft.excluded_models || []).map((e) => e.toLowerCase());
+    if (excluded.includes(m.toLowerCase()) || excluded.includes(base)) return false;
+    if (!routerDraft.model_pool.length) return true;
+    return routerDraft.model_pool.some((p) => p.toLowerCase() === m.toLowerCase());
+  });
   routerDraft.tiers = {};
   routerDraft.cascade_tiers = false;
   routerDraft.allow_unlisted_target_models = $("routerAllowUnlisted").checked;
@@ -1008,9 +1132,13 @@ function renderRouterDryRunResult(res) {
     const thinkTag = st.thinking ? '<span class="router-price-tag" title="实际适配思考档位">思考: ' + esc(st.thinking) + '</span>' : '';
     const utilTag = st.utility_score ? '<span class="router-price-tag" title="旧启发式策略参考，不是真实榜单评分">旧策略 U=' + Number(st.utility_score).toFixed(1) + '</span>' : '';
     const evidence = st.arena;
-    const arenaTag = evidence ? '<span class="router-price-tag" title="' + esc(evidence.version_reference_note || evidence.identity || evidence.status) + '">Arena: '
-      + (evidence.score != null && (evidence.status === "matched" || evidence.status === "version_reference")
+    const evidenceNote = evidence ? (evidence.thinking_variant_note || evidence.version_reference_note || evidence.identity || evidence.status) : "";
+    const evidenceScored = evidence && evidence.score != null
+      && (evidence.status === "matched" || evidence.status === "version_reference" || evidence.status === "thinking_variant_reference");
+    const arenaTag = evidence ? '<span class="router-price-tag" title="' + esc(evidenceNote) + '">Arena: '
+      + (evidenceScored
         ? (evidence.version_reference ? '旧版参考／新版推断 · ' + esc(evidence.source_model || "") + ' · ' : '')
+          + (evidence.thinking_variant_inferred ? '同系列思考档位参考（非本档实测） · ' + esc(evidence.source_model || "") + ' · ' : '')
           + '#' + evidence.rank + ' · ' + Number(evidence.score).toFixed(dec.arena?.board === "agent" ? 4 : 2)
         : esc(evidence.status)) + '</span>' : '';
     const runtimeTag = evidence ? '<span class="router-price-tag" title="费用只作相同输出预算下的比较参考，不是实付账单">'
@@ -1041,6 +1169,8 @@ function renderRouterDryRunResult(res) {
   const arenaNote = arena ? '<p class="muted" style="margin-top:8px">Arena ' + (arena.mode === "live" ? '正式启用' : '观察对照，不改变实际转发') + ' · ' + esc(arena.board || '无分榜') + (arena.published_at ? ' · 源榜 ' + esc(arena.published_at) : '')
     + ' · 原候选 ' + esc(arena.baseline_model || '—') + ' → 建议 <strong>' + esc(arena.proposed_model || '—') + '</strong> · 实际 ' + esc(arena.actual_model || dec.selected_model || '—')
     + (arena.quality_floor != null ? ' · 候选门槛 ' + Number(arena.quality_floor).toFixed(arena.board === 'agent' ? 4 : 2) + '（源榜分位政策，非准确率）' : '')
+    + (arena.score_inferred ? ' · 首选举证为借用参考（非本配置实测）' : '')
+    + (arena.manual_priority ? ' · 手动优先级生效（仅在同一个质量带内）' : '')
     + (arena.general_reference_only ? ' · 仅通用弱参考，不代表专项能力' : '') + ' · ' + esc(arena.reason || '') + '</p>' : '';
 
   container.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding-bottom:8px;border-bottom:1px solid var(--border,#e5e3df)">'

@@ -40,6 +40,10 @@ type arenaRoutingEvidence struct {
 	VersionReference            bool     `json:"version_reference,omitempty"`
 	VersionReferenceNote        string   `json:"version_reference_note,omitempty"`
 	ReferenceThinkingUnverified bool     `json:"reference_thinking_unverified,omitempty"`
+	ThinkingVariantInferred     bool     `json:"thinking_variant_inferred,omitempty"`
+	ThinkingVariantNote         string   `json:"thinking_variant_note,omitempty"`
+	IdentityConflict            bool     `json:"identity_channel_conflict,omitempty"`
+	ScoreInferred               bool     `json:"score_inferred,omitempty"`
 }
 
 type arenaRoutingDecision struct {
@@ -60,6 +64,8 @@ type arenaRoutingDecision struct {
 	Reason               string   `json:"reason,omitempty"`
 	VersionReference     bool     `json:"version_reference,omitempty"`
 	VersionReferenceNote string   `json:"version_reference_note,omitempty"`
+	ScoreInferred        bool     `json:"score_inferred,omitempty"`
+	ManualPriority       bool     `json:"manual_priority,omitempty"`
 }
 
 type arenaRoutingOptions struct {
@@ -68,12 +74,21 @@ type arenaRoutingOptions struct {
 	NativeOnly, BanditEnabled                            bool
 	TierThinking                                         map[string]string
 	Targets                                              map[string]userRouteTarget
+	// ModelOrder is the operator's manual priority list. It only orders
+	// candidates the benchmark considers interchangeable (one quality band), or
+	// those it knows nothing about; it cannot lift a candidate over stronger
+	// measured quality.
+	ModelOrder []string
 }
 
 type arenaRoutePlan struct {
-	model, tier, wire             string
-	evidence                      *arenaRoutingEvidence
-	trusted, unreliable, cacheHit bool
+	model, tier, wire string
+	evidence          *arenaRoutingEvidence
+	// trusted marks usable benchmark evidence; inferred marks evidence that is
+	// borrowed rather than measured for this exact configuration. approx marks
+	// the weaker case of an approximate thinking variant, which never outranks
+	// real measurements (a documented release prior still competes on score).
+	trusted, inferred, approx, unreliable, cacheHit bool
 }
 
 func normalizeArenaRoutingMode(mode string) (string, error) {
@@ -197,6 +212,19 @@ func arenaCandidateChannels(model string, opts arenaRoutingOptions) []*Upstream 
 	return channels
 }
 
+// arenaServingChannel returns the channel that defines this candidate's model
+// identity. It is deliberately the deterministic primary channel
+// (arenaCandidateChannels ordering: BYOK preference, priority, then id) rather
+// than a weighted-random pick, because the attributed score must not flip between
+// two requests for the same task. Disagreeing channels are reported as a conflict
+// by the caller instead of disqualifying the candidate.
+func arenaServingChannel(channels []*Upstream) *Upstream {
+	if len(channels) == 0 {
+		return nil
+	}
+	return channels[0]
+}
+
 func fillArenaChannelEvidence(plan *arenaRoutePlan, channels []*Upstream, opts arenaRoutingOptions, cr *canonReq, demand TaskDemandProfile) {
 	if len(channels) == 0 {
 		return
@@ -313,26 +341,34 @@ func prepareArenaPlans(d *routerDecisionDetails, models []string, opts arenaRout
 		if len(channels) == 0 {
 			plan.evidence.Status = "no_eligible_channel"
 		} else {
-			wire := channels[0].mapModel(resolveUpstreamCandidateModel(channels[0], model))
-			thinking := resolveAutoRouterThinking(channels[0], wire, tier, model, opts.TierThinking[tier], d.Cause, cr)
+			serving := arenaServingChannel(channels)
+			wire := serving.mapModel(resolveUpstreamCandidateModel(serving, model))
+			thinking := resolveAutoRouterThinking(serving, wire, tier, model, opts.TierThinking[tier], d.Cause, cr)
 			plan.evidence.Thinking = thinking.EffectiveLabel
 			if opts.Mode == "live" {
 				if step := steps[model]; step != nil {
 					step.Thinking = thinking.EffectiveLabel
 				}
 			}
-		}
-		for _, up := range channels {
-			id, wire, status := arenaIdentityForChannel(up, model, tier, d.Cause, opts.TierThinking[tier], cr)
+			// Only the primary channel may decide which model identity the score is
+			// attributed to. Channels that could merely take over after a failover are
+			// reported instead of disqualifying an otherwise measurable candidate.
+			id, wire, status := arenaIdentityForChannel(serving, model, tier, d.Cause, opts.TierThinking[tier], cr)
 			if status != "" {
 				plan.evidence.Status, plan.evidence.Identity = status, ""
-				break
+			} else {
+				plan.evidence.Identity, plan.wire = id, wire
+				for _, up := range channels {
+					if up.ID == serving.ID {
+						continue
+					}
+					otherID, _, otherStatus := arenaIdentityForChannel(up, model, tier, d.Cause, opts.TierThinking[tier], cr)
+					if otherStatus == "" && otherID != "" && otherID != id {
+						plan.evidence.IdentityConflict = true
+						break
+					}
+				}
 			}
-			if plan.evidence.Identity != "" && plan.evidence.Identity != id {
-				plan.evidence.Status, plan.evidence.Identity = "ambiguous_upstream_mapping", ""
-				break
-			}
-			plan.evidence.Identity, plan.wire = id, wire
 		}
 		fillArenaChannelEvidence(plan, channels, opts, cr, demand)
 		if step := steps[model]; step != nil {
@@ -366,10 +402,11 @@ func assignArenaEvidence(plans []*arenaRoutePlan, snapshot *arenaSnapshot, now t
 	}
 	matched := 0
 	for _, plan := range plans {
-		plan.trusted = false
+		plan.trusted, plan.inferred, plan.approx = false, false, false
 		e := plan.evidence
 		e.SourceModel, e.Rank, e.Score, e.Lower, e.Upper, e.Samples = "", 0, nil, nil, nil, nil
 		e.VersionReference, e.ReferenceThinkingUnverified, e.VersionReferenceNote = false, false, ""
+		e.ThinkingVariantInferred, e.ThinkingVariantNote = false, ""
 		if e.Identity == "" {
 			continue
 		}
@@ -385,13 +422,21 @@ func assignArenaEvidence(plans []*arenaRoutePlan, snapshot *arenaSnapshot, now t
 		}
 		var row arenaModel
 		if len(entries) == 0 {
-			reference, differentThinking := arenaOlderVersionReference(e.Identity, snapshot.Models, now)
-			if reference == nil {
+			if reference, differentThinking := arenaOlderVersionReference(e.Identity, snapshot.Models, now); reference != nil {
+				row = *reference
+				e.VersionReference, e.ReferenceThinkingUnverified = true, differentThinking
+				e.VersionReferenceNote = arenaVersionReferenceNote(row, differentThinking)
+			} else if variant, note := arenaThinkingVariantReference(e.Identity, snapshot.Models); variant != nil {
+				// The board publishes only other thinking variants of this model. The
+				// reference is conservative (lowest published score of the family) and
+				// stays behind every real measurement in the final order.
+				row = *variant
+				e.ThinkingVariantInferred, e.ThinkingVariantNote = true, note
+				plan.approx = true
+			} else {
 				continue
 			}
-			row = *reference
-			e.VersionReference, e.ReferenceThinkingUnverified = true, differentThinking
-			e.VersionReferenceNote = arenaVersionReferenceNote(row, differentThinking)
+			plan.inferred = true
 		} else {
 			row = entries[0]
 		}
@@ -400,13 +445,27 @@ func assignArenaEvidence(plans []*arenaRoutePlan, snapshot *arenaSnapshot, now t
 		e.Status = "insufficient_samples"
 		if row.Votes != nil && *row.Votes >= arenaRoutingMinSamples {
 			e.Status, plan.trusted = "matched", true
-			if e.VersionReference {
+			switch {
+			case e.VersionReference:
 				e.Status = "version_reference"
+			case e.ThinkingVariantInferred:
+				e.Status = "thinking_variant_reference"
 			}
 			matched++
 		}
 	}
 	return matched
+}
+
+// arenaSimpleTask reports whether the request only needs a model above the
+// measured simple-task floor, which permits choosing the cheapest qualifying
+// candidate instead of the single highest scorer. It follows the same
+// difficulty->tier mapping the demand profile already publishes.
+func arenaSimpleTask(demand TaskDemandProfile) bool {
+	if tier := strings.ToUpper(strings.TrimSpace(demand.EquivalentTier)); tier != "" {
+		return tier == TierSimple
+	}
+	return demand.RequiredDifficulty <= 38
 }
 
 func arenaTaskQualityFloor(snapshot *arenaSnapshot, demand TaskDemandProfile, strategy string) (*float64, string) {
@@ -472,7 +531,65 @@ func arenaMetricLess(a, b *float64) (less, different bool) {
 	return false, false
 }
 
-func arenaPeerLess(a, b *arenaRoutePlan, strategy string) bool {
+func arenaMetricMore(a, b *float64) (better, different bool) {
+	if (a == nil) != (b == nil) {
+		return a != nil, true
+	}
+	if a != nil && *a != *b {
+		return *a > *b, true
+	}
+	return false, false
+}
+
+// arenaManualRank returns the operator's manual position for a candidate, or -1
+// when it is not in the manual list. Matching ignores surrounding whitespace and
+// parenthesised specs, so "glm-5.3(high,128k)" still ranks its base model.
+func arenaManualRank(order []string, model string) int {
+	if len(order) == 0 {
+		return -1
+	}
+	// Prefer an exact variant entry before falling back to its base model. If
+	// both "glm(high)" and "glm" are listed, each candidate must keep its own
+	// position rather than both collapsing to the first base-model match.
+	for i, entry := range order {
+		if strings.EqualFold(strings.TrimSpace(entry), strings.TrimSpace(model)) {
+			return i
+		}
+	}
+	base := parseRouterModelSpec(model).BaseModel
+	if base == "" {
+		return -1
+	}
+	for i, entry := range order {
+		if strings.EqualFold(parseRouterModelSpec(entry).BaseModel, base) {
+			return i
+		}
+	}
+	return -1
+}
+
+// arenaManualLess reports the operator's decisive preference between two
+// candidates. ok is false when neither is listed, so every automatic rule keeps
+// working unchanged for unlisted models.
+func arenaManualLess(a, b *arenaRoutePlan, order []string) (less, ok bool) {
+	aRank, bRank := arenaManualRank(order, a.model), arenaManualRank(order, b.model)
+	if aRank == bRank {
+		return false, false
+	}
+	if aRank < 0 {
+		return false, true
+	}
+	if bRank < 0 {
+		return true, true
+	}
+	return aRank < bRank, true
+}
+
+func arenaPeerLess(a, b *arenaRoutePlan, strategy string, simpleTask bool, order []string) bool {
+	// An explicit manual priority outranks the strategy inside one quality band.
+	if less, ok := arenaManualLess(a, b, order); ok {
+		return less
+	}
 	switch normalizeStrategyProfile(strategy) {
 	case StrategyCostFirst:
 		if less, different := arenaMetricLess(a.evidence.ComparisonCost, b.evidence.ComparisonCost); different {
@@ -483,8 +600,17 @@ func arenaPeerLess(a, b *arenaRoutePlan, strategy string) bool {
 			return less
 		}
 	default:
-		if normalizeStrategyProfile(strategy) == StrategyBalanced && a.cacheHit != b.cacheHit {
-			return a.cacheHit
+		if normalizeStrategyProfile(strategy) == StrategyBalanced {
+			if a.cacheHit != b.cacheHit {
+				return a.cacheHit
+			}
+			// A simple task only needs a model above the measured floor, so the band
+			// is ordered by price instead of always electing the highest scorer.
+			if simpleTask {
+				if less, different := arenaMetricLess(a.evidence.ComparisonCost, b.evidence.ComparisonCost); different {
+					return less
+				}
+			}
 		}
 	}
 	return arenaScoreLess(a, b)
@@ -510,9 +636,27 @@ func arenaDominates(a, b *arenaRoutePlan) bool {
 	return comparable && better
 }
 
-func orderArenaPeers(peers []*arenaRoutePlan, strategy string) []*arenaRoutePlan {
-	if normalizeStrategyProfile(strategy) != StrategyBalanced {
-		sort.SliceStable(peers, func(i, j int) bool { return arenaPeerLess(peers[i], peers[j], strategy) })
+func orderArenaPeers(peers []*arenaRoutePlan, strategy string, simpleTask bool, order []string) []*arenaRoutePlan {
+	// Manual choices must be honored before automatic strategy trade-offs such
+	// as Pareto dominance, but only within this already-established quality band.
+	// Partition first to keep the comparator transitive and automatic ordering
+	// intact among candidates the operator did not rank.
+	if len(order) > 0 {
+		var listed, unlisted []*arenaRoutePlan
+		for _, peer := range peers {
+			if arenaManualRank(order, peer.model) >= 0 {
+				listed = append(listed, peer)
+			} else {
+				unlisted = append(unlisted, peer)
+			}
+		}
+		sort.SliceStable(listed, func(i, j int) bool {
+			return arenaManualRank(order, listed[i].model) < arenaManualRank(order, listed[j].model)
+		})
+		return append(listed, orderArenaPeers(unlisted, strategy, simpleTask, nil)...)
+	}
+	if normalizeStrategyProfile(strategy) != StrategyBalanced || simpleTask {
+		sort.SliceStable(peers, func(i, j int) bool { return arenaPeerLess(peers[i], peers[j], strategy, simpleTask, nil) })
 		return peers
 	}
 	// Pareto fronts, not a made-up weighted sum of Elo, IPS, dollars and HTTP 200s.
@@ -533,60 +677,106 @@ func orderArenaPeers(peers []*arenaRoutePlan, strategy string) []*arenaRoutePlan
 				front = append(front, candidate)
 			}
 		}
-		sort.SliceStable(front, func(i, j int) bool { return arenaPeerLess(front[i], front[j], strategy) })
+		sort.SliceStable(front, func(i, j int) bool { return arenaPeerLess(front[i], front[j], strategy, simpleTask, order) })
 		ordered, peers = append(ordered, front...), rest
 	}
 	return ordered
 }
 
-func orderArenaSegment(plans []*arenaRoutePlan, opts arenaRoutingOptions, floor *float64) []*arenaRoutePlan {
+func orderArenaSegment(plans []*arenaRoutePlan, opts arenaRoutingOptions, floor *float64, simpleTask bool, demandTier string) []*arenaRoutePlan {
 	var ordered []*arenaRoutePlan
 	group := 0
 	for _, unhealthy := range []bool{false, true} {
-		var ranked, unknown []*arenaRoutePlan
+		var primary, approximate, unknown []*arenaRoutePlan
 		for _, plan := range plans {
 			if plan.unreliable != unhealthy {
 				continue
 			}
-			if plan.trusted {
-				ranked = append(ranked, plan)
-			} else {
+			switch {
+			case !plan.trusted:
 				unknown = append(unknown, plan)
+			case plan.approx:
+				approximate = append(approximate, plan)
+			default:
+				primary = append(primary, plan)
 			}
 		}
-		sort.SliceStable(ranked, func(i, j int) bool { return arenaScoreLess(ranked[i], ranked[j]) })
-		first := true
-		for len(ranked) > 0 {
-			anchor := ranked[0]
-			var peers, rest []*arenaRoutePlan
-			for _, plan := range ranked {
-				accepted := arenaSameQualityBand(anchor, plan)
-				if first && floor != nil && *anchor.evidence.Score >= *floor {
-					accepted = *plan.evidence.Score >= *floor
+		// A borrowed thinking-variant score is a conservative fallback, never a
+		// reason to overtake a candidate that was actually measured in this band.
+		for _, ranked := range [][]*arenaRoutePlan{primary, approximate} {
+			sort.SliceStable(ranked, func(i, j int) bool { return arenaScoreLess(ranked[i], ranked[j]) })
+			first := true
+			for len(ranked) > 0 {
+				anchor := ranked[0]
+				var peers, rest []*arenaRoutePlan
+				for _, plan := range ranked {
+					accepted := arenaSameQualityBand(anchor, plan)
+					// Preserve the task-floor tradeoff when no operator order is
+					// present. With a manual order, keep measured bands distinct so
+					// manual preference can never cross them.
+					if first && len(opts.ModelOrder) == 0 && floor != nil && *anchor.evidence.Score >= *floor {
+						accepted = *plan.evidence.Score >= *floor
+					}
+					if accepted {
+						peers = append(peers, plan)
+					} else {
+						rest = append(rest, plan)
+					}
 				}
-				if accepted {
-					peers = append(peers, plan)
-				} else {
-					rest = append(rest, plan)
+				for _, plan := range peers {
+					g := group
+					plan.evidence.QualityGroup = &g
 				}
+				ordered = append(ordered, orderArenaPeers(peers, opts.Strategy, simpleTask, opts.ModelOrder)...)
+				ranked, group, first = rest, group+1, false
 			}
-			for _, plan := range peers {
-				g := group
-				plan.evidence.QualityGroup = &g
-			}
-			ordered = append(ordered, orderArenaPeers(peers, opts.Strategy)...)
-			ranked, group, first = rest, group+1, false
 		}
 		sort.SliceStable(unknown, func(i, j int) bool {
-			a, b := unknown[i].model, unknown[j].model
-			if (a == opts.DefaultModel) != (b == opts.DefaultModel) {
-				return a == opts.DefaultModel
-			}
-			return a < b
+			return arenaUnknownLess(unknown[i], unknown[j], opts, demandTier)
 		})
 		ordered = append(ordered, unknown...)
 	}
 	return ordered
+}
+
+// Failover order for candidates without usable benchmark evidence. It follows
+// observed transport reliability, then price, latency and finally how close the
+// candidate's original tier is to this request - never the alphabetical order of
+// model names, which made REASONING requests fall onto an arbitrary small model.
+func arenaUnknownLess(a, b *arenaRoutePlan, opts arenaRoutingOptions, demandTier string) bool {
+	if (a.model == opts.DefaultModel) != (b.model == opts.DefaultModel) {
+		return a.model == opts.DefaultModel
+	}
+	// The operator's manual list decides the tail before any inferred heuristic.
+	if less, ok := arenaManualLess(a, b, opts.ModelOrder); ok {
+		return less
+	}
+	if less, different := arenaMetricMore(a.evidence.RecentService, b.evidence.RecentService); different {
+		return less
+	}
+	if less, different := arenaMetricLess(a.evidence.ComparisonCost, b.evidence.ComparisonCost); different {
+		return less
+	}
+	if less, different := arenaMetricLess(a.evidence.ResponseMS, b.evidence.ResponseMS); different {
+		return less
+	}
+	if demandTier != "" {
+		if aGap, bGap := arenaTierGap(a.tier, demandTier), arenaTierGap(b.tier, demandTier); aGap != bGap {
+			return aGap < bGap
+		}
+	}
+	return a.model < b.model
+}
+
+func arenaTierGap(tier, demandTier string) int {
+	if tier == "" || demandTier == "" {
+		return 0
+	}
+	gap := tierRank(tier) - tierRank(demandTier)
+	if gap < 0 {
+		return -gap
+	}
+	return gap
 }
 
 // Reorders only already-admitted candidates. No HTTP, no extra model calls, and
@@ -621,16 +811,33 @@ func applyArenaRoutePolicy(d *routerDecisionDetails, models []string, opts arena
 		evaluation.PublishedAt = source.PublishedAt
 		evaluation.FetchedAt = source.FetchedAt
 	}
-	ordered := orderArenaSegment(plans, opts, floor)
-	// The first model follows the requested cost/speed strategy. If it fails,
-	// prefer the strongest remaining member of that accepted quality band.
+	ordered := orderArenaSegment(plans, opts, floor, arenaSimpleTask(demand), demand.EquivalentTier)
+	// Compare against the same ordering without the operator's list, but only to
+	// decide whether to label the outcome: the label is applied after the session
+	// affinity branch so it always describes the model that is actually proposed.
+	manualChangedWinner := false
+	if len(ordered) > 0 && len(opts.ModelOrder) > 0 {
+		automaticOpts := opts
+		automaticOpts.ModelOrder = nil
+		automatic := orderArenaSegment(plans, automaticOpts, floor, arenaSimpleTask(demand), demand.EquivalentTier)
+		manualChangedWinner = len(automatic) > 0 && automatic[0].model != ordered[0].model
+	}
+	// The first model follows the requested strategy inside its measured quality
+	// band. Later failovers retain the operator's order within that same band;
+	// otherwise they prefer stronger measured evidence.
 	if len(ordered) > 1 && ordered[0].trusted && ordered[0].evidence.QualityGroup != nil {
 		end := 1
 		for end < len(ordered) && ordered[end].trusted && ordered[end].evidence.QualityGroup != nil &&
 			*ordered[end].evidence.QualityGroup == *ordered[0].evidence.QualityGroup {
 			end++
 		}
-		sort.SliceStable(ordered[1:end], func(i, j int) bool { return arenaScoreLess(ordered[i+1], ordered[j+1]) })
+		sort.SliceStable(ordered[1:end], func(i, j int) bool {
+			a, b := ordered[i+1], ordered[j+1]
+			if less, ok := arenaManualLess(a, b, opts.ModelOrder); ok {
+				return less
+			}
+			return arenaScoreLess(a, b)
+		})
 	}
 	evaluation.Reason = "source_quality_then_strategy"
 	if matched == 0 {
@@ -654,10 +861,23 @@ func applyArenaRoutePolicy(d *routerDecisionDetails, models []string, opts arena
 		proposed = append(proposed, plan.model)
 	}
 	evaluation.ProposedModel, evaluation.Different = proposed[0], proposed[0] != evaluation.BaselineModel
-	if ordered[0].evidence.VersionReference {
-		evaluation.VersionReference = true
-		evaluation.VersionReferenceNote = ordered[0].evidence.VersionReferenceNote
-		evaluation.Reason += "+version_reference_minor_preference"
+	// A kept session deliberately overrides evidence and manual order, so the
+	// evidence-derived labels would describe the wrong model if they were applied
+	// to it.
+	if evaluation.Reason != "session_affinity_preserved" {
+		if manualChangedWinner {
+			evaluation.ManualPriority = true
+			evaluation.Reason += "+manual_priority"
+		}
+		if ordered[0].inferred {
+			evaluation.ScoreInferred = true
+			evaluation.Reason += "+inferred_reference"
+		}
+		if ordered[0].evidence.VersionReference {
+			evaluation.VersionReference = true
+			evaluation.VersionReferenceNote = ordered[0].evidence.VersionReferenceNote
+			evaluation.Reason += "+version_reference_minor_preference"
+		}
 	}
 	d.Arena = evaluation
 	if mode == "shadow" {

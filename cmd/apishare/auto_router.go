@@ -48,13 +48,18 @@ func normalizeTierName(raw string) string {
 }
 
 type AutoRouterConfig struct {
-	userExternal                 bool                             // User-owned classifiers must not inherit site credentials or network access.
-	Enabled                      bool                             `json:"enabled"`
-	Mode                         string                           `json:"mode"` // "off" | "shadow" | "live"
-	VirtualModel                 string                           `json:"virtual_model"`
-	StrategyProfile              string                           `json:"strategy_profile"` // "balanced" | "quality_first" | "cost_first" | "latency_first"
-	ArenaMode                    string                           `json:"arena_mode"`       // "off" | "shadow" | "live"; independent from gateway routing mode
-	ModelPool                    []string                         `json:"model_pool,omitempty"`
+	userExternal    bool     // User-owned classifiers must not inherit site credentials or network access.
+	Enabled         bool     `json:"enabled"`
+	Mode            string   `json:"mode"` // "off" | "shadow" | "live"
+	VirtualModel    string   `json:"virtual_model"`
+	StrategyProfile string   `json:"strategy_profile"` // "balanced" | "quality_first" | "cost_first" | "latency_first"
+	ArenaMode       string   `json:"arena_mode"`       // "off" | "shadow" | "live"; independent from gateway routing mode
+	ModelPool       []string `json:"model_pool,omitempty"`
+	// ModelOrder is an optional manual priority list inside the candidate pool.
+	// It reorders candidates that the benchmark puts in the same quality band and
+	// decides the order of candidates without usable evidence; it never lifts a
+	// candidate above a band with stronger measured quality.
+	ModelOrder                   []string                         `json:"model_order,omitempty"`
 	ExcludedModels               []string                         `json:"excluded_models,omitempty"`
 	BanditEnabled                bool                             `json:"bandit_enabled"`
 	SpeculativeCascade           bool                             `json:"speculative_cascade"`
@@ -524,6 +529,17 @@ func normalizeAutoRouterConfig(cfg *AutoRouterConfig) error {
 	}
 	cfg.ModelPool = filteredPool
 	cfg.ExcludedModels = normalizeModelSlice(cfg.ExcludedModels)
+	// A manually ranked model that is excluded (or is the virtual model itself)
+	// can never be selected, so it must not linger in the order either.
+	excludedFromPool := routerModelExclusionFilter(cfg.ExcludedModels)
+	manual := make([]string, 0, len(cfg.ModelOrder))
+	for _, m := range normalizeModelSlice(cfg.ModelOrder) {
+		if strings.EqualFold(m, cfg.VirtualModel) || strings.EqualFold(parseRouterModelSpec(m).BaseModel, cfg.VirtualModel) || excludedFromPool(m) {
+			continue
+		}
+		manual = append(manual, m)
+	}
+	cfg.ModelOrder = manual
 	if cfg.SpeculativeTTFTMS <= 0 {
 		cfg.SpeculativeTTFTMS = 2500
 	} else if cfg.SpeculativeTTFTMS < 300 {
@@ -661,6 +677,7 @@ func saveAutoRouterConfig(cfg AutoRouterConfig) error {
 func cloneAutoRouterConfig(src AutoRouterConfig) AutoRouterConfig {
 	dst := src
 	dst.ModelPool = append([]string(nil), src.ModelPool...)
+	dst.ModelOrder = append([]string(nil), src.ModelOrder...)
 	dst.ExcludedModels = append([]string(nil), src.ExcludedModels...)
 	dst.ModelCapabilities = make(map[string]ModelCapabilityVector, len(src.ModelCapabilities))
 	for k, v := range src.ModelCapabilities {
@@ -1224,6 +1241,7 @@ func resolveAutoRouteWithConfig(
 		TierThinking:  cfg.TierThinking,
 		BanditEnabled: cfg.BanditEnabled,
 		Format:        format, NativeOnly: nativeOnly, PreviousModel: prevSessionModel,
+		ModelOrder: cfg.ModelOrder,
 	}, cr, demand)
 	if len(eligible) > 0 {
 		decision.SelectedModel = eligible[0]
@@ -1554,6 +1572,7 @@ func buildAutoRouterConfigView(ctx context.Context, cfg AutoRouterConfig) gin.H 
 		"strategy_profile":                 normalizeStrategyProfile(cfg.StrategyProfile),
 		"arena_mode":                       cfg.ArenaMode,
 		"model_pool":                       cfg.ModelPool,
+		"model_order":                      cfg.ModelOrder,
 		"excluded_models":                  cfg.ExcludedModels,
 		"bandit_enabled":                   cfg.BanditEnabled,
 		"speculative_cascade":              cfg.SpeculativeCascade,
@@ -1637,6 +1656,7 @@ func registerAutoRouterAdminRoutes(auth *gin.RouterGroup) {
 			StrategyProfile              *string                           `json:"strategy_profile"`
 			ArenaMode                    *string                           `json:"arena_mode"`
 			ModelPool                    *[]string                         `json:"model_pool"`
+			ModelOrder                   *[]string                         `json:"model_order"`
 			ExcludedModels               *[]string                         `json:"excluded_models"`
 			BanditEnabled                *bool                             `json:"bandit_enabled"`
 			SpeculativeCascade           *bool                             `json:"speculative_cascade"`
@@ -1698,6 +1718,9 @@ func registerAutoRouterAdminRoutes(auth *gin.RouterGroup) {
 		}
 		if req.ModelPool != nil {
 			cfg.ModelPool = *req.ModelPool
+		}
+		if req.ModelOrder != nil {
+			cfg.ModelOrder = *req.ModelOrder
 		}
 		if req.ExcludedModels != nil {
 			cfg.ExcludedModels = *req.ExcludedModels

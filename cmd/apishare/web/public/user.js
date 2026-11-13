@@ -956,6 +956,9 @@
     syncUserClassifierVisibility();
     if ($("#userRouterModelPool")) $("#userRouterModelPool").value = state.routerPool.join("\n");
     if ($("#userRouterExcludedModels")) $("#userRouterExcludedModels").value = state.routerExcluded.join("\n");
+    if ($("#userRouterModelOrder")) {
+      $("#userRouterModelOrder").value = (Array.isArray(state.routerView?.model_order) ? state.routerView.model_order : []).join("\n");
+    }
     renderUserPoolEditor();
   }
 
@@ -1115,6 +1118,27 @@
     return [...new Set(models)].sort();
   }
 
+  // Same parsing, but keeps the operator's order (used by the manual priority list).
+  function splitUserOrderInput(raw) {
+    const models = []; let current = "", depth = 0;
+    for (const ch of String(raw || "")) {
+      if (ch === "(") depth++;
+      else if (ch === ")" && depth > 0) depth--;
+      if (depth === 0 && /[,\uFF0C\r\n]/.test(ch)) {
+        if (current.trim()) models.push(current.trim());
+        current = "";
+      } else current += ch;
+    }
+    if (current.trim()) models.push(current.trim());
+    const seen = new Set();
+    return models.filter((m) => {
+      const key = m.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
   function renderUserPoolEditor() {
     const host = $("#userModelPoolPreview");
     if (!host) return;
@@ -1148,6 +1172,7 @@
       user_classifier_endpoint: ($("#userExternalEndpoint")?.value || "").trim(),
       user_classifier_api_key: ($("#userExternalApiKey")?.value || "").trim(),
       model_pool: splitUserPoolInput($("#userRouterModelPool")?.value || ""),
+      model_order: splitUserOrderInput($("#userRouterModelOrder")?.value || ""),
       excluded_models: splitUserPoolInput($("#userRouterExcludedModels")?.value || ""),
       tiers: {},
       cascade_tiers: false,
