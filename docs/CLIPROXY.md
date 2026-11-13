@@ -143,6 +143,16 @@ go build -trimpath -ldflags="-s -w" -o apishare.exe ./cmd/apishare
 
 SDK 公共接口、管理 API 或大版本变化仍需要适配与回归，不能保证任意上游版本直接替换。回退整个 API Share 版本前应备份数据目录，并检查上游是否迁移过配置或凭据格式。
 
+仓库中的 [`.github/workflows/cliproxy-update.yml`](../.github/workflows/cliproxy-update.yml) 会自动执行同样的升级流程：
+
+- 每天定时（也可在 Actions 页面手动指定版本触发）查询上游最新的 `v8.x.y` 标签。
+- 有新版本时更新 `go.mod` / `go.sum` 和 `cmd/apishare/third_party/cliproxy/LICENSE`，运行 `go test ./...` 与构建验证。
+- 验证通过：推送 `chore/cliproxy-<版本>` 分支并创建 PR，PR 内附 `docs/CLIPROXY.md` 的人工回归清单。仓库若未开启 “Allow GitHub Actions to create and approve pull requests”，则改为创建 Issue 并给出分支对比链接。
+- 验证失败：不会合并任何改动，自动创建指派给仓库维护者的 Issue，附失败日志，等待人工适配。
+- 上游出现新的大版本（如 `v9`）：不会自动升级，直接创建适配 Issue。
+
+自动 PR 只代表编译与测试通过，发布前仍需按上面的清单人工验证 OAuth、原生工具调用、流式取消和 usage 口径。
+
 接入层位于 `internal/cliproxy`，后台路由位于 `cmd/apishare/cliproxy.go`。上游源码不作本地修改，避免长期维护 fork。
 
 ## 验证与许可
