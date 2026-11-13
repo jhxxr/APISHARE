@@ -148,6 +148,8 @@ SDK 公共接口、管理 API 或大版本变化仍需要适配与回归，不�
 - 每天定时（也可在 Actions 页面手动指定版本触发）查询上游最新的 `v8.x.y` 标签。
 - 有新版本时更新 `go.mod` / `go.sum` 和 `cmd/apishare/third_party/cliproxy/LICENSE`，运行 `go test ./...` 与构建验证。
 - 验证通过：推送 `chore/cliproxy-<版本>` 分支并创建 PR，PR 内附 `docs/CLIPROXY.md` 的人工回归清单。仓库若未开启 “Allow GitHub Actions to create and approve pull requests”，则改为创建 Issue 并给出分支对比链接。
+- 目标升级分支已存在时保留全部提交并跳过推送，继续在已有 PR 或分支上评审和补充人工适配。
+- Actions Summary 展示目标版本发布说明、当前版本到目标版本的完整提交对比及上游链接；无法读取 API 时仍保留链接供人工核对。
 - 验证失败：不会合并任何改动，自动创建指派给仓库维护者的 Issue，附失败日志，等待人工适配。
 - 上游出现新的大版本（如 `v9`）：不会自动升级，直接创建适配 Issue。
 

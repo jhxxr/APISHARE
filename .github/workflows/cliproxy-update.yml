@@ -90,18 +90,35 @@ jobs:
         run: |
           set -euo pipefail
           notes_file="${RUNNER_TEMP}/release-notes.md"
-          if ! gh api --method GET "repos/${UPSTREAM_REPO}/releases/generate-notes" \
-               -f tag_name="$TARGET" -f previous_tag_name="$CURRENT" \
-               --jq '.body' > "$notes_file" 2>/dev/null; then
+          commits_file="${RUNNER_TEMP}/upstream-commits.md"
+          if ! gh api --method GET "repos/${UPSTREAM_REPO}/releases/tags/${TARGET}" \
+               --jq '.body // empty' > "$notes_file" 2>/dev/null; then
             : > "$notes_file"
           fi
+          if ! gh api --method GET "repos/${UPSTREAM_REPO}/compare/${CURRENT}...${TARGET}" \
+               -f per_page=100 --paginate \
+               --jq '.commits[] | "- [\(.sha[0:7])](\(.html_url)) \(.commit.message | split("\n")[0])"' \
+               > "$commits_file"; then
+            : > "$commits_file"
+            echo "::warning::Unable to read upstream commits; see the comparison link in the summary."
+          fi
           {
+            echo "### 上游变更摘要（${CURRENT} → ${TARGET}）"
+            echo ""
+            echo "[完整提交对比](https://github.com/${UPSTREAM_REPO}/compare/${CURRENT}...${TARGET}) · [目标版本发布说明](https://github.com/${UPSTREAM_REPO}/releases/tag/${TARGET})"
+            echo ""
             if [ -s "$notes_file" ]; then
-              echo "### 上游变更摘要（${CURRENT} → ${TARGET}）"
+              echo "#### 目标版本发布说明"
               echo ""
               cat "$notes_file"
+              echo ""
+            fi
+            if [ -s "$commits_file" ]; then
+              echo "#### 版本间提交"
+              echo ""
+              cat "$commits_file"
             else
-              echo "未能自动获取 ${CURRENT} → ${TARGET} 的上游发布说明，请打开下方链接核对完整提交与变更。"
+              echo "未获取到版本间新增提交，请通过上方链接核对完整变更。"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -142,20 +159,30 @@ jobs:
         run: |
           set -euo pipefail
           branch="chore/cliproxy-${TARGET}"
+          remote_ref="$(git ls-remote --heads origin "refs/heads/${branch}")"
+          if [ -n "$remote_ref" ]; then
+            echo "::notice::Upgrade branch ${branch} already exists; preserving all existing commits."
+            {
+              echo "### 已保留现有升级分支"
+              echo ""
+              echo "分支 \`${branch}\` 已存在，本次跳过推送并保留全部提交。请继续评审现有 PR，或从[分支比较](https://github.com/${GITHUB_REPOSITORY}/compare/${DEFAULT_BRANCH}...${branch}?expand=1) 创建 PR。"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B "$branch"
+          git checkout -b "$branch"
           git add go.mod go.sum cmd/apishare/third_party/cliproxy/LICENSE
           if git diff --cached --quiet; then
             echo "No file changes after bump; nothing to publish."
             exit 0
           fi
           git commit -m "chore(cliproxy): 升级内置 CLIProxyAPI 至 ${TARGET}"
-          git push --force --set-upstream origin "$branch"
+          git push --set-upstream origin "$branch"
 
           pr_number="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number')"
           if [ -n "$pr_number" ]; then
-            echo "Pull request #${pr_number} already tracks ${branch}; branch updated."
+            echo "Pull request #${pr_number} already tracks ${branch}."
             exit 0
           fi
 
