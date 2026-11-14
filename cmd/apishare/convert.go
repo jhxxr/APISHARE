@@ -74,6 +74,7 @@ type canonReq struct {
 	ReasoningEffort string
 	ThinkingMode    string
 	ThinkingBudget  *int
+	ThinkingDisplay string
 	ConversionError error
 	OutputFormat    *canonOutputFormat
 	ResponseTools   map[string]responseTool

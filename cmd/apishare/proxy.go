@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -1178,6 +1179,9 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		if esc, reason := shouldEscalateSpeculativeOutput(info.OutputText.String(), canonResponseHasToolCall(result), true); esc {
 			return info, false, fmt.Errorf("%w: speculative_probe:%s", errAutoRouterModelIncompatible, reason)
 		}
+	}
+	if task.canon.omitThinkingOutput() {
+		result.Blocks = slices.DeleteFunc(result.Blocks, func(block responseBlock) bool { return block.Kind == "thinking" })
 	}
 	if task.stream {
 		// A JSON-only upstream still returns an SSE envelope to a streaming client.

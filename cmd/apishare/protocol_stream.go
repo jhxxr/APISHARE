@@ -1037,6 +1037,9 @@ func relayProtocolSSE(c *gin.Context, resp *http.Response, format clientFormat, 
 			}
 			info.OutputText.WriteString(delta.Block.Text)
 			info.OutputText.WriteString(delta.Block.Call.Arguments)
+			if delta.Block.Kind == "thinking" && task.canon.omitThinkingOutput() {
+				continue
+			}
 			if speculative && !w.started {
 				pendingDeltas = append(pendingDeltas, delta)
 				if !sawTool {

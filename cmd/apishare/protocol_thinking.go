@@ -16,13 +16,20 @@ func parseProtocolThinking(cr *canonReq, format clientFormat, root map[string]an
 			return nil
 		}
 		for key := range config {
-			if key != "type" && key != "budget_tokens" {
+			if key != "type" && key != "budget_tokens" && key != "display" {
 				return unsupported("thinking." + key)
 			}
 		}
 		cr.ThinkingMode = str(config["type"])
 		if cr.ThinkingMode == "" {
 			return fmt.Errorf("thinking requires a type")
+		}
+		if raw := config["display"]; raw != nil {
+			display, ok := raw.(string)
+			if !ok || (display != "summarized" && display != "omitted" && display != "updates") {
+				return fmt.Errorf("invalid thinking display")
+			}
+			cr.ThinkingDisplay = display
 		}
 		if raw := config["budget_tokens"]; raw != nil {
 			value, ok := protocolFloat(raw)
@@ -78,6 +85,9 @@ func parseProtocolThinking(cr *canonReq, format clientFormat, root map[string]an
 	}
 	switch cr.ThinkingMode {
 	case "disabled":
+		if cr.ThinkingDisplay != "" {
+			return fmt.Errorf("disabled thinking cannot have a display")
+		}
 		if cr.ThinkingBudget != nil {
 			return fmt.Errorf("disabled thinking cannot have a token budget")
 		}
@@ -98,6 +108,12 @@ func parseProtocolThinking(cr *canonReq, format clientFormat, root map[string]an
 		return unsupported("thinking mode " + cr.ThinkingMode)
 	}
 	return nil
+}
+
+func (cr *canonReq) omitThinkingOutput() bool {
+	// Other protocols do not distinguish progress updates from reasoning text.
+	// Hide that text for updates as well as omitted; never expose it as progress.
+	return cr != nil && (cr.ThinkingDisplay == "omitted" || cr.ThinkingDisplay == "updates")
 }
 
 const maxProtocolThinkingBudget = 1 << 24
