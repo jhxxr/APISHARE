@@ -10,7 +10,7 @@ require (
 	github.com/parquet-go/parquet-go v0.32.0
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/refraction-networking/utls v1.8.2
-	github.com/router-for-me/CLIProxyAPI/v8 v8.0.63
+	github.com/router-for-me/CLIProxyAPI/v8 v8.0.69
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/sergeymakinen/go-ico v1.0.0
 	golang.org/x/crypto v0.57.0
