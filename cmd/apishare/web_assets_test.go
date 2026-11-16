@@ -185,3 +185,31 @@ func TestPagesServeMatchingVersionedAssetsAndCachePolicy(t *testing.T) {
 		t.Fatalf("versioned compression changed resource bytes: %v", err)
 	}
 }
+
+func TestUserDailyTrendBarsHaveLayout(t *testing.T) {
+	css, err := fs.ReadFile(webFS, "web/public/user.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js, err := fs.ReadFile(webFS, "web/public/user.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sheet, script := string(css), string(js)
+	if !strings.Contains(script, "trend-bar-fill") {
+		t.Fatal("user.js no longer draws daily trend bars")
+	}
+	for _, rule := range []string{
+		".user-trend-chart {",
+		"display: flex",
+		".trend-bar-track {",
+		"height: 180px",
+		".trend-bar-fill {",
+		"position: absolute",
+		"bottom: 0",
+	} {
+		if !strings.Contains(sheet, rule) {
+			t.Fatalf("user.css missing daily trend bar layout %q; percentage bar heights collapse to zero without a definite track height", rule)
+		}
+	}
+}
