@@ -10,7 +10,7 @@ require (
 	github.com/parquet-go/parquet-go v0.32.0
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/refraction-networking/utls v1.8.2
-	github.com/router-for-me/CLIProxyAPI/v8 v8.0.63
+	github.com/router-for-me/CLIProxyAPI/v8 v8.0.78
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/sergeymakinen/go-ico v1.0.0
 	golang.org/x/crypto v0.57.0
@@ -23,7 +23,7 @@ require (
 
 require (
 	cloud.google.com/go/compute/metadata v0.3.0 // indirect
-	github.com/MoeForge/moego v0.1.0-alpha.1 // indirect
+	github.com/MoeForge/moego v0.1.0-alpha.4 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
 	github.com/bytedance/sonic v1.15.0 // indirect
 	github.com/bytedance/sonic/loader v0.5.0 // indirect
