@@ -1943,6 +1943,9 @@ func TestSmartRouterV3SpeculativeCascadeZeroDisruptionEscalation(t *testing.T) {
 	cfg.Mode = "live"
 	cfg.Classifier = "heuristic"
 	cfg.SpeculativeCascade = true
+	// Keep the second request deterministic; the first speculative escalation
+	// must not change its candidate ranking through online bandit feedback.
+	cfg.BanditEnabled = false
 	cfg.ResponseHeaders = true
 	cfg.Tiers = map[string][]string{
 		TierMedium:  {"gemini-2.5-flash"},

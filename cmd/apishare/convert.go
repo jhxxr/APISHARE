@@ -184,23 +184,38 @@ func buildInputText(system string, msgs []canonMsg) string {
 // ---------- 客户端请求解析（→ canon） ----------
 
 func parseClientRequest(format clientFormat, body []byte, pathModel string) (*canonReq, error) {
+	// Parse the top-level object once. The RawMessage fields are shared by the
+	// format-specific accounting pass and the richer conversion pass below.
+	var raw map[string]json.RawMessage
 	var cr *canonReq
 	var err error
 	switch format {
 	case FormatOpenAIChat:
-		cr, err = parseOpenAIChat(body)
+		raw, err = rawMap(body)
+		if err == nil {
+			cr, err = parseOpenAIChatRaw(raw)
+		}
 	case FormatOpenAIResponse:
-		cr, err = parseOpenAIResponses(body)
+		raw, err = rawMap(body)
+		if err == nil {
+			cr, err = parseOpenAIResponsesRaw(raw, body)
+		}
 	case FormatAnthropic:
-		cr, err = parseAnthropicMessages(body)
+		raw, err = rawMap(body)
+		if err == nil {
+			cr, err = parseAnthropicMessagesRaw(raw, body)
+		}
 	case FormatGemini:
-		cr, err = parseGeminiBody(body, pathModel)
+		raw, err = rawMap(body)
+		if err == nil {
+			cr, err = parseGeminiBodyRaw(raw, pathModel)
+		}
 	default:
 		return nil, fmt.Errorf("unknown client format")
 	}
 	if err == nil {
 		// Conversion validation is deferred so native requests retain all provider features.
-		cr.ConversionError = enrichCanonRequest(cr, format, body)
+		cr.ConversionError = enrichCanonRequestRaw(cr, format, raw)
 	}
 	return cr, err
 }
@@ -210,6 +225,10 @@ func parseOpenAIChat(body []byte) (*canonReq, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseOpenAIChatRaw(m)
+}
+
+func parseOpenAIChatRaw(m map[string]json.RawMessage) (*canonReq, error) {
 	var model string
 	json.Unmarshal(m["model"], &model)
 	cr := &canonReq{
@@ -252,6 +271,10 @@ func parseOpenAIResponses(body []byte) (*canonReq, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseOpenAIResponsesRaw(m, body)
+}
+
+func parseOpenAIResponsesRaw(m map[string]json.RawMessage, body []byte) (*canonReq, error) {
 	var typed struct {
 		Model           string   `json:"model"`
 		Instructions    string   `json:"instructions"`
@@ -300,6 +323,10 @@ func parseAnthropicMessages(body []byte) (*canonReq, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseAnthropicMessagesRaw(m, body)
+}
+
+func parseAnthropicMessagesRaw(m map[string]json.RawMessage, body []byte) (*canonReq, error) {
 	var typed struct {
 		Model       string   `json:"model"`
 		Stream      bool     `json:"stream"`
@@ -336,6 +363,10 @@ func parseGeminiBody(body []byte, pathModel string) (*canonReq, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseGeminiBodyRaw(m, pathModel)
+}
+
+func parseGeminiBodyRaw(m map[string]json.RawMessage, pathModel string) (*canonReq, error) {
 	cr := &canonReq{Model: pathModel}
 	cr.System = flattenText(m["systemInstruction"])
 	var gc struct {

@@ -580,6 +580,7 @@ type protocolStream struct {
 	format             clientFormat
 	model, id          string
 	wantUsage, started bool
+	flushOutput        func(*gin.Context)
 	sequence           int
 	createdAt          int64
 	blocks             []responseBlock
@@ -655,13 +656,22 @@ func (w *protocolStream) emit(c *gin.Context, v map[string]any) {
 		w.err = fmt.Errorf("%w: %w", errDownstreamWrite, w.err)
 	}
 	if w.err == nil {
-		c.Writer.Flush()
+		w.flush(c)
 		if state := messagesState(c); state != nil {
 			state.observe(v)
 			state.lastWrite = time.Now()
 		}
 	}
 }
+
+func (w *protocolStream) flush(c *gin.Context) {
+	if w.flushOutput != nil {
+		w.flushOutput(c)
+		return
+	}
+	c.Writer.Flush()
+}
+
 func (w *protocolStream) chunk(c *gin.Context, delta map[string]any, finish any) {
 	w.emit(c, map[string]any{"id": w.id, "object": "chat.completion.chunk", "created": w.createdAt, "model": w.model, "choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": finish}}})
 }
@@ -973,7 +983,7 @@ func (w *protocolStream) finish(c *gin.Context, u upstreamUsage, reason, stopSeq
 			if w.err != nil {
 				w.err = fmt.Errorf("%w: %w", errDownstreamWrite, w.err)
 			} else {
-				c.Writer.Flush()
+				w.flush(c)
 			}
 		}
 	}
@@ -1004,6 +1014,19 @@ func (w *protocolStream) fail(c *gin.Context) {
 
 func relayProtocolSSE(c *gin.Context, resp *http.Response, format clientFormat, task *relayTask, info *relayInfo) error {
 	w := newProtocolStream(c, task.format, task.model, task.wantUsageChunk)
+	flushOutputPending := false
+	flushUpstreamBatch := func() {
+		if !flushOutputPending {
+			return
+		}
+		c.Writer.Flush()
+		flushOutputPending = false
+		if state := messagesState(c); state != nil {
+			state.lastWrite = time.Now()
+		}
+	}
+	w.flushOutput = func(*gin.Context) { flushOutputPending = true }
+	defer flushUpstreamBatch()
 	if task.canon != nil {
 		w.responseTools = task.canon.ResponseTools
 	}
@@ -1021,7 +1044,7 @@ func relayProtocolSSE(c *gin.Context, resp *http.Response, format clientFormat, 
 		pendingDeltas = nil
 		return nil
 	}
-	err := readSSEFrames(resp.Body, func(payload string) (bool, error) {
+	err := readSSEFrames(&flushBeforeUpstreamRead{source: resp.Body, flush: flushUpstreamBatch}, func(payload string) (bool, error) {
 		deltas, u, err := d.decode(payload)
 		info.mergeUsage(u)
 		if err != nil {
@@ -1037,6 +1060,7 @@ func relayProtocolSSE(c *gin.Context, resp *http.Response, format clientFormat, 
 			}
 			info.OutputText.WriteString(delta.Block.Text)
 			info.OutputText.WriteString(delta.Block.Call.Arguments)
+			info.markFirstOutput()
 			if delta.Block.Kind == "thinking" && task.canon.omitThinkingOutput() {
 				continue
 			}
@@ -1065,6 +1089,9 @@ func relayProtocolSSE(c *gin.Context, resp *http.Response, format clientFormat, 
 			if err := flushPending(); err != nil {
 				return false, err
 			}
+		}
+		if isStop {
+			info.markFirstOutput()
 		}
 		return isStop, nil
 	})

@@ -24,6 +24,8 @@ const maxBodyBytes = 32 << 20 // 32MB
 
 var errDownstreamWrite = errors.New("writing client response failed")
 
+const maxFirstOutputTimeoutSwitches = 1
+
 type protocolConversionError struct{ cause error }
 
 func (e *protocolConversionError) Error() string { return e.cause.Error() }
@@ -43,21 +45,22 @@ func isRetryableStatus(code int) bool {
 }
 
 type relayInfo struct {
-	UpstreamID    int64
-	UpstreamName  string
-	UpstreamModel string
-	Status        int
-	PromptTok     int
-	CompletionTok int
-	InKnown       bool
-	OutKnown      bool
-	Usage         upstreamUsage
-	OutputText    strings.Builder
-	LatencyMS     int64 // 上游响应头到达耗时
-	FirstTokenMS  int64 // 首字延迟：请求开始到首个输出增量的耗时
-	DurationMS    int64 // 总耗时：请求开始到转发结束的耗时
-	startedAt     time.Time
-	firstTokenSet bool
+	UpstreamID       int64
+	UpstreamName     string
+	UpstreamModel    string
+	Status           int
+	PromptTok        int
+	CompletionTok    int
+	InKnown          bool
+	OutKnown         bool
+	Usage            upstreamUsage
+	OutputText       strings.Builder
+	LatencyMS        int64 // 上游响应头到达耗时
+	FirstTokenMS     int64 // 首字延迟：请求开始到首个输出增量的耗时
+	DurationMS       int64 // 总耗时：请求开始到转发结束的耗时
+	startedAt        time.Time
+	firstTokenSet    bool
+	firstOutputGuard *firstOutputDeadlineBody
 }
 
 // markFirstToken 记录首个输出增量的到达时刻，只生效一次。
@@ -67,6 +70,22 @@ func (i *relayInfo) markFirstToken() {
 	}
 	i.firstTokenSet = true
 	i.FirstTokenMS = time.Since(i.startedAt).Milliseconds()
+}
+
+func (i *relayInfo) markFirstOutput() {
+	if i.firstOutputGuard != nil {
+		i.firstOutputGuard.MarkOutput()
+	}
+}
+
+func normalizePreOutputTimeout(err error, info *relayInfo) error {
+	if err == nil || info == nil || info.firstOutputGuard == nil || info.firstOutputGuard.outputObserved() {
+		return err
+	}
+	if errors.Is(err, errUpstreamIdleTimeout) {
+		return fmt.Errorf("%w: %v", errUpstreamFirstOutputTimeout, err)
+	}
+	return err
 }
 
 // elapsedMS 返回本次尝试已消耗的毫秒数；从未发起请求时返回 0。
@@ -381,11 +400,15 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 		baseBody := body
 
 		s := getSettings()
-		attempts := 1 + s.Retry
+		normalAttempts := 1 + s.Retry
 		var info relayInfo
 		var attemptErr error
 		var task *relayTask
 		wrote := false
+		firstOutputTimeouts := 0
+		firstOutputBudgetExhausted := false
+		firstOutputFallbackPending := false
+		firstOutputFallbackUsed := false
 
 		var prevSessionUpID int64
 		var prevSessionUpModel string
@@ -483,6 +506,7 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			triedKeys := map[string]bool{}
 			var conversionErr error
 			upstreamAttempted := false
+			attempts := normalAttempts
 
 			for i := 0; i < attempts; i++ {
 				if err := c.Request.Context().Err(); err != nil {
@@ -502,6 +526,7 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 				}
 				task.byokUsed = up.ID < 0
 
+				attemptWasFirstOutputFallback := firstOutputFallbackPending
 				previousInfo, previousErr := info, attemptErr
 				info, wrote, attemptErr = doRelay(c, up, task)
 				var conversion *protocolConversionError
@@ -518,15 +543,36 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 					i--
 					continue
 				}
+				if attemptWasFirstOutputFallback {
+					firstOutputFallbackPending = false
+					firstOutputFallbackUsed = true
+				}
 				upstreamAttempted = true
 				var toolLimit *upstreamToolLimitError
 				if errors.As(attemptErr, &toolLimit) {
+					if attemptWasFirstOutputFallback {
+						firstOutputBudgetExhausted = true
+						break
+					}
 					// This endpoint rejected the request before generation. Try
 					// another channel/protocol for the SAME model first; never retry
 					// the rejecting channel or discard any tool definitions.
 					tried[up.ID] = true
 					i--
 					continue
+				}
+				if errors.Is(attemptErr, errUpstreamFirstOutputTimeout) {
+					if firstOutputTimeouts >= maxFirstOutputTimeoutSwitches {
+						firstOutputBudgetExhausted = true
+						log.Printf("[failover] key=%s model=%s exhausted first-output timeout switch budget", ak.Name, cr.Model)
+						break
+					}
+					firstOutputTimeouts++
+					firstOutputFallbackPending = true
+					// Switch immediately and spend exactly one next attempt, even when
+					// Retry is zero. Do not continue walking the pool on the normal
+					// retry budget after a first-output timeout.
+					attempts = i + 2
 				}
 				if routerDecision != nil && routerBanditEnabled && c.Request.Context().Err() == nil && !errors.Is(attemptErr, errDownstreamWrite) {
 					if attemptErr != nil && strings.Contains(attemptErr.Error(), "speculative_probe:") {
@@ -544,8 +590,18 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 					log.Printf("[failover] key=%s model=%s upstream=%s attempt=%d err=%v",
 						ak.Name, cr.Model, up.Name, i+1, attemptErr)
 				}
+				if attemptWasFirstOutputFallback {
+					firstOutputBudgetExhausted = true
+					break
+				}
 			}
 
+			if firstOutputFallbackPending || firstOutputFallbackUsed {
+				firstOutputBudgetExhausted = true
+			}
+			if firstOutputBudgetExhausted {
+				break
+			}
 			if wrote || errors.Is(attemptErr, errDownstreamWrite) || c.Request.Context().Err() != nil {
 				if routerDecision != nil && info.Status >= 200 && info.Status < 300 {
 					rememberAutoRouterSessionWithDomain(rSessionKey, candRawModel, routerDecision.Tier, routerDecision.PrimaryDomain, info.UpstreamID, info.UpstreamModel)
@@ -1012,6 +1068,11 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 			resp.Body = newActivityDeadlineBody(resp.Body, relayNetwork.BodyIdleTimeout)
 		}
 	}
+	if task.stream && resp.StatusCode >= 200 && resp.StatusCode < 300 && relayNetwork.FirstOutputTimeout > 0 {
+		firstOutputGuard := newFirstOutputDeadlineBody(resp.Body, start.Add(relayNetwork.FirstOutputTimeout))
+		resp.Body = firstOutputGuard
+		info.firstOutputGuard = firstOutputGuard
+	}
 	resp.Body = newMessagesKeepaliveBody(resp.Body, req.Context(), keepalive)
 	defer resp.Body.Close()
 	info.Status = resp.StatusCode
@@ -1087,7 +1148,6 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		}
 		return info, true, nil
 	}
-
 	ct := resp.Header.Get("Content-Type")
 	if up.Type == "cline" {
 		normalizeClineResponse(resp)
@@ -1120,6 +1180,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		}
 		if task.stream && isSSE {
 			err = relaySSENative(c, resp, task.format, &info, !task.nativeOnly, task.speculativeProbe)
+			err = normalizePreOutputTimeout(err, &info)
 			if err != nil && keepalive != nil && keepalive.committed && !keepalive.upstreamError && !errors.Is(err, errDownstreamWrite) && c.Request.Context().Err() == nil {
 				writeMessagesStreamError(c, "upstream stream interrupted")
 			}
@@ -1144,6 +1205,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 			// The upstream answered with a single JSON body; the client still gets
 			// SSE, so the first token time is when that delivery starts.
 			info.markFirstToken()
+			info.markFirstOutput()
 			err = relayNativeJSONStream(c, task.format, b, task.wantUsageChunk)
 			return info, relayResponseCommitted(c), err
 		}
@@ -1153,6 +1215,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 
 	if task.stream && isSSE && task.canon.OutputFormat == nil {
 		err = relayProtocolSSE(c, resp, wireFormat, task, &info)
+		err = normalizePreOutputTimeout(err, &info)
 		return info, relayResponseCommitted(c), err
 	}
 	var result *canonResponse
@@ -1186,6 +1249,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	if task.stream {
 		// A JSON-only upstream still returns an SSE envelope to a streaming client.
 		info.markFirstToken()
+		info.markFirstOutput()
 		writer := newProtocolStream(c, task.format, task.model, task.wantUsageChunk)
 		writer.responseTools = task.canon.ResponseTools
 		writer.reasoningScope = replayScope
@@ -1244,11 +1308,23 @@ func canonResponseHasToolCall(r *canonResponse) bool {
 func relaySSENative(c *gin.Context, resp *http.Response, format clientFormat, info *relayInfo, checkTerminal ...bool) error {
 	verify := len(checkTerminal) == 0 || checkTerminal[0]
 	speculative := len(checkTerminal) > 1 && checkTerminal[1]
-	reader := bufio.NewReaderSize(resp.Body, 1<<16)
 	terminal := false
 	committed := false
 	sawTool := false
 	keepalive := messagesState(c)
+	flushPending := false
+	flushToClient := func() {
+		if !flushPending {
+			return
+		}
+		c.Writer.Flush()
+		flushPending = false
+		if keepalive != nil {
+			keepalive.lastWrite = time.Now()
+		}
+	}
+	defer flushToClient()
+	reader := bufio.NewReaderSize(&flushBeforeUpstreamRead{source: resp.Body, flush: flushToClient}, 1<<16)
 	var data []string
 	var pending, frame strings.Builder
 	consume := func() (bool, error) {
@@ -1286,6 +1362,7 @@ func relaySSENative(c *gin.Context, resp *http.Response, format clientFormat, in
 				info.markFirstToken()
 			}
 			output = !committed && (!parsed || !nativeSSEPreludeObject(format, event))
+			semanticOutput := output
 			if !committed && speculative && !sawTool {
 				if esc, reason := shouldEscalateSpeculativeOutput(info.OutputText.String(), sawTool, done); esc {
 					return false, fmt.Errorf("%w: speculative_probe:%s", errAutoRouterModelIncompatible, reason)
@@ -1293,6 +1370,9 @@ func relaySSENative(c *gin.Context, resp *http.Response, format clientFormat, in
 				if !done && utf8.RuneCountInString(info.OutputText.String()) < 84 {
 					output = false
 				}
+			}
+			if semanticOutput || done {
+				info.markFirstOutput()
 			}
 			if keepalive != nil && parsed {
 				keepalive.observe(event)
@@ -1317,10 +1397,7 @@ func relaySSENative(c *gin.Context, resp *http.Response, format clientFormat, in
 			if _, err := c.Writer.WriteString(frame.String()); err != nil {
 				return false, fmt.Errorf("%w: %w", errDownstreamWrite, err)
 			}
-			c.Writer.Flush()
-			if keepalive != nil {
-				keepalive.lastWrite = time.Now()
-			}
+			flushPending = true
 		} else {
 			if pending.Len()+frame.Len() > maxBodyBytes {
 				return false, fmt.Errorf("upstream SSE prelude too large")

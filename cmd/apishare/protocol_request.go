@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -88,6 +89,38 @@ func enrichCanonRequest(cr *canonReq, format clientFormat, body []byte) error {
 	if decodeErr != nil {
 		return fmt.Errorf("invalid JSON object")
 	}
+	return enrichCanonRequestObject(cr, format, m)
+}
+
+// enrichCanonRequestRaw consumes the same top-level RawMessage map used by the
+// format-specific parser. Only fields interpreted during conversion are
+// decoded into interface values; UseNumber preserves opaque/native integers.
+func enrichCanonRequestRaw(cr *canonReq, format clientFormat, raw map[string]json.RawMessage) error {
+	m := make(map[string]any, len(raw))
+	for _, field := range []string{
+		"metadata", "conversation_id", "top_p", "parallel_tool_calls", "reasoning_effort", "reasoning",
+		"output_config", "output_format", "thinking", "response_format", "context_management", "functions",
+		"function_call", "audio", "modalities", "text", "generationConfig", "stop", "stop_sequences",
+		"previous_response_id", "conversation", "n", "tools", "tool_choice", "toolConfig", "messages",
+		"instructions", "input", "system", "systemInstruction", "contents", "cachedContent",
+		"continuationToken", "safetySettings",
+	} {
+		value, exists := raw[field]
+		if !exists {
+			continue
+		}
+		var decoded any
+		decoder := json.NewDecoder(bytes.NewReader(value))
+		decoder.UseNumber()
+		if err := decoder.Decode(&decoded); err != nil {
+			return fmt.Errorf("invalid JSON object")
+		}
+		m[field] = decoded
+	}
+	return enrichCanonRequestObject(cr, format, m)
+}
+
+func enrichCanonRequestObject(cr *canonReq, format clientFormat, m map[string]any) error {
 	cr.SessionID = str(object(m["metadata"])["session_id"])
 	if cr.SessionID == "" {
 		cr.SessionID = str(m["conversation_id"])

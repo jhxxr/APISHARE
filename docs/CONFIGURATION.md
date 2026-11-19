@@ -17,6 +17,7 @@
 | `UPSTREAM_DIAL_TIMEOUT_SEC` | `15` | TCP 建连与 TLS 握手超时时间（秒） |
 | `UPSTREAM_HEADER_TIMEOUT_SEC` | `180` | 等待上游响应首包头部的最长超时（秒，0 为不限） |
 | `UPSTREAM_IDLE_TIMEOUT_SEC` | `300` | HTTP / Realtime 等待上游数据包的空闲超时（秒，不限制流式持续总长，0 为不限）；Responses WS 使用独立 ping/pong 保活 |
+| `UPSTREAM_FIRST_OUTPUT_TIMEOUT_SEC` | `300` | 从每次上游请求发出起计，等待流式请求首个语义输出的最长时间（秒）；上游保活/初始化事件不算模型输出，超时后最多切换一次备用上游，0 为关闭 |
 | `STREAM_KEEPALIVE_INTERVAL_SEC` | `10` | Messages 流式请求向客户端发送保活事件的间隔（秒，0 为关闭，最大 300）；不影响上游空闲超时，其他协议和非流式请求不注入保活 |
 | `REALTIME_MAX_DURATION_SEC` | `3600` | Realtime WebSocket 单连接最长存活时间（秒，1～86400）；空闲读取另受 `UPSTREAM_IDLE_TIMEOUT_SEC` 限制 |
 | `RESPONSES_WS_MAX_DURATION_SEC` | `3300` | Responses WebSocket 单连接最长存活时间（秒，1～86400）；到期发送 `1001` 关闭帧，由客户端重连 |

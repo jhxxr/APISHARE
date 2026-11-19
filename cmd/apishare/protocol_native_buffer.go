@@ -15,7 +15,7 @@ func collectNativeProtocolSSE(reader io.Reader, format clientFormat, info *relay
 	}
 	const limit = 64 << 20
 	wire := &io.LimitedReader{R: reader, N: limit + 1}
-	b := nativeProtocolBuffer{format: format, root: map[string]any{}, entries: map[int]map[string]any{}, tools: map[int]map[int]map[string]any{}, arguments: map[int]string{}}
+	b := nativeProtocolBuffer{format: format, root: map[string]any{}, entries: map[int]map[string]any{}, tools: map[int]map[int]map[string]any{}, arguments: map[int]string{}, textBuffers: nativeStringBuffers{}}
 	err := readSSEFrames(wire, func(payload string) (bool, error) {
 		if payload == "[DONE]" {
 			b.terminal = b.terminal || format == FormatOpenAIChat
@@ -59,13 +59,14 @@ func collectNativeProtocolSSE(reader io.Reader, format clientFormat, info *relay
 }
 
 type nativeProtocolBuffer struct {
-	format    clientFormat
-	root      map[string]any
-	entries   map[int]map[string]any
-	tools     map[int]map[int]map[string]any
-	arguments map[int]string
-	closed    map[int]bool
-	terminal  bool
+	format      clientFormat
+	root        map[string]any
+	entries     map[int]map[string]any
+	tools       map[int]map[int]map[string]any
+	arguments   map[int]string
+	closed      map[int]bool
+	textBuffers nativeStringBuffers
+	terminal    bool
 }
 
 func nativeStreamIndex(value any) (int, error) {
@@ -100,10 +101,11 @@ func mergeNativeUsage(dst map[string]any, field string, value any, format client
 	}
 }
 
-func appendNativeStrings(dst, src map[string]any, fields ...string) {
+func (b *nativeProtocolBuffer) appendNativeStrings(stream string, index, subindex int, dst, src map[string]any, fields ...string) {
 	for _, field := range fields {
 		if value, ok := src[field].(string); ok {
-			dst[field] = str(dst[field]) + value
+			key := nativeStringKey{stream: stream, index: index, subindex: subindex, field: field}
+			dst[field] = b.textBuffers.append(key, str(dst[field]), value)
 		}
 	}
 }
@@ -153,14 +155,15 @@ func (b *nativeProtocolBuffer) chat(event map[string]any) error {
 		mergeNativeFields(message, delta)
 		for _, field := range []string{"content", "refusal", "reasoning_content", "reasoning"} {
 			if value, ok := delta[field].(string); ok {
-				message[field] = str(previous[field]) + value
+				key := nativeStringKey{stream: "chat-message", index: index, subindex: -1, field: field}
+				message[field] = b.textBuffers.append(key, str(previous[field]), value)
 			} else if delta[field] == nil && previous[field] != nil {
 				message[field] = previous[field]
 			}
 		}
 		if function := object(delta["function_call"]); function != nil {
 			full := copyProtocolObject(object(previous["function_call"]))
-			appendNativeStrings(full, function, "name", "arguments")
+			b.appendNativeStrings("chat-function-call", index, -1, full, function, "name", "arguments")
 			message["function_call"] = full
 		}
 		if audio := object(delta["audio"]); audio != nil {
@@ -169,7 +172,8 @@ func (b *nativeProtocolBuffer) chat(event map[string]any) error {
 			mergeNativeFields(full, audio)
 			for _, field := range []string{"data", "transcript"} {
 				if value, ok := audio[field].(string); ok {
-					full[field] = str(old[field]) + value
+					key := nativeStringKey{stream: "chat-audio", index: index, subindex: -1, field: field}
+					full[field] = b.textBuffers.append(key, str(old[field]), value)
 				}
 			}
 			message["audio"] = full
@@ -191,7 +195,7 @@ func (b *nativeProtocolBuffer) chat(event map[string]any) error {
 					full[field] = value
 				}
 			}
-			appendNativeStrings(object(full["function"]), object(call["function"]), "name", "arguments")
+			b.appendNativeStrings("chat-tool-call", index, toolIndex, object(full["function"]), object(call["function"]), "name", "arguments")
 		}
 	}
 	return nil
@@ -226,17 +230,18 @@ func (b *nativeProtocolBuffer) anthropic(event map[string]any) error {
 		delta := object(event["delta"])
 		switch str(delta["type"]) {
 		case "text_delta":
-			appendNativeStrings(block, delta, "text")
+			b.appendNativeStrings("anthropic-block", index, -1, block, delta, "text")
 		case "thinking_delta":
-			appendNativeStrings(block, delta, "thinking")
+			b.appendNativeStrings("anthropic-block", index, -1, block, delta, "thinking")
 		case "signature_delta":
-			appendNativeStrings(block, delta, "signature")
+			b.appendNativeStrings("anthropic-block", index, -1, block, delta, "signature")
 		case "compaction_delta":
-			appendNativeStrings(block, delta, "content")
+			b.appendNativeStrings("anthropic-block", index, -1, block, delta, "content")
 		case "input_json_delta":
 			// The initial input is a seed, not a JSON fragment. Deltas replace
 			// it as one complete input object, preventing "{}{...}".
-			b.arguments[index] += str(delta["partial_json"])
+			key := nativeStringKey{stream: "anthropic-input-json", index: index, subindex: -1, field: "json"}
+			b.arguments[index] = b.textBuffers.append(key, b.arguments[index], str(delta["partial_json"]))
 		case "citations_delta":
 			block["citations"] = append(array(block["citations"]), delta["citation"])
 		default:

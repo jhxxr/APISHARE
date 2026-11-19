@@ -196,6 +196,7 @@ func collectNativeResponsesSSE(reader io.Reader, info *relayInfo) ([]byte, error
 	const limit = 64 << 20
 	wire := &io.LimitedReader{R: reader, N: limit + 1}
 	items := map[int]map[string]any{}
+	textBuffers := nativeStringBuffers{}
 	var terminal map[string]any
 	var baseResponse map[string]any
 	err := readSSEFrames(wire, func(payload string) (bool, error) {
@@ -225,7 +226,9 @@ func collectNativeResponsesSSE(reader io.Reader, info *relayInfo) ([]byte, error
 				baseResponse = response
 			}
 		case "response.output_item.added", "response.output_item.done":
-			items[index] = supplementNativeItem(object(event["item"]), item)
+			item = supplementNativeItem(object(event["item"]), item)
+			items[index] = item
+			syncNativeResponsesItemBuffers(textBuffers, index, item)
 		case "response.function_call_arguments.delta", "response.custom_tool_call_input.delta":
 			field, kind := "arguments", "function_call"
 			if typ == "response.custom_tool_call_input.delta" {
@@ -234,7 +237,8 @@ func collectNativeResponsesSSE(reader io.Reader, info *relayInfo) ([]byte, error
 			if item["type"] == nil {
 				item["type"] = kind
 			}
-			item[field] = str(item[field]) + str(event["delta"])
+			key := nativeStringKey{stream: "responses-item", index: index, subindex: -1, field: field}
+			item[field] = textBuffers.append(key, str(item[field]), str(event["delta"]))
 			items[index] = item
 		case "response.function_call_arguments.done", "response.custom_tool_call_input.done":
 			field, kind := "arguments", "function_call"
@@ -246,6 +250,8 @@ func collectNativeResponsesSSE(reader io.Reader, info *relayInfo) ([]byte, error
 			}
 			if str(event[field]) != "" {
 				item[field] = event[field]
+				key := nativeStringKey{stream: "responses-item", index: index, subindex: -1, field: field}
+				textBuffers.replace(key, str(event[field]))
 			}
 			for _, name := range []string{"item_id", "call_id", "name"} {
 				if str(event[name]) != "" {
@@ -281,9 +287,18 @@ func collectNativeResponsesSSE(reader io.Reader, info *relayInfo) ([]byte, error
 			if strings.HasPrefix(typ, "response.content_part.") {
 				part = supplementNativeItem(object(event["part"]), part)
 			} else if strings.HasSuffix(typ, ".delta") {
-				part[textField] = str(part[textField]) + str(event["delta"])
+				key := nativeStringKey{stream: "responses-content", index: index, subindex: partIndex, field: textField}
+				if field == "summary" {
+					key.stream = "responses-summary"
+				}
+				part[textField] = textBuffers.append(key, str(part[textField]), str(event["delta"]))
 			} else if str(event[textField]) != "" {
 				part[textField] = event[textField]
+				key := nativeStringKey{stream: "responses-content", index: index, subindex: partIndex, field: textField}
+				if field == "summary" {
+					key.stream = "responses-summary"
+				}
+				textBuffers.replace(key, str(event[textField]))
 			}
 			parts[partIndex] = part
 			if item["type"] == nil {
@@ -293,6 +308,9 @@ func collectNativeResponsesSSE(reader io.Reader, info *relayInfo) ([]byte, error
 				item["role"] = "assistant"
 			}
 			item[field], items[index] = parts, item
+			if strings.HasPrefix(typ, "response.content_part.") {
+				syncNativeResponsesItemBuffers(textBuffers, index, item)
+			}
 		}
 		if done {
 			terminal = object(event["response"])
@@ -355,4 +373,28 @@ func collectNativeResponsesSSE(reader io.Reader, info *relayInfo) ([]byte, error
 	}
 	terminal["output"] = output
 	return json.Marshal(terminal)
+}
+
+func syncNativeResponsesItemBuffers(buffers nativeStringBuffers, index int, item map[string]any) {
+	for _, collection := range []struct {
+		field  string
+		stream string
+	}{{"content", "responses-content"}, {"summary", "responses-summary"}} {
+		for partIndex, raw := range array(item[collection.field]) {
+			part := object(raw)
+			if part == nil {
+				continue
+			}
+			for _, field := range []string{"text", "refusal"} {
+				if value, ok := part[field].(string); ok && value != "" {
+					buffers.replace(nativeStringKey{stream: collection.stream, index: index, subindex: partIndex, field: field}, value)
+				}
+			}
+		}
+	}
+	for _, field := range []string{"arguments", "input", "text", "refusal"} {
+		if value, ok := item[field].(string); ok && value != "" {
+			buffers.replace(nativeStringKey{stream: "responses-item", index: index, subindex: -1, field: field}, value)
+		}
+	}
 }
