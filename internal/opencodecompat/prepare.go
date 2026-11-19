@@ -55,7 +55,8 @@ func Decode(body []byte) (map[string]any, error) {
 }
 
 // Prepare keeps client schemas and instructions while adding the captured CLI
-// prompt and the full tool set. It only edits this request's decoded copy.
+// prompt and the full tool set, except for tool-free title calls. It only edits
+// this request's decoded copy.
 func Prepare(body []byte, protocol Protocol, v1 bool) (map[string]any, *ToolRenames, error) {
 	payload, err := Decode(body)
 	if err != nil {
@@ -68,6 +69,7 @@ func Prepare(body []byte, protocol Protocol, v1 bool) (map[string]any, *ToolRena
 			}
 		}
 	}
+	isTitle := isTitleGenerationRequest(payload, protocol)
 	payload["stream"] = true
 	if protocol == Chat {
 		options, _ := payload["stream_options"].(map[string]any)
@@ -86,6 +88,9 @@ func Prepare(body []byte, protocol Protocol, v1 bool) (map[string]any, *ToolRena
 		}
 	}
 	injectOfficialPrompt(payload, protocol, v1)
+	if isTitle {
+		return payload, nil, nil
+	}
 	renames, _ := renameAndCompleteTools(payload, protocol, v1)
 	return payload, renames, nil
 }

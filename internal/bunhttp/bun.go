@@ -56,9 +56,9 @@ type BunOptions struct {
 //
 // Idle connections are pooled per host, up to MaxIdleConnsPerHost, until
 // IdleConnTimeout. A pooled connection the server closes is dropped while it
-// is idle, and a reused connection the server drops before answering is
-// retried once on a fresh one. Unlike http.Transport it does not cap the
-// connections per host.
+// is idle. If a reused connection drops before the first response byte,
+// only safe methods can be retried once. Unlike http.Transport it does not
+// cap the connections per host.
 type BunTransport struct {
 	proxyFor              func(*http.Request) (*url.URL, error)
 	tlsConfig             *utls.Config
@@ -181,10 +181,22 @@ func (t *BunTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		if err == nil {
 			return resp, nil
 		}
-		if info.Reused && dropped && !retried && ctx.Err() == nil {
+		if info.Reused && dropped && !retried && ctx.Err() == nil && bunReplayable(req.Method) {
 			continue
 		}
 		return nil, bunContextError(ctx, err)
+	}
+}
+
+func bunReplayable(method string) bool {
+	// A dropped connection does not tell us whether the server applied the
+	// request. A caller-supplied idempotency key does not establish that the
+	// upstream honors it.
+	switch method {
+	case "", http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
+		return true
+	default:
+		return false
 	}
 }
 

@@ -202,3 +202,93 @@ func TestStructuredToolSSEPreservesInputsAndExactNames(t *testing.T) {
 		}
 	}
 }
+
+func TestChatStreamHoldsArgumentsUntilSplitNameResolves(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		for _, terminal := range []string{"resolved", "finish", "done", "eof"} {
+			t.Run(fmt.Sprintf("legacy=%t/%s", legacy, terminal), func(t *testing.T) {
+				renames := NewToolRenames()
+				wire := ClientToolWireName("Read", nil)
+				renames.Add("Read", wire)
+				var stream strings.Builder
+				chunk := func(name, args string) {
+					function := map[string]any{"arguments": args}
+					if name != "" {
+						function["name"] = name
+					}
+					delta := map[string]any{}
+					if legacy {
+						delta["function_call"] = function
+					} else {
+						delta["tool_calls"] = []any{map[string]any{"index": 2, "id": "call-read", "function": function}}
+					}
+					payload := map[string]any{"id": "chat-test", "choices": []any{map[string]any{"index": 1, "delta": delta}}}
+					encoded, _ := Marshal(payload)
+					stream.WriteString("data: " + string(encoded) + "\n\n")
+				}
+				chunk(wire[:5], `{"file`)
+				chunk("", `_path":`)
+				wantName := wire[:5]
+				if terminal == "resolved" {
+					chunk(wire[5:], `"a.go"}`)
+					wantName = "Read"
+				} else {
+					chunk("", `"a.go"}`)
+				}
+				if terminal == "finish" {
+					stream.WriteString("data: {\"choices\":[{\"index\":1,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n")
+				}
+				if terminal != "eof" {
+					stream.WriteString("data: [DONE]\n\n")
+				}
+				body := NewResponseBody(io.NopCloser(strings.NewReader(stream.String())), Chat, renames, true)
+				got, err := io.ReadAll(body)
+				body.Close()
+				if terminal == "eof" && !errors.Is(err, io.ErrUnexpectedEOF) || terminal != "eof" && err != nil {
+					t.Fatalf("unexpected terminal error: %v\n%s", err, got)
+				}
+				key := "1:2"
+				if legacy {
+					key = "1:legacy"
+				}
+				if names := restoredChatNames(t, got); names[key] != wantName {
+					t.Fatalf("name mismatch: %+v\n%s", names, got)
+				}
+				var name, arguments string
+				for _, line := range strings.Split(string(got), "\n") {
+					if !strings.HasPrefix(line, "data: {") {
+						continue
+					}
+					payload, _ := Decode([]byte(strings.TrimPrefix(line, "data: ")))
+					for _, raw := range SliceAt(payload, "choices") {
+						choice := raw.(map[string]any)
+						delta, _ := choice["delta"].(map[string]any)
+						var functions []map[string]any
+						if legacy {
+							if function, ok := delta["function_call"].(map[string]any); ok {
+								functions = append(functions, function)
+							}
+						} else {
+							for _, raw := range SliceAt(delta, "tool_calls") {
+								call := raw.(map[string]any)
+								function, _ := call["function"].(map[string]any)
+								functions = append(functions, function)
+							}
+						}
+						for _, function := range functions {
+							name += StringAt(function, "name")
+							part := StringAt(function, "arguments")
+							if part != "" && name == "" {
+								t.Fatalf("arguments escaped before tool name: %s", line)
+							}
+							arguments += part
+						}
+					}
+				}
+				if name != wantName || arguments != `{"file_path":"a.go"}` {
+					t.Fatalf("name or buffered arguments corrupted: %q %q\n%s", name, arguments, got)
+				}
+			})
+		}
+	}
+}

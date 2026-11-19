@@ -14,13 +14,31 @@ Captured OpenCode wording and schemas: MIT, see
 API Share changes preserve JSON number precision, convert legacy functions
 without double-prefixing, keep unknown response names unchanged, and integrate
 with the gateway's native and converted JSON/SSE response paths. Local streaming
-modifications assemble exact tool-name fragments through argument or terminal
-boundaries with bounded state, without fuzzy matching or rewriting tool inputs.
-The captured prompt/tool assets retain the source revision listed above.
+modifications assemble tool-name fragments with bounded state and preserve
+arbitrary tool inputs. The captured prompt/tool assets retain the source
+revision listed above.
 
 Client tool names additionally follow upstream commit
 4a4db10387ac6272c1e1ce754400870eed9c29f8 (2026-10-29, PR #161):
-clint_ plus the first twelve hex characters of the name's SHA-256.
-The request-local reverse map, schemas, descriptions and exact streaming
-restoration remain intact; original tool names do not survive in tool-name
-fields sent to the upstream.
+an ordinary tool namespace plus the first twelve hex characters of the name's
+SHA-256. The request-local reverse map, schemas and descriptions remain intact;
+original tool names do not survive in tool-name fields sent to the upstream.
+
+Compatibility was checked against upstream v1.5.0, revision
+e2b2a7c28114d08a28cc5250ae7d4c0a2b16f470 (2026-11-18), on 2026-11-19:
+- 95575c5fd66327645d53e88c969037bb22a96be3 (#182): ordinary tool namespace.
+- 87e798318d370a2ac9dcdf88a09fb21a9b7bbe27 (#166): restore official tool
+  aliases to declared equivalents, remove undeclared history calls and paired
+  results, and hold argument fragments while a Chat tool name is incomplete.
+- internal/protocol/tools.go: resolve unique case/separator variants without
+  guessing between ambiguous declarations. Unlike upstream's fallback, unknown
+  prefixed names are preserved, not stripped blindly.
+- internal/gateway/title.go and the classification ordering in 14faec7:
+  recognize tool-free OpenCode title requests before prompt injection and
+  skip completing their agent tool set; adapt system/instructions and input
+  content for native Anthropic and Responses requests as well.
+
+Local history handling also covers legacy Chat function calls/results and
+Responses custom-tool outputs, while retaining scalar Responses input. Held
+Chat names and arguments are flushed at a completed finish/DONE event or clean
+event-boundary EOF; a missing terminator still reports an unexpected EOF.

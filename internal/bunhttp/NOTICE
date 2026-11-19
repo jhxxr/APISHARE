@@ -24,6 +24,11 @@ Modifications for API Share:
   for empty bodies. The v2 client version follows OpenCode 2.1.1.
 - Proxy/TLS policy wiring, request headers and response decompression remain
   unchanged from upstream.
+- Reused-connection replay was checked against upstream v1.5.0's
+  internal/httpx/bun.go (e2b2a7c28114d08a28cc5250ae7d4c0a2b16f470) on
+  2026-11-19. Only safe methods may retry after a dropped response; unlike
+  upstream, an idempotency header alone does not authorize replaying a POST.
+  This retains API Share's existing, more conservative billing safeguard.
 
 The free-request shaping in cmd/apishare/opencode_free.go and
 opencode_encoding.go also adapts the v2 Chat body ordering, completion limit,

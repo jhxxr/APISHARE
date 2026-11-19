@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-var opaqueClientToolPattern = regexp.MustCompile(`^clint_[0-9a-f]{12}$`)
+var opaqueClientToolPattern = regexp.MustCompile(`^mcp_[0-9a-f]{12}$`)
 
 // A prefix alone still exposes Claude Code's identifying tool vocabulary.
 // Keep names opaque without changing schemas or the response rename table.

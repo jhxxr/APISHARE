@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 )
 
 // NewResponseBody restores request aliases before native forwarding or protocol
@@ -34,18 +35,20 @@ type nameState struct {
 	renamed     bool
 	choiceIndex any
 	callIndex   any
+	arguments   strings.Builder
 }
 
 type responseBody struct {
-	source       io.ReadCloser
-	scanner      *bufio.Scanner
-	protocol     Protocol
-	renames      *ToolRenames
-	sse          bool
-	names        map[nameKey]*nameState
-	chatEnvelope map[string]any
-	pending      []byte
-	err          error
+	source        io.ReadCloser
+	scanner       *bufio.Scanner
+	protocol      Protocol
+	renames       *ToolRenames
+	sse           bool
+	names         map[nameKey]*nameState
+	chatEnvelope  map[string]any
+	heldArguments int
+	pending       []byte
+	err           error
 }
 
 const responseLimit = 64 << 20
@@ -91,6 +94,14 @@ func (b *responseBody) Read(data []byte) (int, error) {
 				if len(frame) > 0 || b.hasPendingNames() {
 					b.err = io.ErrUnexpectedEOF
 				}
+				if len(frame) == 0 && b.protocol == Chat && b.hasPendingNames() {
+					// Release complete received events without inventing a normal
+					// stream terminator. The caller still observes the truncated EOF.
+					b.pending = b.flushPendingFrame("\n")
+				}
+			}
+			if len(b.pending) > 0 {
+				continue
 			}
 			return 0, b.err
 		}
@@ -145,35 +156,13 @@ func (b *responseBody) restoreFrame(frame []byte) []byte {
 	}
 	raw := bytes.Join(data, []byte("\n"))
 	if b.protocol == Chat && bytes.Equal(raw, []byte("[DONE]")) && b.hasPendingNames() {
-		payload := map[string]any{}
-		for key, value := range b.chatEnvelope {
-			payload[key] = value
-		}
-		var choices []any
-		seen := map[string]bool{}
-		for _, key := range b.pendingNameKeys("") {
-			if seen[key.choice] {
-				continue
-			}
-			seen[key.choice] = true
-			delta := map[string]any{}
-			choice := map[string]any{"index": b.names[key].choiceIndex, "delta": delta, "finish_reason": nil}
-			b.flushNames(key.choice, delta)
-			choices = append(choices, choice)
-		}
-		payload["choices"] = choices
-		encoded, err := Marshal(payload)
-		if err != nil {
-			b.err = err
-			return nil
-		}
 		newline := "\n"
 		if bytes.Contains(frame, []byte("\r\n")) {
 			newline = "\r\n"
 		} else if bytes.Contains(frame, []byte("\r")) && !bytes.Contains(frame, []byte("\n")) {
 			newline = "\r"
 		}
-		return append([]byte("data: "+string(encoded)+newline+newline), frame...)
+		return append(b.flushPendingFrame(newline), frame...)
 	}
 	restored := b.restoreJSON(raw, true)
 	if b.err != nil && b.err != io.EOF {
@@ -201,6 +190,32 @@ func (b *responseBody) restoreFrame(frame []byte) []byte {
 	return result.Bytes()
 }
 
+func (b *responseBody) flushPendingFrame(newline string) []byte {
+	payload := map[string]any{}
+	for key, value := range b.chatEnvelope {
+		payload[key] = value
+	}
+	var choices []any
+	seen := map[string]bool{}
+	for _, key := range b.pendingNameKeys("") {
+		if seen[key.choice] {
+			continue
+		}
+		seen[key.choice] = true
+		delta := map[string]any{}
+		choice := map[string]any{"index": b.names[key].choiceIndex, "delta": delta, "finish_reason": nil}
+		b.flushNames(key.choice, delta)
+		choices = append(choices, choice)
+	}
+	payload["choices"] = choices
+	encoded, err := Marshal(payload)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	return []byte("data: " + string(encoded) + newline + newline)
+}
+
 func (b *responseBody) restoreJSON(raw []byte, streaming bool) []byte {
 	payload, err := Decode(raw)
 	if err != nil {
@@ -208,7 +223,7 @@ func (b *responseBody) restoreJSON(raw []byte, streaming bool) []byte {
 	}
 	changed := false
 	rename := func(container map[string]any) {
-		if client, ok := b.renames.Client(StringAt(container, "name")); ok {
+		if client, changedName := b.renames.Resolve(StringAt(container, "name")); changedName {
 			container["name"] = client
 			changed = true
 		}
@@ -330,17 +345,36 @@ func (b *responseBody) restoreName(key nameKey, function map[string]any, choiceI
 	if state.pending == "" {
 		return false
 	}
-	if b.renames.HasPrefix(state.pending) && StringAt(function, "arguments") == "" {
+	if b.renames.HasPrefix(state.pending) && (StringAt(function, "arguments") == "" || b.renames.HasLongerPrefix(state.pending)) {
 		delete(function, "name")
-		return fragment != ""
+		arguments := StringAt(function, "arguments")
+		if b.heldArguments+len(arguments) > responseLimit {
+			b.err = fmt.Errorf("OpenCode pending tool arguments exceed 64 MiB")
+			return false
+		}
+		state.arguments.WriteString(arguments)
+		b.heldArguments += len(arguments)
+		delete(function, "arguments")
+		return fragment != "" || arguments != ""
 	}
 	name := state.pending
-	if client, exact := b.renames.Client(name); exact {
+	if client, changed := b.renames.Resolve(name); changed {
 		name, state.renamed = client, true
 	}
 	function["name"] = name
+	argumentsChanged := b.releaseArguments(state, function)
 	state.pending, state.done = "", true
-	return name != fragment
+	return name != fragment || argumentsChanged
+}
+
+func (b *responseBody) releaseArguments(state *nameState, function map[string]any) bool {
+	if state.arguments.Len() == 0 {
+		return false
+	}
+	function["arguments"] = state.arguments.String() + StringAt(function, "arguments")
+	b.heldArguments -= state.arguments.Len()
+	state.arguments.Reset()
+	return true
 }
 
 func (b *responseBody) pendingNameKeys(choice string) []nameKey {
@@ -373,7 +407,7 @@ func (b *responseBody) flushNames(choice string, delta map[string]any) bool {
 	for _, key := range b.pendingNameKeys(choice) {
 		state := b.names[key]
 		name := state.pending
-		if client, exact := b.renames.Client(name); exact {
+		if client, changed := b.renames.Resolve(name); changed {
 			name, state.renamed = client, true
 		}
 		if key.call == "legacy" {
@@ -383,6 +417,7 @@ func (b *responseBody) flushNames(choice string, delta map[string]any) bool {
 				delta["function_call"] = function
 			}
 			function["name"] = name
+			b.releaseArguments(state, function)
 		} else {
 			calls := SliceAt(delta, "tool_calls")
 			var target map[string]any
@@ -403,6 +438,7 @@ func (b *responseBody) flushNames(choice string, delta map[string]any) bool {
 				target["function"] = function
 			}
 			function["name"] = name
+			b.releaseArguments(state, function)
 		}
 		state.pending, state.done = "", true
 		changed = true

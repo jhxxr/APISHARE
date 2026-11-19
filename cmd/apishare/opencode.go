@@ -275,7 +275,7 @@ func setOpenCodeHeaders(req *http.Request, apiKey string, format clientFormat, s
 // setOpenCodeV1Headers renders the OpenCode 1.19.3 model request shape used by
 // the v1 /zen gate: a model User-Agent carrying the AI SDK provider-utils
 // version, Accept: */*, both session headers, the pinned user message id as
-// x-opencode-request, the git root commit (or "global") as project, and the
+// x-opencode-request, the named project (or a fresh id for unnamed calls), and the
 // beta flags the AI SDK derives from the body. The v1 client sends no
 // x-session-affinity or X-Session-Id.
 func setOpenCodeV1Headers(req *http.Request, format clientFormat, session string, incoming http.Header, task *relayTask, body []byte) {
@@ -297,9 +297,6 @@ func setOpenCodeV1Headers(req *http.Request, format clientFormat, session string
 		req.Header.Set("x-opencode-request", message)
 	}
 	project := strings.TrimSpace(incoming.Get("x-opencode-project"))
-	if project == "" {
-		project = "global"
-	}
 	req.Header.Set("x-opencode-project", openCodeProjectID(project, true))
 	for _, name := range []string{"x-parent-session-id", "x-opencode-parent-session-id"} {
 		if parent := incoming.Get(name); openCodeSessionUsable(parent, time.Now()) {
@@ -329,9 +326,6 @@ func setOpenCodeV2Headers(req *http.Request, format clientFormat, session string
 	req.Header.Del("x-parent-session-id")
 	req.Header.Del("x-opencode-parent-session-id")
 	project := strings.TrimSpace(incoming.Get("x-opencode-project"))
-	if project == "" {
-		project = "global"
-	}
 	req.Header.Set("x-opencode-project", openCodeProjectID(project, false))
 	if session != "" {
 		setOpenCodeSessionHeaders(req, session)
@@ -585,11 +579,14 @@ func applyOpenCodeHeaderRules(req *http.Request, rules []headerRule, apiKey stri
 // openCodeProjectID renders the project header per lane. The v1 client sends
 // a git root commit hash or the literal "global"; the v2 CLI sends a bare
 // 40-character lowercase hex id. Other values are hashed into the lane's
-// shape so one project maps to one stable upstream project.
+// shape so one project maps to one stable upstream project. Unnamed requests
+// get a fresh id rather than sharing a single project quota bucket.
 func openCodeProjectID(project string, legacy bool) string {
 	project = strings.TrimSpace(project)
 	if project == "" {
-		project = "global"
+		var id [20]byte
+		_, _ = rand.Read(id[:])
+		return hex.EncodeToString(id[:])
 	}
 	if legacy {
 		if project == "global" || openCodeProjectPattern.MatchString(project) {

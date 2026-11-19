@@ -171,7 +171,7 @@ func v1BashDescription(base string) string {
 }
 
 // renameAndCompleteTools makes the tool list read as an official CLI session:
-// every named client tool is renamed to an opaque clint_ digest, legacy functions
+// every named client tool is renamed to an opaque wire digest, legacy functions
 // arrays are converted, and the full official set for the lane is appended.
 // The returned map restores the client names in the upstream response.
 func renameAndCompleteTools(payload map[string]any, protocol Protocol, v1 bool) (*ToolRenames, bool) {
@@ -195,6 +195,7 @@ func renameAndCompleteTools(payload map[string]any, protocol Protocol, v1 bool) 
 		}
 	}
 	shaped := make([]any, 0, len(items)+len(officialToolNames(v1)))
+	declared := make(map[string]string, len(items))
 	for _, item := range items {
 		entry, ok := item.(map[string]any)
 		if !ok {
@@ -208,11 +209,14 @@ func renameAndCompleteTools(payload map[string]any, protocol Protocol, v1 bool) 
 		}
 		if wireName := clientWireName(renames, used, name); wireName != name {
 			setToolName(protocol, entry, wireName)
+			declared[name] = wireName
 		}
 		shaped = append(shaped, entry)
 	}
 	shaped = append(shaped, officialToolset(protocol, v1)...)
 	payload["tools"] = shaped
+	bindOfficialToolAliases(renames, v1)
+	sanitizeToolHistory(payload, protocol, declared, renames)
 	rewriteToolReferences(payload, protocol, renames)
 	return renames, true
 }

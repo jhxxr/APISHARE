@@ -23,7 +23,7 @@ import (
 // upstream identified as a client fingerprint in opencode2api #161.
 func TestOpenCodeFreeProbeAndClientToolRelayUseOpaqueNames(t *testing.T) {
 	modelsTestDB(t)
-	opaque := regexp.MustCompile(`^clint_[0-9a-f]{12}(?:_[0-9]+)?$`)
+	opaque := regexp.MustCompile(`^mcp_[0-9a-f]{12}(?:_[0-9]+)?$`)
 	reportWire := opencodecompat.ClientToolWireName("ReportFindings", nil)
 	var probes, relays atomic.Int32
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -46,6 +46,11 @@ func TestOpenCodeFreeProbeAndClientToolRelayUseOpaqueNames(t *testing.T) {
 		var aliases []string
 		for _, entry := range payload["tools"].([]any) {
 			name := opencodecompat.StringAt(entry.(map[string]any), "function", "name")
+			if strings.Contains(strings.ToLower(name), "clint_") {
+				w.WriteHeader(http.StatusTooManyRequests)
+				fmt.Fprint(w, `{"error":{"type":"FreeUsageLimitError"}}`)
+				return
+			}
 			if strings.HasPrefix(name, opencodecompat.ClientToolPrefix) {
 				aliases = append(aliases, name)
 				if !opaque.MatchString(name) {
