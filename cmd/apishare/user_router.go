@@ -155,6 +155,11 @@ func migrateUserRouterSchema() error {
 			config_json TEXT NOT NULL DEFAULT '{}',
 			updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);`,
+		`CREATE TABLE IF NOT EXISTS user_agent_purge_configs (
+			sub         TEXT PRIMARY KEY,
+			config_json TEXT NOT NULL DEFAULT '{}',
+			updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {

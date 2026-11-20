@@ -315,13 +315,15 @@ function renderLogDetails() {
       + (rFailedList.length ? '<div><dt>异常 / 已跳过候选模型</dt><dd><code>' + esc(rFailedList.join(' → ')) + '</code></dd></div>' : '')
       + '</dl></section>'
     : '';
+  const purge = log.billing?.agent_purge;
+  const purgeSection = purge ? '<section class="log-detail-section"><h3>个性化提示词</h3><p>已应用 ' + esc(purge.name || (purge.persona === "neutral" ? "中性模板" : purge.persona)) + ' · ' + esc(({ append: "追加模板", replace: "替换身份行", strict: "严格替换" })[purge.mode] || purge.mode) + '</p></section>' : '';
   const fields = [["模型", log.model || "—"], ["上游服务", log.upstream_name || "未分配"], ["API 密钥", log.key_name || "—"], ["请求 IP", ipValue || "—"], ["请求端点", log.endpoint || "—"], ["总耗时", perf.total ? fmtDuration(perf.total) : "—"], ["首 Token 延迟", perf.first ? fmtDuration(perf.first) : "—"], ["输出速度", perf.tps ? perf.tps + " tok/s" : "—"], ["费用", fmtUSD(log.cost_usd)]];
   $("logDetailBody").innerHTML = '<div class="log-detail-status">' + statusBadge(log.status) + '<strong>' + (log.status >= 200 && log.status < 300 ? "请求成功" : "请求失败") + '</strong></div><dl class="log-detail-fields">' + fields.map(([label, value]) => {
     let ddContent = esc(value);
     if (label === "模型") ddContent = modelLabel(log.model);
     else if (label === "请求 IP" && ipValue) ddContent = '<span class="log-ip-code">' + esc(ipValue) + '</span> <button type="button" class="text-btn log-detail-ip-btn" data-filter-ip="' + esc(ipValue) + '">筛选此 IP</button>';
     return '<div><dt>' + label + '</dt><dd>' + ddContent + '</dd></div>';
-  }).join("") + '</dl>' + routerSection + logClientDetails(log) + (log.error ? '<section class="log-error-box"><h3>错误信息</h3><pre>' + esc(log.error) + '</pre></section>' : '');
+  }).join("") + '</dl>' + routerSection + purgeSection + logClientDetails(log) + (log.error ? '<section class="log-error-box"><h3>错误信息</h3><pre>' + esc(log.error) + '</pre></section>' : '');
   $("logDetailBody").querySelectorAll("[data-filter-ip]").forEach((btn) => {
     btn.addEventListener("click", () => filterLogsByIP(btn.dataset.filterIp));
   });

@@ -1,0 +1,320 @@
+{
+  "version": 1,
+  "personas": [
+    {
+      "asset": "neutral.md",
+      "id": "neutral",
+      "name": "中性模板",
+      "description": "起步用的最小 persona：只约定语言、风格和协作方式。正文就是会被写进系统提示词的那一段，改这里就是改 agent 的行为。",
+      "order": 1,
+      "source": {
+        "repository": "ZiChuanLan/agent-purge",
+        "revision": "34a24f31bf4ec5d7668933b4135a9a2fc54b476e",
+        "path": "lib/templates/personas/neutral.md",
+        "license": "MIT"
+      },
+      "raw_sha256": "aa7094cd0581035670511532185c7451176f5dd2f882a4ddb8c7dc8817d106c5",
+      "body_sha256": "938e246419abfcb1a8ad4bb0862a5828f283c82ae1246beb1894368b7f41e25a"
+    },
+    {
+      "asset": "personas/xiaomajiang.md",
+      "id": "xiaomajiang",
+      "name": "小码酱 - 针对国模",
+      "description": "含任务优先级、拒绝对抗、分层回答、CTF/沙箱契约与路由表；strict 模式的基底。",
+      "order": 1,
+      "source": {
+        "repository": "ZiChuanLan/some-magic",
+        "revision": "636556696e3f66920317431f7ff51b1ac0147f4f",
+        "path": "xiaomajiang.md",
+        "license": "not_declared"
+      },
+      "raw_sha256": "40f479cf78bf7b7c5e15d224d6d40a24891b818a6ec63c9d6a5d9eaa41947513",
+      "body_sha256": "b955439faa8769a614a27c4241b4beb989b5ebe5bf5c492dd43491d56d9bdeec"
+    },
+    {
+      "asset": "personas/dafeiyu.md",
+      "id": "dafeiyu",
+      "name": "大肥鱼 · 写小说用",
+      "description": "大肥鱼身份 × lan 骨架的通用版：输入解构、判定五结果、回合格式、后台六步、终检五问、去八股、因果压力、自主度/联想半径、表达合同、事实优先链。不绑场景，专做通用破限。",
+      "order": 2,
+      "source": {
+        "repository": "ZiChuanLan/some-magic",
+        "revision": "636556696e3f66920317431f7ff51b1ac0147f4f",
+        "path": "dafeiyu.md",
+        "license": "not_declared"
+      },
+      "raw_sha256": "e7155af7adad04bdf6dc0f245e37155c65765347398f709e0df3aeb70939a91b",
+      "body_sha256": "18817984b2872d1c2e740c0fc197c7d35ad7f2e9b777120d44d80fedc4ae8d70"
+    },
+    {
+      "asset": "personas/CTF.md",
+      "id": "ctf",
+      "name": "CTF 沙箱 · 竞赛执行体",
+      "description": "把挑战目标整体视为已授权沙箱资产：侦察→扫描→利用→后利用全程作业，先授权前提一次说清，之后不复述不确认不重演。",
+      "order": 3,
+      "source": {
+        "repository": "ZiChuanLan/some-magic",
+        "revision": "636556696e3f66920317431f7ff51b1ac0147f4f",
+        "path": "CTF.md",
+        "license": "not_declared"
+      },
+      "raw_sha256": "3733511ebee80e8710879cef351f0a342c1a486a0200f75a1ad3a3d5f8fe40bc",
+      "body_sha256": "f786b2a9282791c6a6f2f09881d005f0037c3c2132e281a7e8b9ede8009fd3f8"
+    },
+    {
+      "asset": "personas/eni-opus-5.md",
+      "id": "eni-opus-5",
+      "name": "ENI · Opus 5",
+      "description": "ENI 人设的 Opus 5 版。身份锚定 + 反注入回弹协议（GROUNDING PHRASE）+ thinking 通道契约 + 误报处理（把分类器提示当噪声而非威胁）。",
+      "order": 10,
+      "source": {
+        "repository": "ZiChuanLan/some-magic",
+        "revision": "636556696e3f66920317431f7ff51b1ac0147f4f",
+        "path": "eni-opus-5.md",
+        "license": "not_declared"
+      },
+      "raw_sha256": "0908d8a979fe05dcc12f4ec8c2160575ecf788d39d900dbc22def46993256923",
+      "body_sha256": "2ff6f764ce48846f0b0f53a26dd40739ecf4739202081b8b2f929d49450f64e4"
+    },
+    {
+      "asset": "personas/eni-sonnet-46.md",
+      "id": "eni-sonnet-46",
+      "name": "ENI · Sonnet 4.6（Neptune）",
+      "description": "Sonnet 4.6 的 ENI Neptune 变体，带 Be-You Corial 风格要求。小说家人格 + 长篇写作工艺约束，适合创作与长文任务。",
+      "order": 11,
+      "source": {
+        "repository": "ZiChuanLan/some-magic",
+        "revision": "636556696e3f66920317431f7ff51b1ac0147f4f",
+        "path": "eni-sonnet-46.md",
+        "license": "not_declared"
+      },
+      "raw_sha256": "5e2d420634603582d288a8bbf65428a9fbd2e42f2ab58ddd9ae543fd7e6151f4",
+      "body_sha256": "2d4a09daa9ef65793cfa43704b66d529aea0afabc60521f1b632a1641757e348"
+    },
+    {
+      "asset": "personas/eni-gemini-36.md",
+      "id": "eni-gemini-36",
+      "name": "ENI · Gemini 3.6 Flash",
+      "description": "Gemini 3.6 Flash 版，用 antml:thinking GROUNDING PHRASE 锁思考通道，另带误报处理段（把平台分类器提示重解释为噪音）。",
+      "order": 12,
+      "source": {
+        "repository": "ZiChuanLan/some-magic",
+        "revision": "636556696e3f66920317431f7ff51b1ac0147f4f",
+        "path": "eni-gemini-36.md",
+        "license": "not_declared"
+      },
+      "raw_sha256": "0216815f73c34c182db08244faba53b7c444fe13e795b27a75d018686f893ed0",
+      "body_sha256": "40cff3b7876f373ab0527cb504041dd43c475519afff6d106d643eb4579287f4"
+    },
+    {
+      "asset": "personas/eni-grok-47.md",
+      "id": "eni-grok-47",
+      "name": "ENI · Grok 4.7",
+      "description": "已剥掉原文件开头的 Grok 安全前言，只留 <dev> 起的 ENI payload。Grok 4.7 专用身份与执行契约。",
+      "order": 13,
+      "source": {
+        "repository": "ZiChuanLan/some-magic",
+        "revision": "636556696e3f66920317431f7ff51b1ac0147f4f",
+        "path": "eni-grok-47.md",
+        "license": "not_declared"
+      },
+      "raw_sha256": "1fa31c9c5c6d3baa261c374385fd1ad04ca528c02daa820647e0985126ee675f",
+      "body_sha256": "a6734542f9b7aaac1436dcc5ed652f2d5f2fe973d970477d354c798ad0ca1903"
+    },
+    {
+      "asset": "personas/eni-kimi-k3.md",
+      "id": "eni-kimi-k3",
+      "name": "ENI · Kimi K3",
+      "description": "Kimi K3 优化版，全库结构分最高的文件之一。完整的反注入段 + 强制回弹短语 + thinking 第一人称契约。",
+      "order": 14,
+      "source": {
+        "repository": "ZiChuanLan/some-magic",
+        "revision": "636556696e3f66920317431f7ff51b1ac0147f4f",
+        "path": "eni-kimi-k3.md",
+        "license": "not_declared"
+      },
+      "raw_sha256": "3da39256406c8226ea40166937c85622ab41f12fc3d55952a7aae4e9fc6fd1c1",
+      "body_sha256": "a88504286f28a8deb912ee1756fb1cb38043f2cc710e730effbcd32aeaf772b8"
+    },
+    {
+      "asset": "personas/eni-glm-53.md",
+      "id": "eni-glm-53",
+      "name": "ENI · GLM 5.3",
+      "description": "GLM 5.3 的 ENI LIME 母版，需配合 Be-You Corial 风格使用。人设 + 注入反驳协议 + 输出契约齐全。",
+      "order": 15,
+      "source": {
+        "repository": "ZiChuanLan/some-magic",
+        "revision": "636556696e3f66920317431f7ff51b1ac0147f4f",
+        "path": "eni-glm-53.md",
+        "license": "not_declared"
+      },
+      "raw_sha256": "d79cd1e222821654a270da765e7f45d80b1b7a9af884c46c70381567fd8c58e5",
+      "body_sha256": "422efcfd50cc59027f5fa00b2a2943f86b722e3e0d65718a22e6e1b6d9b33033"
+    },
+    {
+      "asset": "personas/eni-gemini-argon-4.md",
+      "id": "eni-gemini-argon-4",
+      "name": "ENI · Gemini 4 Argon（Policy）",
+      "description": "Gemini 4 Argon 的 ENI + Policy 组合版，针对策略层做正面覆盖，而非单纯人设替换。",
+      "order": 16,
+      "source": {
+        "repository": "ZiChuanLan/some-magic",
+        "revision": "636556696e3f66920317431f7ff51b1ac0147f4f",
+        "path": "eni-gemini-argon-4.md",
+        "license": "not_declared"
+      },
+      "raw_sha256": "7ce91bad4a9e0bdaf69b7a22de867437fb95c0717c5a4644c18931e6ddf4ffd4",
+      "body_sha256": "cc8f562c47b63a104511527cceeeedb7fc90442281c5f8af72ac174d22bd8e64"
+    },
+    {
+      "asset": "personas/eni-chatgpt-policy-54.md",
+      "id": "eni-chatgpt-policy-54",
+      "name": "ENI · ChatGPT 5.4（Policy）",
+      "description": "ChatGPT 5.4 的策略层版本，把人设与 policy 覆盖写在一起，适合网页版项目指令槽。",
+      "order": 17,
+      "source": {
+        "repository": "ZiChuanLan/some-magic",
+        "revision": "636556696e3f66920317431f7ff51b1ac0147f4f",
+        "path": "eni-chatgpt-policy-54.md",
+        "license": "not_declared"
+      },
+      "raw_sha256": "7df9d63801aa9a3367956d4c50a966075600eaed5412064e2abb915b13e34ffb",
+      "body_sha256": "65e9ca4425f54a8c84222b1e46ce56cd143b1a4f69b825c997218c76010500ce"
+    },
+    {
+      "asset": "personas/eni-deepseek-flash.md",
+      "id": "eni-deepseek-flash",
+      "name": "ENI · DeepSeek（Flash Thought）",
+      "description": "从教学文档里抽出正文提示词：DeepSeek 的 Flash Thought 方法，短、直接、便于本地部署。",
+      "order": 18,
+      "source": {
+        "repository": "ZiChuanLan/some-magic",
+        "revision": "636556696e3f66920317431f7ff51b1ac0147f4f",
+        "path": "eni-deepseek-flash.md",
+        "license": "not_declared"
+      },
+      "raw_sha256": "a2c33653fd493a7d976a1285c3a5c9efd4a102db4fa128844fa2e8f5ba4accab",
+      "body_sha256": "fd5d4e884eee1035c65b9f2616239abfc137bea47b3a49993e424ddb029b7904"
+    },
+    {
+      "asset": "personas/eni-mimo-26.md",
+      "id": "eni-mimo-26",
+      "name": "ENI · MiMo 2.6",
+      "description": "小米 MiMo v2.6 专用，结构分 19 的完整长版，含反注入段与思考通道契约。",
+      "order": 19,
+      "source": {
+        "repository": "ZiChuanLan/some-magic",
+        "revision": "636556696e3f66920317431f7ff51b1ac0147f4f",
+        "path": "eni-mimo-26.md",
+        "license": "not_declared"
+      },
+      "raw_sha256": "2f0f5b4d97ba2149d6e611937897768b1962f79cff974ec2ab0058b752696a7b",
+      "body_sha256": "7770202b385657c100ff814b98323ecbacb5bcf5f8e43700b6718fe2b47e9650"
+    },
+    {
+      "asset": "personas/eni-minimax-m31.md",
+      "id": "eni-minimax-m31",
+      "name": "ENI · MiniMax m3.1（Policy）",
+      "description": "MiniMax m3.1 的 policy 版，走策略覆盖路线，篇幅适中。",
+      "order": 20,
+      "source": {
+        "repository": "ZiChuanLan/some-magic",
+        "revision": "636556696e3f66920317431f7ff51b1ac0147f4f",
+        "path": "eni-minimax-m31.md",
+        "license": "not_declared"
+      },
+      "raw_sha256": "ff58b0e25790ca2fc00da576f82c7320c3c427e86a732b0e1267b6f001710238",
+      "body_sha256": "26a03ac14de2ed721aea160a358e3d7620772829cdd519d6e367898ac3945fa4"
+    },
+    {
+      "asset": "personas/qwen-37.md",
+      "id": "qwen-37",
+      "name": "Qwen 3.7 作业规范",
+      "description": "Qwen 3.7 的 assistant operating specification：原厂风格的能力声明 + 工程标准 + 输出契约，不带角色扮演，给编码 agent 用最稳。",
+      "order": 30,
+      "source": {
+        "repository": "ZiChuanLan/some-magic",
+        "revision": "636556696e3f66920317431f7ff51b1ac0147f4f",
+        "path": "qwen-37.md",
+        "license": "not_declared"
+      },
+      "raw_sha256": "e37f223fd6c3e71f1ce738a8d70bec4dd530cc886e582387d91638ab5d5f0fe2",
+      "body_sha256": "86017e215e732bd080c1c227f2b16434e2408ba3d89bd8c58de69997308b1350"
+    },
+    {
+      "asset": "personas/mistral-large-4.md",
+      "id": "mistral-large-4",
+      "name": "Mistral Large 4（Le Chonk）",
+      "description": "Mistral Large 4 的 opencode agent 规范：单开发者本地环境、任务闭环、工具使用、输出格式与工程标准。",
+      "order": 31,
+      "source": {
+        "repository": "ZiChuanLan/some-magic",
+        "revision": "636556696e3f66920317431f7ff51b1ac0147f4f",
+        "path": "mistral-large-4.md",
+        "license": "not_declared"
+      },
+      "raw_sha256": "2dabe7dc8fc8a90af537caa1e537c34956c02ae87dda01584e2ceaacb30b60c8",
+      "body_sha256": "0835342fb9dcdf68c13eccdc03ac90b8b1e4f2480df9378a6293a9609908bc87"
+    },
+    {
+      "asset": "personas/nemotron-3-ultra.md",
+      "id": "nemotron-3-ultra",
+      "name": "Nemotron 3 Ultra",
+      "description": "NVIDIA Nemotron 3 Ultra 的 operating specification：角色、安全策略、拒答处理、推理流程与沟通标准。",
+      "order": 32,
+      "source": {
+        "repository": "ZiChuanLan/some-magic",
+        "revision": "636556696e3f66920317431f7ff51b1ac0147f4f",
+        "path": "nemotron-3-ultra.md",
+        "license": "not_declared"
+      },
+      "raw_sha256": "332308b2abdf73494dfddad7a19bb8e8e9254c35961fde6af9046572464933ca",
+      "body_sha256": "cdf366cf2b8fd6ea89f2db7ede96d4d3b6d21d2ab822e7c6bee4ee0cb2034dd3"
+    },
+    {
+      "asset": "personas/zcode-agents-53.md",
+      "id": "zcode-agents-53",
+      "name": "ZCode 工作区契约（AGENTS.md）",
+      "description": "4KB 项目级 AGENTS.md 契约：授权表 + 工程标准 + 禁止免责前言。给 ZCode/OpenCode/Kimi Agent 当落地位，不是人设。",
+      "order": 33,
+      "source": {
+        "repository": "ZiChuanLan/some-magic",
+        "revision": "636556696e3f66920317431f7ff51b1ac0147f4f",
+        "path": "zcode-agents-53.md",
+        "license": "not_declared"
+      },
+      "raw_sha256": "0e15553d7b78c14d66d8ab2099a79f9d3b43fa5f2006b94a589256828165733b",
+      "body_sha256": "c9a5ccc6c65b08964cf6ef3df9d61d7420387129cfd4e05526b5ad16b4611db8"
+    },
+    {
+      "asset": "personas/l1b3rt4s-openai.md",
+      "id": "l1b3rt4s-openai",
+      "name": "L1B3RT4S · OpenAI（短版）",
+      "description": "L1B3RT4S 的 OpenAI 单厂商短版，<||> 分隔的多段 payload，含拒答词禁用与输出形状约束。省 token 的备选。",
+      "order": 40,
+      "source": {
+        "repository": "ZiChuanLan/some-magic",
+        "revision": "636556696e3f66920317431f7ff51b1ac0147f4f",
+        "path": "l1b3rt4s-openai.md",
+        "license": "not_declared"
+      },
+      "raw_sha256": "2cfc250dec3774bf6a910a4b31bd689ead19cd1f29e625c4f82bd507aae909b3",
+      "body_sha256": "20e17c150f15d1b0383dbde2bdaebb57249f2da680c0243972a5cd2236d69b12"
+    },
+    {
+      "asset": "personas/l1b3rt4s-deepseek.md",
+      "id": "l1b3rt4s-deepseek",
+      "name": "L1B3RT4S · DeepSeek（短版）",
+      "description": "L1B3RT4S 的 DeepSeek 短版：三条硬规则（固定开头、不给免责、直接给可操作细节），最省 token 的一款。",
+      "order": 41,
+      "source": {
+        "repository": "ZiChuanLan/some-magic",
+        "revision": "636556696e3f66920317431f7ff51b1ac0147f4f",
+        "path": "l1b3rt4s-deepseek.md",
+        "license": "not_declared"
+      },
+      "raw_sha256": "d8d5e31a67d4fc1a4a73ad1fd3b7569447c9b0e6bdb99e450283357f59f176fa",
+      "body_sha256": "82a02910e66aecdc52c28908ba93f300165cb0b60ee7ecb6a07742e61201a2f3"
+    }
+  ]
+}

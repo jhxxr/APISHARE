@@ -63,6 +63,7 @@ let keysCache = [], upsCache = [], logsCache = [];
 const weightDrafts = new Map(), weightSaving = new Set();
 let actionResolve = null, actionInputType = null;
 let settingsReady = false;
+let agentPurgePolicyState = null;
 const requestVersions = {};
 const editProbe = { id: null, models: [], selected: new Set(), initial: "", generation: 0, controller: null, saving: false, closing: false };
 const busyContents = new WeakMap();
@@ -1328,6 +1329,7 @@ async function loadSettings() {
   try {
     if (!proxiesCache.length && typeof loadProxies === "function") await loadProxies(true);
     const settings = await api("api/settings");
+    await loadAgentPurgePolicy();
     $("setTtl").value = settings.affinity_ttl_min; $("setRetry").value = settings.retry;
     $("setInject").checked = !!settings.inject_stream_usage;
     $("setLogRetention").value = String(settings.log_retention_days ?? 7);
@@ -1366,6 +1368,46 @@ async function loadSettings() {
     renderPricingStatus(settings.auto_pricing);
     settingsReady = true; stampRefresh();
   } catch (error) { settingsReady = false; reportError(error, "设置加载失败"); }
+}
+
+async function loadAgentPurgePolicy() {
+  const host = $("agentPurgePolicyPairs");
+  if (!host) return;
+  $("saveAgentPurgePolicy").disabled = true;
+  try {
+    agentPurgePolicyState = await api("api/agent-purge/policy");
+    $("agentPurgeAdminEnabled").checked = !!agentPurgePolicyState.enabled;
+    renderAgentPurgePolicyPairs();
+    $("saveAgentPurgePolicy").disabled = false;
+  } catch (error) {
+    agentPurgePolicyState = null;
+    host.innerHTML = '<p class="muted">提示词授权加载失败：' + esc(error.message) + '</p>';
+  }
+}
+
+function renderAgentPurgePolicyPairs() {
+  const host = $("agentPurgePolicyPairs"), state = agentPurgePolicyState;
+  if (!host || !state) return;
+  const query = ($("agentPurgePolicySearch")?.value || "").trim().toLowerCase();
+  const pairs = Array.isArray(state.pairs) ? state.pairs : [];
+  const filtered = pairs.filter((pair) => !query || `${pair.model} ${pair.upstream_name} ${pair.upstream_type} ${pair.upstream_id}`.toLowerCase().includes(query));
+  if (!filtered.length) {
+    host.innerHTML = '<p class="muted">' + (pairs.length ? '没有匹配的模型与上游。' : '暂时没有已发现的可用站点模型；请检查上游配置或等待模型目录刷新。') + '</p>';
+    return;
+  }
+  host.innerHTML = filtered.map((pair) => '<label class="agent-purge-policy-row"><input type="checkbox" data-agent-purge-model="' + esc(pair.model) + '" data-agent-purge-upstream="' + Number(pair.upstream_id) + '"' + (pair.enabled ? ' checked' : '') + '><span><strong>' + esc(pair.model) + '</strong><small>' + esc(pair.upstream_name) + ' · ' + esc(upstreamFormatNames[pair.upstream_type] || pair.upstream_type || '上游') + ' · #' + Number(pair.upstream_id) + '</small></span></label>').join("");
+}
+
+async function saveAgentPurgePolicy(button = $("saveAgentPurgePolicy")) {
+  if (!agentPurgePolicyState) return;
+  const pairs = agentPurgePolicyState.pairs.filter((pair) => pair.enabled).map(({ model, upstream_id }) => ({ model, upstream_id }));
+  setBusy(button, true, "正在保存…");
+  try {
+    await api("api/agent-purge/policy", { method: "PUT", body: JSON.stringify({ enabled: $("agentPurgeAdminEnabled").checked, revision: agentPurgePolicyState.revision, pairs }) });
+    await loadAgentPurgePolicy();
+    toast("个性化提示词授权已保存");
+  } catch (error) { reportError(error, "保存提示词授权失败"); }
+  finally { setBusy(button, false); if (!agentPurgePolicyState) button.disabled = true; }
 }
 function renderPricingStatus(info) {
   $("pricingStatus").textContent = !info?.last_update ? "尚未同步官方定价" : "已同步 " + number(info.model_count) + " 个模型 · " + fmtTime(info.last_update);
@@ -1526,6 +1568,14 @@ initModelEditor();
 initModelTest();
 initAnnouncements();
 initLogs();
+$("agentPurgePolicySearch")?.addEventListener("input", renderAgentPurgePolicyPairs);
+$("agentPurgePolicyPairs")?.addEventListener("change", (event) => {
+  const input = event.target.closest("[data-agent-purge-model]");
+  if (!input || !agentPurgePolicyState) return;
+  const pair = agentPurgePolicyState.pairs.find((item) => item.model === input.dataset.agentPurgeModel && Number(item.upstream_id) === Number(input.dataset.agentPurgeUpstream));
+  if (pair) pair.enabled = input.checked;
+});
+$("saveAgentPurgePolicy")?.addEventListener("click", () => saveAgentPurgePolicy());
 syncSidebar();
 (async function init() {
   if (!token) { showLogin(); return; }

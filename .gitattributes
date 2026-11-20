@@ -1,0 +1,4 @@
+# Original template bytes are verified against the pinned source manifest.
+/internal/agentpurge/neutral.md -text
+/internal/agentpurge/personas/*.md -text
+/internal/agentpurge/catalog.json text eol=lf

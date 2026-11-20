@@ -2,12 +2,12 @@
   "schema_version": 1,
   "collected_at": "2026-10-23",
   "timezone": "Asia/Shanghai",
-  "purpose": "Research catalogue for future inbound-client logging and statistics; not loaded by the gateway.",
-  "runtime_ready": false,
+  "purpose": "Source-derived samples and regression catalogue for inbound client attribution; runtime rules remain fixed in cmd/apishare/request_client.go.",
+  "runtime_ready": true,
   "sample_kind": "source_derived_synthetic",
   "observed_on_wire": false,
   "sample_notice": "Examples illustrate formats from source. They are not captured requests and do not assert current release versions. Optional SDK/runtime suffixes are illustrative.",
-  "regex_flavor": "Go RE2-compatible candidate patterns; no runtime integration has been performed.",
+  "regex_flavor": "Go RE2-compatible patterns, covered by runtime regression tests.",
   "identity_semantics": "Client identity is self-declared and may be overridden or impersonated. Missing app evidence means application=unknown even if an SDK is identified.",
   "clients": [
     {
@@ -580,6 +580,92 @@
         "No stable application-specific UA was confirmed for arbitrary custom endpoints.",
         "Generic node-fetch identification must not be treated as SillyTavern."
       ]
+    },
+    {
+      "id": "crush",
+      "name": "Crush",
+      "evidence": "official_source",
+      "collected_at": "2026-11-20",
+      "scope": "Fantasy agent model calls use Charm-Crush; update/download tool user-agents are different and intentionally not recognized.",
+      "user_agents": [
+        {
+          "template": "Charm-Crush/{version} (https://charm.land/crush)",
+          "pattern": "(?i)^Charm-Crush/([^/\\s]+)(?:\\s|$)",
+          "version_group": 1,
+          "examples": [
+            "Charm-Crush/1.2.3 (https://charm.land/crush)"
+          ],
+          "source_ids": [
+            "S40"
+          ]
+        }
+      ],
+      "source_ids": [
+        "S40"
+      ],
+      "limitations": [
+        "Fantasy agent model calls use Charm-Crush; update/download tool user-agents are different and intentionally not recognized.",
+        "Self-reported identity; not proof of software or authorization."
+      ]
+    },
+    {
+      "id": "pi",
+      "name": "Pi / pi-ai",
+      "evidence": "official_source",
+      "collected_at": "2026-11-20",
+      "scope": "The default is shared by pi-ai consumers; identifies the Pi family or shared library, not necessarily the coding-agent application. Short mode has no version.",
+      "user_agents": [
+        {
+          "template": "pi/{version} (win32; node/v24.0.0; x64)",
+          "pattern": "(?i)^pi(?:/([^/\\s()]+)(?:\\s|$)|$)",
+          "version_group": 1,
+          "examples": [
+            "pi/1.2.3 (win32; node/v24.0.0; x64)",
+            "pi/1.2.3 (browser)",
+            "pi"
+          ],
+          "source_ids": [
+            "S41"
+          ]
+        }
+      ],
+      "source_ids": [
+        "S41",
+        "S43"
+      ],
+      "limitations": [
+        "The default is shared by pi-ai consumers; identifies the Pi family or shared library, not necessarily the coding-agent application. Short mode has no version.",
+        "Self-reported identity; not proof of software or authorization."
+      ]
+    },
+    {
+      "id": "hermes",
+      "name": "Hermes Agent",
+      "evidence": "official_source",
+      "collected_at": "2026-11-20",
+      "scope": "Anthropic adapter default and Gemini native integration; generic/custom OpenAI providers may retain SDK defaults. OAuth compatibility modes can identify as Claude or Codex, so do not infer Hermes in those cases.",
+      "user_agents": [
+        {
+          "template": "HermesAgent/{version}",
+          "pattern": "(?i)^(?:HermesAgent|hermes-agent)/([^/\\s]+)(?:\\s|$)",
+          "version_group": 1,
+          "examples": [
+            "HermesAgent/1.2.3",
+            "hermes-agent/1.2.3 (gemini-native)"
+          ],
+          "source_ids": [
+            "S42"
+          ]
+        }
+      ],
+      "source_ids": [
+        "S42",
+        "S44"
+      ],
+      "limitations": [
+        "Anthropic adapter default and Gemini native integration; generic/custom OpenAI providers may retain SDK defaults. OAuth compatibility modes can identify as Claude or Codex, so do not infer Hermes in those cases.",
+        "Self-reported identity; not proof of software or authorization."
+      ]
     }
   ],
   "sdk_fallbacks": [
@@ -939,6 +1025,32 @@
     "S39": {
       "url": "https://github.com/openclaw/openclaw/blob/279015b0578ee497695120b2c682a8154fc520ab/extensions/openrouter/stream.ts",
       "kind": "official_source"
+    },
+    "S40": {
+      "url": "https://github.com/charmbracelet/crush/blob/8d1912439214db539e835bb3021f15dba1dd4066/internal/agent/agent.go",
+      "kind": "official_source",
+      "collected_at": "2026-11-20"
+    },
+    "S41": {
+      "url": "https://github.com/earendil-works/pi/blob/30a3e0b1f01597193668d7c2092a4694cfe7db41/packages/ai/src/utils/identity.ts",
+      "kind": "official_source",
+      "collected_at": "2026-11-20"
+    },
+    "S42": {
+      "url": "https://github.com/NousResearch/hermes-agent/blob/2de9f51b8008a7d49a49221c184f2f11cbfc4af1/agent/anthropic_adapter.py",
+      "kind": "official_source",
+      "collected_at": "2026-11-20"
+    },
+    "S43": {
+      "url": "https://github.com/earendil-works/pi/blob/30a3e0b1f01597193668d7c2092a4694cfe7db41/packages/ai/src/api/openai-completions.ts",
+      "kind": "official_source",
+      "collected_at": "2026-11-20"
+    },
+    "S44": {
+      "url": "https://github.com/NousResearch/hermes-agent/blob/2de9f51b8008a7d49a49221c184f2f11cbfc4af1/agent/gemini_native_adapter.py",
+      "kind": "official_source",
+      "collected_at": "2026-11-20"
     }
-  }
+  },
+  "updated_at": "2026-11-20"
 }

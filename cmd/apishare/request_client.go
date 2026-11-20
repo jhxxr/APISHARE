@@ -13,7 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const requestClientRuleVersion = 1
+const requestClientRuleVersion = 2
 const maxRecordedUserAgent = 2048
 const requestClientContextKey = "requestClient"
 
@@ -51,6 +51,9 @@ var requestClientNames = map[string]string{
 	"aider":         "Aider",
 	"open_webui":    "Open WebUI",
 	"sillytavern":   "SillyTavern",
+	"crush":         "Crush",
+	"pi":            "Pi / pi-ai",
+	"hermes":        "Hermes Agent",
 }
 
 type clientUARule struct {
@@ -80,6 +83,9 @@ var requestClientUARules = []clientUARule{
 	clientUA("kimi_cli", "", `(?i)^KimiCLI/([^/\s]+)(?:\s|$)`, 1),
 	clientUA("qwen_code", "", `(?i)^QwenCode/([^/\s]+)(?:\s|$)`, 1),
 	clientUA("lobehub", "", `(?i)^LobeHub Desktop/([^/\s]+)(?:\s|$)`, 1),
+	clientUA("crush", "", `(?i)^Charm-Crush/([^/\s]+)(?:\s|$)`, 1),
+	clientUA("pi", "", `(?i)^pi(?:/([^/\s()]+)(?:\s|$)|$)`, 1),
+	clientUA("hermes", "", `(?i)^(?:HermesAgent|hermes-agent)/([^/\s]+)(?:\s|$)`, 1),
 }
 
 var requestSDKUARules = []clientUARule{
@@ -140,6 +146,11 @@ func attributedRequestClient(header http.Header) string {
 		return ""
 	}
 	title := strings.TrimSpace(header.Get("X-Title"))
+	if title == "" {
+		title = strings.TrimSpace(header.Get("X-OpenRouter-Title"))
+	} else if other := strings.TrimSpace(header.Get("X-OpenRouter-Title")); other != "" && !strings.EqualFold(other, title) {
+		return ""
+	}
 	for _, entry := range requestClientAttributions {
 		if strings.EqualFold(title, entry.title) && strings.EqualFold(parsed.Hostname(), entry.host) &&
 			(entry.path == "" || strings.EqualFold(strings.TrimRight(parsed.Path, "/"), entry.path)) {
@@ -153,6 +164,16 @@ func detectRequestClient(header http.Header) requestClientIdentity {
 	result := requestClientIdentity{
 		ID: "unknown", Source: "unknown", RuleVersion: requestClientRuleVersion,
 		UserAgent: boundedClientText(header.Get("User-Agent"), maxRecordedUserAgent),
+	}
+	if title, other := strings.TrimSpace(header.Get("X-Title")), strings.TrimSpace(header.Get("X-OpenRouter-Title")); title != "" && other != "" && !strings.EqualFold(title, other) {
+		result.Conflict = true
+		for _, candidate := range []string{title, other} {
+			for _, entry := range requestClientAttributions {
+				if strings.EqualFold(candidate, entry.title) {
+					result.Candidates = append(result.Candidates, entry.id)
+				}
+			}
+		}
 	}
 	for _, rule := range requestClientUARules {
 		if match := rule.pattern.FindStringSubmatch(result.UserAgent); match != nil {
@@ -194,6 +215,9 @@ func detectRequestClient(header http.Header) requestClientIdentity {
 	}
 	if result.ID == "unknown" && result.SDKID != "" {
 		result.Source = "sdk_only"
+	}
+	if result.Conflict && result.ID != "unknown" {
+		result.Candidates = append(result.Candidates, result.ID)
 	}
 	if len(result.Candidates) > 0 {
 		sort.Strings(result.Candidates)

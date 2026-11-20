@@ -1,0 +1,25 @@
+The bundled neutral persona in neutral.md is adapted verbatim from
+ZiChuanLan/agent-purge, lib/templates/personas/neutral.md (YAML front matter
+removed). Copyright (c) 2026 ZiChuanLan. It is distributed under the MIT
+License; see LICENSE in this directory.
+
+Pinned upstream revision: 34a24f31bf4ec5d7668933b4135a9a2fc54b476e
+https://github.com/ZiChuanLan/agent-purge/tree/34a24f31bf4ec5d7668933b4135a9a2fc54b476e
+Retrieved 2026-11-20. The identity-line heuristic and request rewrite modes are
+adapted from magpie-plugin/hooks.js at the same revision. API Share implements
+native Go rewriting, preserving structured content and numeric JSON values;
+it does not run agent-purge, Node.js, or read a host-wide persona directory.
+
+Additional template collection:
+  Repository: https://github.com/ZiChuanLan/some-magic
+  Revision: 636556696e3f66920317431f7ff51b1ac0147f4f
+  Retrieved: 2026-11-20
+  Scope: all 20 Markdown persona/rule files, excluding repository README.md.
+  The original files, including YAML metadata, are retained in personas/.
+  Only the body following that metadata is sent to the selected model.
+
+This is the default repository used by agent-purge's `pull` command. The source
+snapshot does not declare a repository license. The MIT license above applies
+to agent-purge and its neutral template, not automatically to some-magic files.
+Each file's original source, revision and SHA-256 are recorded in catalog.json.
+API Share does not edit their prompt bodies or invent model compatibility claims.

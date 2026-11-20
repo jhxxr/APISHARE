@@ -56,7 +56,7 @@ func TestRequestClientResearchedSamples(t *testing.T) {
 			}
 		}
 	}
-	if count != 27 {
+	if count != 33 {
 		t.Fatalf("researched sample coverage changed: %d", count)
 	}
 }
@@ -79,6 +79,11 @@ func TestRequestClientEvidenceAndBounds(t *testing.T) {
 		{name: "other vscode proxy", ua: "CloudCodeVSCode/1.2.3 (proxy_client=another)", id: "unknown"},
 		{name: "unknown browser", ua: "Mozilla/5.0 AppleWebKit/537.36", id: "unknown"},
 		{name: "missing headers", id: "unknown"},
+		{name: "crush download tool is not model attribution", ua: "crush/1.0", id: "unknown"},
+		{name: "pi shared library short identity", ua: "pi", id: "pi"},
+		{name: "pi prefix collision", ua: "pilot/1.2.3", id: "unknown"},
+		{name: "Hermes relay download is not inference", ua: "HermesAgent-Relay/1.0", id: "unknown"},
+		{name: "browser mentions Hermes", ua: "Mozilla/5.0 (compatible; HermesAgent/1.0)", id: "unknown"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			header := make(http.Header)

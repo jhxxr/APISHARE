@@ -148,6 +148,7 @@ func registerAdminRoutes(r *gin.Engine) {
 	registerSiteBrandingAdmin(auth)
 	registerXAuthAdminRoutes(auth)
 	registerAutoRouterAdminRoutes(auth)
+	registerAgentPurgeAdminRoutes(auth)
 
 	// ---------- API Keys ----------
 	auth.GET("/keys/models", func(c *gin.Context) {

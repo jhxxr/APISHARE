@@ -921,3 +921,15 @@ kbd { padding: 2px 4px; border: 1px solid var(--border-strong); border-radius: 3
 #clineManualFill { margin-top: 16px; }
 #clineManualFill textarea { font: 12px/1.6 var(--mono); overflow-wrap: anywhere; }
 #clineManualSubmit { margin-top: 12px; }
+
+.agent-purge-admin-card { margin-bottom: 24px; }
+.agent-purge-policy-pairs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); gap: 8px; max-height: 380px; overflow: auto; padding: 2px; margin: 14px 0; }
+.agent-purge-policy-row { display: flex; gap: 10px; align-items: flex-start; min-width: 0; min-height: 50px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+.agent-purge-policy-row input { margin-top: 4px; flex: 0 0 auto; }
+.agent-purge-policy-row span { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.agent-purge-policy-row strong { font-size: 13px; }
+.agent-purge-policy-row small { color: var(--muted); font-size: 12px; }
+.agent-purge-policy-row:has(input:checked) { border-color: var(--accent); background: var(--panel-soft); }
+.agent-purge-policy-row:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.agent-purge-policy-actions { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+.agent-purge-policy-actions .btn { min-height: 44px; }

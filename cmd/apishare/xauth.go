@@ -760,6 +760,7 @@ func registerXAuthPublicRoutes(r *gin.Engine, publicSub fs.FS) {
 	})
 
 	registerUserRouterRoutes(userAPI)
+	registerUserAgentPurgeRoutes(userAPI)
 }
 
 type userDailyPoint struct {

@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"apishare/internal/agentpurge"
 	"apishare/internal/cliproxy"
 	"github.com/gin-gonic/gin"
 )
@@ -61,6 +62,8 @@ type relayInfo struct {
 	startedAt        time.Time
 	firstTokenSet    bool
 	firstOutputGuard *firstOutputDeadlineBody
+	agentPurge       *agentPurgeReceipt
+	agentPurgeBody   []byte
 }
 
 // markFirstToken 记录首个输出增量的到达时刻，只生效一次。
@@ -130,6 +133,8 @@ type relayTask struct {
 	stream                    bool
 	nativeOnly                bool // 只允许原生类型的上游（如 embeddings），禁止跨格式转换
 	apiKeyID                  int64
+	userSub                   string // Authenticated personal-console identity, empty for ordinary API keys.
+	agentPurgeState           *agentPurgeRequestState
 	wantUsageChunk            bool   // openai chat 流式：客户端是否要求 include_usage
 	openCodeSession           string // Reused across retries, tiers, and protocol conversions.
 	openCodeRequest           string
@@ -264,6 +269,7 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 		var routerModelCaps map[string]ModelCapabilityVector
 		var routerDemand TaskDemandProfile
 		userSub := userSubForKey(ak)
+		agentPurgeState := loadAgentPurgeRequestState(userSub)
 
 		switch {
 		case !nativeOnly && isAutoRouterModel(cr.Model):
@@ -483,6 +489,8 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 				stream:               cr.Stream,
 				nativeOnly:           nativeOnly,
 				apiKeyID:             ak.ID,
+				userSub:              userSub,
+				agentPurgeState:      agentPurgeState,
 				wantUsageChunk:       wantUsageChunk,
 				router:               routerDecision,
 				sourceTier:           sourceTier,
@@ -697,7 +705,16 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 		if !info.InKnown {
 			prompt = inputTokensEst
 			if prompt < 0 {
-				prompt = estimatePromptTokens(task)
+				if info.agentPurge != nil {
+					if forwarded, err := parseClientRequest(info.Usage.Source, info.agentPurgeBody, info.UpstreamModel); err == nil {
+						copyTask := *task
+						copyTask.canon = forwarded
+						prompt = estimatePromptTokens(&copyTask)
+					}
+				}
+				if prompt < 0 {
+					prompt = estimatePromptTokens(task)
+				}
 			}
 		}
 		if !info.OutKnown {
@@ -746,7 +763,7 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 			PromptTokens: counts.inputTotal(), CompletionTokens: counts.outputTotal(),
 			CostUSD: cost.Total, Status: logStatus, LatencyMS: info.LatencyMS, Error: logError,
 			FirstTokenMS: info.FirstTokenMS, DurationMS: info.DurationMS,
-			Billing: &billingDetails{Source: usage.Source, Reported: reported, Usage: counts, Cost: cost, Price: price, PriceSource: priceSource, PricingModel: pricingModel, UpstreamModel: info.UpstreamModel, QuotaPool: quotaPool, Router: task.router},
+			Billing: &billingDetails{Source: usage.Source, Reported: reported, Usage: counts, Cost: cost, Price: price, PriceSource: priceSource, PricingModel: pricingModel, UpstreamModel: info.UpstreamModel, QuotaPool: quotaPool, Router: task.router, AgentPurge: info.agentPurge},
 		}
 		if task.byokUsed {
 			dbInsertLog(entry)
@@ -777,12 +794,12 @@ func insertFailureLog(ak ApiKey, info relayInfo, task *relayTask, status int, er
 		}
 	}
 	var billing *billingDetails
-	if task.router != nil || task.byokUsed {
+	if task.router != nil || task.byokUsed || info.agentPurge != nil {
 		qp := ""
 		if task.byokUsed {
 			qp = "byok"
 		}
-		billing = &billingDetails{Source: task.format, QuotaPool: qp, Router: task.router}
+		billing = &billingDetails{Source: task.format, QuotaPool: qp, Router: task.router, AgentPurge: info.agentPurge}
 	}
 	dbInsertLog(&CallLog{
 		Client:  task.clientIdentity(),
@@ -936,9 +953,23 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 			return info, false, &protocolConversionError{err}
 		}
 	}
+	if shouldApplyAgentPurge(task.agentPurgeState, task.userSub, up, task) {
+		if rewritten, changed := agentpurge.RewriteWithPersona(reqBody, string(wireFormat), task.agentPurgeState.user.Mode, task.agentPurgeState.user.PersonaID); changed {
+			reqBody = rewritten
+			info.agentPurge = newAgentPurgeReceipt(task.agentPurgeState.user.PersonaID, task.agentPurgeState.user.Mode)
+			if reqBody, err = boundAgentPurgeBody(reqBody, wireFormat, upModel, task); err != nil {
+				info.Status = http.StatusBadRequest
+				info.agentPurge = nil
+				return info, false, &protocolConversionError{err}
+			}
+		}
+	}
 	reqBody, err = normalizeInternAIAnthropicRequest(reqBody, wireFormat, url)
 	if err != nil {
 		return info, false, &protocolConversionError{err}
+	}
+	if info.agentPurge != nil {
+		info.agentPurgeBody = reqBody
 	}
 	requestCtx, cancelCause := context.WithCancelCause(c.Request.Context())
 	cancel := func() { cancelCause(context.Canceled) }

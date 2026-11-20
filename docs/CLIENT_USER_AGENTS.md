@@ -2,6 +2,8 @@
 
 采集日期：2026-10-23（Asia/Shanghai）。
 
+增补核验：2026-11-20（Asia/Shanghai）。运行时规则版本升级为 2；新增 Crush、Pi / pi-ai、Hermes Agent。原有固定版本来源没有被当作最新发布版本。
+
 已接入入站客户端识别、调用日志、日志筛选与导出，以及仪表盘客户端统计。配套的 [JSON 样本库](client-user-agents.json) 保存调研正则、版本捕获位置、辅助请求头、适用范围和固定版本源码链接；它是调研与回归样本，运行时使用 `cmd/apishare/request_client.go` 中的固定规则，不会在请求路径联网查询客户端版本。
 
 **以下是从官方源码或官方发布包提取的格式，不是本项目实际抓到的请求。** `{version}` 等表示变量；JSON 中的示例也是依据源码构造的样本，不代表当前最新版本。没有确认的 UA 不补猜测值。
@@ -23,6 +25,9 @@
 | Kimi CLI | `KimiCLI/{version}` | 已确认 `provider.type == "kimi"` 的默认头。检查到的 `openai_legacy`、`openai_responses`、`anthropic` 路径仅传用户自定义头，不能假定都带 Kimi UA。[S17][S18] |
 | Qwen Code | `QwenCode/{version} ({platform}; {arch})` | 默认 OpenAI 兼容 provider 设置此 UA；DashScope 路径还带 `X-DashScope-UserAgent`。[S19][S20] |
 | LobeHub Desktop | `LobeHub Desktop/{version}` | 官方桌面端存在专用 UA 设置函数。还需要实测确认不同模型转发路径中，该 UA 是否一直传到自建网关。[S22] |
+| Crush | `Charm-Crush/{version} (https://charm.land/crush)` | agent / title 等模型调用把此值传入 `fantasy.WithUserAgent`。更新检查和下载工具中的 `crush/1.0` 不是模型请求证据，不匹配。[S40] |
+| Pi / pi-ai | `pi/{version} ({platform}; {runtime}; {arch})`、`pi/{version} (browser)`，或短模式 `pi` | `pi-ai` 的默认标识被模型 provider 使用；复用该库的其他应用可能共享，因此展示为 Pi / pi-ai。短模式无版本，不伪造版本。用户或 model headers 可以覆盖。[S41][S43] |
+| Hermes Agent | `HermesAgent/{version}`，或 Gemini 原生路径 `hermes-agent/{version} (gemini-native)` | 已确认 Anthropic 的归属头及 Gemini 原生路径。自定义 OpenAI endpoint 可能仍是 SDK 默认 UA；部分 OAuth 兼容模式会声明 Codex / Claude，不能据此猜成 Hermes。[S42][S44] |
 
 ### 已确认的身份歧义
 
@@ -96,6 +101,12 @@ Qwen Code 的 Anthropic provider 在 **非 Anthropic 官方 Base URL** 下，会
 
 日志详情展示身份快照和 UA；旧日志与未提供 UA 的请求会明确显示未采集或未知。统计包含已归档明细，因此点击统计项后，日志列表的条数可能少于累计统计。
 
+## 客户端维度的个性化提示词
+
+个性化提示词直接复用入站识别快照，在上游覆盖 User-Agent 之前确定客户端，不根据 system prompt 内容猜测客户端。用户在个人控制台勾选客户端后，只有同时命中管理员开放、用户选中的「模型 × 站点上游」才会改写。
+
+默认关闭；没有应用证据时，可由用户明确选中 SDK 类别，SDK 类别只匹配应用仍为 `unknown` 的该 SDK 请求。完全未知、证据冲突的请求正常透传。Claude 选项明确标为「Claude Code / 兼容标识」，包括共用 `claude-cli` 标识的 Qwen 代理模式；这不是对客户端真实身份的证明，也不能绕过 API Key 权限。详见 [Agent Purge 集成](AGENT_PURGE.md)。
+
 只保存客户端身份快照，不保存完整请求头、认证信息或会话 ID。后续若补采真实样本，保留 UA、必要的应用身份头、应用版本与 provider 路径即可。
 
 ## 官方依据
@@ -141,3 +152,8 @@ GitHub 链接固定到本轮检查的提交；npm 链接固定到所检查的发
 [S37]: https://github.com/continuedev/continue/blob/5522c6f44ca0ac3528b37244818fbfa39b5af470/packages/fetch/src/fetch.ts
 [S38]: https://github.com/LibreChat-AI/LibreChat/blob/b793ab8bda7dd54ed766d6dd39013dadd85abfcb/packages/api/src/endpoints/custom/initialize.ts
 [S39]: https://github.com/openclaw/openclaw/blob/279015b0578ee497695120b2c682a8154fc520ab/extensions/openrouter/stream.ts
+[S40]: https://github.com/charmbracelet/crush/blob/8d1912439214db539e835bb3021f15dba1dd4066/internal/agent/agent.go
+[S41]: https://github.com/earendil-works/pi/blob/30a3e0b1f01597193668d7c2092a4694cfe7db41/packages/ai/src/utils/identity.ts
+[S42]: https://github.com/NousResearch/hermes-agent/blob/2de9f51b8008a7d49a49221c184f2f11cbfc4af1/agent/anthropic_adapter.py
+[S43]: https://github.com/earendil-works/pi/blob/30a3e0b1f01597193668d7c2092a4694cfe7db41/packages/ai/src/api/openai-completions.ts
+[S44]: https://github.com/NousResearch/hermes-agent/blob/2de9f51b8008a7d49a49221c184f2f11cbfc4af1/agent/gemini_native_adapter.py

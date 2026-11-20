@@ -386,6 +386,33 @@
         </article>
       </section>
 
+      <section class="user-card agent-purge-panel" aria-labelledby="agentPurgeTitle">
+        <div class="card-head">
+          <div>
+            <span class="eyebrow">AGENT PURGE · PROMPT PERSONALIZATION</span>
+            <h2 id="agentPurgeTitle">个性化提示词 <span id="agentPurgeStatus" class="status-pill off">未启用</span></h2>
+            <p class="card-sub">内置 agent-purge 及其默认人设库的完整模板，选择后使用原文。只在你勾选的模型、上游和客户端同时匹配时生效。</p>
+          </div>
+          <button id="saveAgentPurgeUser" type="button" class="btn primary mini">保存提示词设置</button>
+        </div>
+        <div id="agentPurgeUnavailable" class="agent-purge-notice hidden" role="status"></div>
+        <label class="user-switch-row agent-purge-master"><input id="agentPurgeUserEnabled" type="checkbox"><span><strong>启用我的个性化提示词</strong><small>关闭后，即使保留下方选择，也不会改写请求。</small></span></label>
+        <label class="user-field agent-purge-mode"><span>内置模板 <span id="agentPurgeTemplateCount" class="count-badge">0</span></span><select id="agentPurgeTemplateSelect" aria-describedby="agentPurgeTemplateDescription" disabled><option value="neutral">中性模板</option></select><small id="agentPurgeTemplateDescription">正在加载完整模板库…</small></label>
+        <label class="user-field agent-purge-mode"><span>处理模式</span><select id="agentPurgeMode" aria-describedby="agentPurgeModeHint"><option value="append">追加模板（推荐）</option><option value="replace">替换身份行（近似）</option><option value="strict">严格替换可控提示词</option></select><small id="agentPurgeModeHint"></small></label>
+        <details class="agent-purge-preview"><summary>查看「<span id="agentPurgeTemplateName">中性模板</span>」原文与来源</summary><p id="agentPurgeTemplateSource" class="agent-purge-footnote">ZiChuanLan/agent-purge · neutral</p><pre id="agentPurgePromptPreview"></pre></details>
+        <div class="agent-purge-columns">
+          <section class="agent-purge-subpanel" aria-labelledby="agentPurgeClientsTitle">
+            <div class="agent-purge-subhead"><h3 id="agentPurgeClientsTitle">适用客户端</h3><p>按请求声明的 User-Agent 识别，可被自定义。无法归类或识别冲突的请求不改写。</p></div>
+            <div id="agentPurgeClients" class="agent-purge-options"></div>
+          </section>
+          <section class="agent-purge-subpanel" aria-labelledby="agentPurgePairsTitle">
+            <div class="agent-purge-subhead"><h3 id="agentPurgePairsTitle">模型与上游</h3><p>管理员开放且你的 API Key 有权使用的组合才会显示。</p></div>
+            <div id="agentPurgePairs" class="agent-purge-options"></div>
+          </section>
+        </div>
+        <p id="agentPurgeSelectionNote" class="agent-purge-footnote" role="status"></p>
+      </section>
+
       <section class="user-card logs-panel" aria-label="个人调用记录">
         <div class="card-head logs-head">
           <div>

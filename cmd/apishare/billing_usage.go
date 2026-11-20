@@ -45,6 +45,7 @@ type billingDetails struct {
 	UpstreamModel string                 `json:"upstream_model,omitempty"`
 	QuotaPool     string                 `json:"quota_pool,omitempty"`
 	Router        *routerDecisionDetails `json:"router,omitempty"`
+	AgentPurge    *agentPurgeReceipt     `json:"agent_purge,omitempty"`
 }
 
 func nonnegativeTokens(value int) int {

@@ -8,6 +8,7 @@ COPY cmd/apishare/ ./cmd/apishare/
 COPY internal/ ./internal/
 COPY LICENSE internal/bunhttp/NOTICE ./licenses/
 COPY cmd/apishare/third_party/cliproxy/LICENSE ./licenses/CLIProxyAPI/LICENSE
+COPY internal/agentpurge/LICENSE internal/agentpurge/NOTICE ./licenses/agent-purge/
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/apishare ./cmd/apishare
 
 FROM alpine:3.20

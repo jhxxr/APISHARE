@@ -17,6 +17,7 @@
     routerView: null,
     routerPool: [],
     routerExcluded: [],
+    agentPurge: null,
   };
 
   const numFmt = new Intl.NumberFormat("zh-CN");
@@ -574,6 +575,125 @@
   }
 
   // ---------- BYOK & Personal Auto Router ----------
+
+  async function loadAgentPurgeSettings() {
+    const button = $("#saveAgentPurgeUser");
+    if (button) button.disabled = true;
+    try {
+      const res = await fetch("/api/user/agent-purge", { cache: "no-store" });
+      const view = await res.json();
+      if (!res.ok) throw new Error(view.error || "加载提示词设置失败");
+      state.agentPurge = view;
+      renderAgentPurgeSettings();
+    } catch (error) {
+      state.agentPurge = null;
+      const note = $("#agentPurgeUnavailable");
+      if (note) { note.textContent = error.message; note.classList.remove("hidden"); }
+    }
+  }
+
+  function renderAgentPurgeSettings() {
+    const view = state.agentPurge;
+    if (!view) return;
+    const available = !!view.enabled;
+    const note = $("#agentPurgeUnavailable");
+    note.textContent = available ? "" : "管理员尚未开放此功能。你的原有请求将正常转发。";
+    note.classList.toggle("hidden", available);
+    $("#agentPurgeUserEnabled").checked = !!view.user_enabled;
+    $("#agentPurgeUserEnabled").disabled = !available;
+    $("#agentPurgeMode").value = view.mode || "append";
+    $("#agentPurgeMode").disabled = !available;
+    const templates = Array.isArray(view.personas) ? view.personas : [];
+    const templateSelect = $("#agentPurgeTemplateSelect");
+    $("#agentPurgeTemplateCount").textContent = String(templates.length);
+    templateSelect.innerHTML = '<option value="" disabled>请选择内置模板</option>' + templates.map((item) => `<option value="${esc(item.id)}">${esc(item.name)} · ${esc(item.id)}</option>`).join("");
+    templateSelect.value = view.persona_id || "neutral";
+    templateSelect.disabled = !available || !templates.length;
+    renderAgentPurgeTemplatePreview();
+    const selected = new Set(view.selected_clients || []);
+    $("#agentPurgeClients").innerHTML = (view.clients || []).map((client) => `<label class="agent-purge-option"><input type="checkbox" data-purge-client="${esc(client.id)}"${selected.has(client.id) ? " checked" : ""}${!available || !client.available ? " disabled" : ""}><span><strong>${esc(client.name)}</strong>${client.note ? `<small>${esc(client.note)}</small>` : ""}${client.sdk ? "<small>仅匹配未识别出具体应用的该 SDK 请求</small>" : ""}</span></label>`).join("");
+    const pairs = Array.isArray(view.pairs) ? view.pairs : [];
+    $("#agentPurgePairs").innerHTML = pairs.length
+      ? pairs.map((pair) => `<label class="agent-purge-option"><input type="checkbox" data-purge-model="${esc(pair.model)}" data-purge-upstream="${Number(pair.upstream_id)}"${pair.enabled ? " checked" : ""}${!available ? " disabled" : ""}><span><strong>${esc(pair.model)}</strong><small>${esc(pair.upstream_name)} · #${Number(pair.upstream_id)}</small></span></label>`).join("")
+      : '<p class="muted">当前没有管理员开放且你有权使用的模型与上游组合。</p>';
+    $("#saveAgentPurgeUser").disabled = !available;
+    updateAgentPurgeSelection();
+  }
+
+  function renderAgentPurgeTemplatePreview() {
+    const view = state.agentPurge;
+    if (!view) return;
+    const id = $("#agentPurgeTemplateSelect").value;
+    const selected = (view.personas || []).find((item) => item.id === id);
+    $("#agentPurgeTemplateName").textContent = selected?.name || "未选择模板";
+    $("#agentPurgeTemplateDescription").textContent = selected
+      ? `${selected.description || ""} · ${fmtInt(selected.characters)} 字符`
+      : "原选择不可用，请重新选择内置模板。";
+    const source = selected?.source || {};
+    $("#agentPurgeTemplateSource").textContent = selected
+      ? `${source.repository} · ${source.path} · ${(source.revision || "").slice(0, 8)} · 原文仅去除 YAML 元数据`
+      : "";
+    $("#agentPurgePromptPreview").textContent = selected?.text || "";
+  }
+
+  function updateAgentPurgeSelection() {
+    const view = state.agentPurge;
+    if (!view) return;
+    const clients = $$("[data-purge-client]:checked").length;
+    const pairs = $$("[data-purge-model]:checked").length;
+    const templateSelected = !!$("#agentPurgeTemplateSelect").value;
+    const enabled = $("#agentPurgeUserEnabled").checked && view.enabled;
+    const badge = $("#agentPurgeStatus");
+    badge.textContent = !view.enabled ? "站点未开放" : !enabled ? "未启用" : !clients || !pairs || !templateSelected ? "待选择范围" : "已选择启用";
+    badge.className = "status-pill " + (enabled && clients && pairs && templateSelected ? "on" : "off");
+    $("#agentPurgeSelectionNote").textContent = `已选 ${clients} 类客户端、${pairs} 个模型与上游组合。修改后请保存；故障切换到未勾选的上游时不改写提示词。`;
+    const mode = $("#agentPurgeMode").value;
+    $("#agentPurgeModeHint").textContent = mode === "strict"
+      ? "严格替换会移除请求中可控的 system/developer 原文，可能影响工具使用说明。独立结构化工具仍保留；客户端或上游另加的内容不受此开关控制。"
+      : mode === "replace"
+      ? "近似删除 system/developer 中自称客户端身份的行，再加入模板；其余说明保留，无法保证识别全部身份文本。"
+      : "保留原有说明，把模板放在 system 提示词之前；Anthropic / Gemini 原有缓存块保持结构。";
+  }
+
+  async function saveAgentPurgeSettings() {
+    const view = state.agentPurge, button = $("#saveAgentPurgeUser");
+    if (!view || !view.enabled) return;
+    const payload = {
+      enabled: $("#agentPurgeUserEnabled").checked,
+      mode: $("#agentPurgeMode").value,
+      persona_id: $("#agentPurgeTemplateSelect").value,
+      revision: view.revision,
+      clients: $$("[data-purge-client]:checked").map((input) => input.dataset.purgeClient),
+      pairs: $$("[data-purge-model]:checked").map((input) => ({ model: input.dataset.purgeModel, upstream_id: Number(input.dataset.purgeUpstream) })),
+    };
+    if (!payload.persona_id) {
+      toast("请选择内置模板");
+      return;
+    }
+    if (payload.enabled && (!payload.clients.length || !payload.pairs.length)) {
+      toast("请至少选择一类客户端，以及一个模型与上游组合");
+      return;
+    }
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.textContent = "正在保存…";
+    try {
+      const res = await fetch("/api/user/agent-purge", {
+        method: "PUT", headers: { "Content-Type": "application/json", "X-APIShare-Request": "user-console" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "保存提示词设置失败");
+      state.agentPurge = data;
+      renderAgentPurgeSettings();
+      toast("个性化提示词设置已保存");
+    } catch (error) { toast(error.message || "网络异常，保存提示词设置失败"); }
+    finally {
+      button.disabled = !state.agentPurge?.enabled;
+      button.setAttribute("aria-busy", "false");
+      button.textContent = "保存提示词设置";
+    }
+  }
 
   async function loadUserRouterAndByok() {
     try {
@@ -1354,12 +1474,15 @@
     $("#refreshBtn")?.addEventListener("click", async () => {
       const ok = await loadDashboard();
       if (ok) {
-        await Promise.all([loadUserLogs(), loadUserRouterAndByok()]);
+        await Promise.all([loadUserLogs(), loadUserRouterAndByok(), loadAgentPurgeSettings()]);
       }
       toast("控制台数据已刷新");
     });
 
     $("#logoutBtn")?.addEventListener("click", logoutUser);
+    $("#saveAgentPurgeUser")?.addEventListener("click", saveAgentPurgeSettings);
+    $("#agentPurgeTemplateSelect")?.addEventListener("change", renderAgentPurgeTemplatePreview);
+    $(".agent-purge-panel")?.addEventListener("change", updateAgentPurgeSelection);
 
     // BYOK & Personal Router events
     $("#addByokBtn")?.addEventListener("click", () => openByokModal(0));
@@ -1450,7 +1573,7 @@
     loadBranding();
     const ok = await loadDashboard();
     if (ok) {
-      await Promise.all([loadUserLogs(), loadUserRouterAndByok()]);
+      await Promise.all([loadUserLogs(), loadUserRouterAndByok(), loadAgentPurgeSettings()]);
     }
   }
 

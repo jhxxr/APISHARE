@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"apishare/internal/agentpurge"
 	"apishare/internal/cliproxy"
 	"github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
@@ -428,6 +429,12 @@ func (s *responsesWSSession) run(ctx context.Context, downstream *websocket.Conn
 		if request.Model != turn.info.UpstreamModel {
 			body = replaceModelInBody(body, turn.info.UpstreamModel)
 		}
+		if shouldApplyAgentPurge(turn.task.agentPurgeState, turn.task.userSub, s.up, &turn.task) {
+			if rewritten, changed := agentpurge.RewriteWithPersona(body, string(FormatOpenAIResponse), turn.task.agentPurgeState.user.Mode, turn.task.agentPurgeState.user.PersonaID); changed {
+				body = rewritten
+				turn.info.agentPurge = newAgentPurgeReceipt(turn.task.agentPurgeState.user.PersonaID, turn.task.agentPurgeState.user.Mode)
+			}
+		}
 		if err := realtimeWrite(ctx, upstream, websocket.MessageText, body); err != nil {
 			closeCode = websocket.StatusInternalError
 			return
@@ -642,6 +649,8 @@ func (s *responsesWSSession) admit(model string, request *responsesWSRequest) (*
 		task: relayTask{client: requestClientFor(s.c), traceID: randHex(16), format: FormatOpenAIResponse,
 			endpoint: "/v1/responses", model: model, apiKeyID: key.ID, stream: true},
 	}
+	turn.task.userSub = userSubForKey(*key)
+	turn.task.agentPurgeState = loadAgentPurgeRequestState(turn.task.userSub)
 	requestClientFor(s.c).model = model
 	s.pending = append(s.pending, turn)
 	return turn, 0, ""
@@ -867,6 +876,9 @@ func (s *responsesWSSession) finish(turn *responsesWSTurn, rawUsage json.RawMess
 		PromptTokens: counts.inputTotal(), CompletionTokens: counts.outputTotal(),
 		FirstTokenMS: turn.info.FirstTokenMS, DurationMS: turn.info.DurationMS, LatencyMS: turn.info.LatencyMS,
 	}
+	if turn.info.agentPurge != nil {
+		entry.Billing = &billingDetails{Source: FormatOpenAIResponse, AgentPurge: turn.info.agentPurge}
+	}
 	if usageObject == nil {
 		// Incremental WS inputs do not contain the full transcript. Unknown
 		// usage must stay unknown rather than estimating a partial history.
@@ -881,6 +893,6 @@ func (s *responsesWSSession) finish(turn *responsesWSTurn, rawUsage json.RawMess
 	}
 	entry.CostUSD = cost.Total
 	entry.Billing = &billingDetails{Source: usage.Source, Reported: usage, Usage: counts, Cost: cost,
-		Price: price, PriceSource: source, PricingModel: pricingModel, UpstreamModel: turn.info.UpstreamModel, QuotaPool: pool}
+		Price: price, PriceSource: source, PricingModel: pricingModel, UpstreamModel: turn.info.UpstreamModel, QuotaPool: pool, AgentPurge: turn.info.agentPurge}
 	return dbRecordBilledCall(entry, independent)
 }

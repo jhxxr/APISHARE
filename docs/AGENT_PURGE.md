@@ -1,0 +1,69 @@
+# Agent Purge 个性化提示词
+
+API Share 编译内置 **21 份原文模板**：`agent-purge` 的 `neutral`，以及其 `pull` 命令默认使用的同作者 `some-magic` 人设库全部 20 份模板/规则文件（不把仓库 README 当模板）。无需 Node.js、Magpie 或额外服务，请求路径不联网下载模板。默认关闭，用户自行选择模板、客户端与获准的模型/上游组合。
+
+来源固定为：
+
+- `ZiChuanLan/agent-purge@34a24f31bf4ec5d7668933b4135a9a2fc54b476e` 的 `lib/templates/personas/neutral.md`。
+- `ZiChuanLan/some-magic@636556696e3f66920317431f7ff51b1ac0147f4f` 的全部 20 份模板。原文件（含 YAML 元数据）保存在 `internal/agentpurge/personas/`；发送时只剥离元数据，正文不作改写。
+
+`internal/agentpurge/catalog.json` 记录每份模板的名称、ID、简介、顺序、来源版本、原文件和正文 SHA-256。程序启动和测试会校验全部文件；个人控制台可选择并完整预览原文及来源。使用者的选择会持久化，旧配置没有模板 ID 时保持 `neutral`；未知 ID 不会静默替换成其他人设。
+
+许可按来源分别记录：`agent-purge`/neutral 的 MIT 许可保存在同目录；`some-magic` 该快照没有声明仓库许可，不把前者的 MIT 授权套用于它。详情见 `internal/agentpurge/NOTICE` 和后台「许可与来源」，Docker 同时携带这些说明。
+
+## 开启步骤
+
+1. 管理员进入「工作空间设置 → 个性化提示词 · Agent Purge」，开启功能，勾选允许的「模型 × 站点上游」组合，点击该区域独立的「保存提示词授权」。筛选模型或上游不会丢弃其他已选项。
+2. XAuth 用户进入「个人控制台 → 个性化提示词」，从 21 份内置模板中选择一份，勾选自己的总开关、适用客户端、模型与上游，选择模式并保存。
+3. 客户端沿用原 API Key 和接入地址发起请求。每次实际选定上游后，仅当管理员和用户都允许该组合、入站客户端也命中时应用模板。
+
+站点与用户的开关、模型组合和客户端选择初始均为空/关闭，不会自动开启。普通 API Key 没有对应个人配置，因此继续透传。用户自带 BYOK 渠道不在此站点上游授权范围内。
+
+## 模式
+
+| 模式 | 行为 |
+| --- | --- |
+| `append`（默认） | 模板放在现有说明之前；保留原说明、结构化内容及缓存标记。名称沿用 agent-purge 网关插件。 |
+| `replace` | 近似过滤 system/developer 文本中同时包含自称和已知身份词的整行，再加入模板；保留其他说明。该启发式不保证移除全部身份句，也可能移除同行的其他说明。 |
+| `strict` | 替换可控的 system/developer 文本；Responses 的 `instructions` 及 `input` 中的 system/developer 一并处理。可能移除工具使用说明，但不删除独立结构化工具、工具结果、图片或其他对话消息。 |
+| 关闭用户开关 | 不改写后续请求；保留个人选择，方便再次开启。 |
+
+支持 OpenAI Chat、OpenAI Responses、Anthropic Messages、Gemini，包括 SSE 和协议转换。Responses WebSocket 在每轮重新读取配置，连接无需重新建立；不会改写取消/中断事件。Embeddings、Audio、Realtime、Responses compact 及专用决策模型不使用这项能力。
+
+故障切换的每次尝试均从原始请求构造，重新按所选上游判断。主上游开启、备用上游未开启时，只有主上游会收到模板；备用不会继承前一次已改写的请求。模型别名按客户端可见的 ID 授权，转发时仍使用既有模型映射；自动路由按实际候选模型及其上游匹配，用户仍需有该模型的权限。
+
+取消管理员授权后，后续新请求不再改写。正在执行的 HTTP 请求沿用进入时的配置快照；WebSocket 下一轮重新读取。改写无法撤回已发送的历史提示词，也无法控制客户端本地行为、上游再次注入的内容或供应商隐藏提示词。
+
+HTTP 请求在模板注入后重新计算上下文与输出预算，长模板无法放入窗口时明确报错；最终请求再执行上游兼容修复，避免引入空文本块。严格模式同时处理 Anthropic 消息内的系统指令。
+
+## 客户端识别
+
+使用 `request_client.go` 的入站识别，不使用发往上游后被覆盖的 UA。新增了有固定版本官方源码依据的 Crush、Pi / pi-ai 和 Hermes Agent，样本及限制保存在 [客户端资料](CLIENT_USER_AGENTS.md) 和 JSON 样本库。
+
+- 各客户端单独勾选；未选客户端正常透传。
+- 通用 SDK 保留独立类别，只有用户明确勾选时才匹配未识别具体应用的 SDK 请求。
+- 完全未知、证据冲突的请求不改写。
+- 「Claude Code / 兼容标识」包含共用 UA 的 Qwen 代理模式；Pi / pi-ai 也可能包含使用该库默认标识的其他应用。页面明确提示这些边界。
+- UA 由请求方声明，可以伪造，只是个人偏好筛选；模型权限、额度、限流及站点上游授权始终在服务端校验。
+
+## 管理与用户 API
+
+| API | 用途 |
+| --- | --- |
+| `GET /{admin_path}/api/agent-purge/policy` | 管理员获取全局开关、策略修订号、可用模型与上游组合及勾选状态。 |
+| `PUT /{admin_path}/api/agent-purge/policy` | 全量保存 `{enabled,revision,pairs:[{model,upstream_id}]}`。 |
+| `GET /{admin_path}/api/agent-purge/license` | 管理员读取内嵌 MIT 许可。 |
+| `GET /api/user/agent-purge` | 登录用户获取有权使用的组合、可选客户端、全部模板原文/元数据、当前所选模板、模式和自己的配置。 |
+| `PUT /api/user/agent-purge` | 保存 `{enabled,mode,persona_id,revision,pairs,clients}`。必须有个人会话及 `X-APIShare-Request: user-console`。 |
+
+保存接口校验策略修订号。管理员已修改授权而客户端仍提交旧表单时返回 409，用户应刷新重新确认。用户不能为别人的身份保存配置，也不能自行添加管理员未开放的组合。偏好按 XAuth 身份持久化，轮换 API Key 后保留。
+
+## 记录与计费
+
+最终上游实际改写成功时，在该次调用的 `billing.agent_purge` 保存 `{persona:"所选模板ID",name:...,sha256:...,mode:...}`；未改写不生成此字段。管理员日志详情显示实际所选模板与模式；不记录完整请求正文。失败尝试的改写标记不会冒充最终上游的标记。
+
+上游有真实 usage 时继续以真实值计费；HTTP 上游未报告输入 usage 时，按本次改写后的请求估算，明确保留估算标记。WebSocket 增量请求缺少全量历史，继续沿用原来不凭部分历史估算总输入的行为。
+
+## 验证
+
+`go test ./...` 覆盖完整 21 份模板的哈希/原文校验、四协议与三模式选择、模板持久化/隔离/非法 ID、已复现问题回归，以及改写模式与结构保留、33 条来源样本、权限和 CSRF、用户隔离、协议转换及流式转发、重试不重复、未授权上游不继承、WebSocket 配置刷新和最终计费归因。
