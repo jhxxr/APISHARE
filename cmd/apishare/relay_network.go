@@ -149,7 +149,7 @@ func (body *firstOutputDeadlineBody) Read(buffer []byte) (int, error) {
 	expired := body.expired
 	body.mu.Unlock()
 	if expired {
-		return n, errUpstreamFirstOutputTimeout
+		return 0, errUpstreamFirstOutputTimeout
 	}
 	return n, err
 }

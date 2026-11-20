@@ -937,7 +937,8 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	if err != nil {
 		return info, false, &protocolConversionError{err}
 	}
-	requestCtx, cancel := context.WithCancel(c.Request.Context())
+	requestCtx, cancelCause := context.WithCancelCause(c.Request.Context())
+	cancel := func() { cancelCause(context.Canceled) }
 	defer cancel()
 	req, err := http.NewRequestWithContext(requestCtx, c.Request.Method, url, bytes.NewReader(reqBody))
 	if err != nil {
@@ -1038,6 +1039,30 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 			markOpenCodeRateSuccess(up, start)
 		}
 	}()
+	var stopHeaderTimer func()
+	if task.stream && relayNetwork.FirstOutputTimeout > 0 {
+		timerDone := make(chan struct{})
+		timer := time.AfterFunc(time.Until(start.Add(relayNetwork.FirstOutputTimeout)), func() {
+			cancelCause(errUpstreamFirstOutputTimeout)
+			close(timerDone)
+		})
+		stopped := false
+		stopHeaderTimer = func() {
+			if stopped {
+				return
+			}
+			stopped = true
+			if !timer.Stop() {
+				<-timerDone
+			}
+		}
+		defer func() {
+			stopHeaderTimer()
+			if err != nil && c.Request.Context().Err() == nil && errors.Is(context.Cause(requestCtx), errUpstreamFirstOutputTimeout) {
+				err = errUpstreamFirstOutputTimeout
+			}
+		}()
+	}
 	keepalive := beginMessagesKeepalive(c, task)
 	resp, err := messagesHTTPDo(client, req, keepalive, cancel)
 	if err == nil && up.Type == "cline" {
@@ -1066,6 +1091,13 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		}
 		if resp != original && relayNetwork.BodyIdleTimeout > 0 {
 			resp.Body = newActivityDeadlineBody(resp.Body, relayNetwork.BodyIdleTimeout)
+		}
+	}
+	if stopHeaderTimer != nil {
+		stopHeaderTimer()
+		if c.Request.Context().Err() == nil && errors.Is(context.Cause(requestCtx), errUpstreamFirstOutputTimeout) {
+			resp.Body.Close()
+			return info, false, errUpstreamFirstOutputTimeout
 		}
 	}
 	if task.stream && resp.StatusCode >= 200 && resp.StatusCode < 300 && relayNetwork.FirstOutputTimeout > 0 {
@@ -1362,7 +1394,7 @@ func relaySSENative(c *gin.Context, resp *http.Response, format clientFormat, in
 				info.markFirstToken()
 			}
 			output = !committed && (!parsed || !nativeSSEPreludeObject(format, event))
-			semanticOutput := output
+			semanticOutput := parsed && !nativeSSEPreludeObject(format, event)
 			if !committed && speculative && !sawTool {
 				if esc, reason := shouldEscalateSpeculativeOutput(info.OutputText.String(), sawTool, done); esc {
 					return false, fmt.Errorf("%w: speculative_probe:%s", errAutoRouterModelIncompatible, reason)
@@ -1371,7 +1403,7 @@ func relaySSENative(c *gin.Context, resp *http.Response, format clientFormat, in
 					output = false
 				}
 			}
-			if semanticOutput || done {
+			if semanticOutput {
 				info.markFirstOutput()
 			}
 			if keepalive != nil && parsed {
