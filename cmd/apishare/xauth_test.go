@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -14,12 +15,12 @@ import (
 )
 
 type mockXAuthServer struct {
-	server       *httptest.Server
-	clientID     string
-	clientSecret string
-	expectedCode string
+	server        *httptest.Server
+	clientID      string
+	clientSecret  string
+	expectedCode  string
 	lastChallenge string
-	userInfo     xauthUserInfo
+	userInfo      xauthUserInfo
 }
 
 func newMockXAuthServer(t *testing.T) *mockXAuthServer {
@@ -524,11 +525,47 @@ func TestPerKeyDailyRollupPreservesUserDashboardTelemetry(t *testing.T) {
 		t.Fatalf("rollupExpiredLogs: %v", err)
 	}
 
-	dash, err := buildUserDashboard(now, rec, ak)
+	dash, err := buildUserDashboard(context.Background(), now, rec, ak)
 	if err != nil {
 		t.Fatalf("buildUserDashboard: %v", err)
 	}
 	if dash.Summary.Calls != 1 || dash.Summary.PromptTokens != 300 || dash.Summary.CompletionTokens != 200 || dash.Summary.CostUSD != 0.75 {
 		t.Fatalf("expected rolled-up per-key telemetry to be preserved in user dashboard, got %+v", dash.Summary)
+	}
+}
+
+func TestUserDashboardOmitsModelsRemovedFromCurrentCatalog(t *testing.T) {
+	modelOverviewTestDB(t)
+	upstream := &Upstream{Name: "active catalog", Type: "openai", Models: "active-model", Weight: 1, Enabled: true}
+	if err := dbInsertUpstream(upstream); err != nil {
+		t.Fatal(err)
+	}
+	removed := &Upstream{Name: "removed catalog", Type: "openai", Models: "removed-model", Weight: 1, Enabled: true}
+	if err := dbInsertUpstream(removed); err != nil {
+		t.Fatal(err)
+	}
+	if err := dbDeleteUpstream(removed.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	key := &ApiKey{ID: 1, Name: "Catalog User", Key: "sk-catalog-user", Models: "active-model,removed-model"}
+	for _, model := range []string{"active-model", "removed-model"} {
+		if err := dbInsertLog(&CallLog{KeyID: key.ID, KeyName: key.Name, Model: model, Status: http.StatusOK}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := &xauthUserRecord{Sub: "catalog-user", KeyID: key.ID}
+	dash, err := buildUserDashboard(context.Background(), beijingNow(), rec, key)
+	if err != nil {
+		t.Fatalf("buildUserDashboard: %v", err)
+	}
+	if len(dash.AvailableModels) != 1 || dash.AvailableModels[0] != "active-model" {
+		t.Fatalf("available models = %v, want only the active model", dash.AvailableModels)
+	}
+	if len(dash.ModelUsage) != 1 || dash.ModelUsage[0].Model != "active-model" || !dash.ModelUsage[0].Bound {
+		t.Fatalf("model usage = %+v, want only the currently available bound model", dash.ModelUsage)
+	}
+	if dash.Summary.Calls != 2 {
+		t.Fatalf("historical usage summary calls = %d, want 2", dash.Summary.Calls)
 	}
 }

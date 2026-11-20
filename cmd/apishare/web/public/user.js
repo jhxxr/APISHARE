@@ -176,13 +176,20 @@
     renderSnippet();
   }
 
+  function currentBoundModels(dash) {
+    const bound = Array.isArray(dash?.key?.models) ? dash.key.models : [];
+    if (!Array.isArray(dash?.available_models)) return bound;
+    const available = new Set(dash.available_models);
+    return bound.filter((model) => available.has(model));
+  }
+
   function renderSnippet() {
     const dash = state.dash;
     const codeEl = $("#snippetCode");
     if (!codeEl || !dash?.key) return;
     const origin = window.location.origin;
     const keyText = state.keyVisible ? dash.key.key : (dash.key.key_masked || "sk-YOUR_API_KEY");
-    const firstModel = (Array.isArray(dash.key.models) && dash.key.models[0]) || "gpt-4o-mini";
+    const firstModel = currentBoundModels(dash)[0] || "gpt-4o-mini";
 
     if (state.snippetKind === "claude") {
       codeEl.textContent = [
@@ -213,7 +220,7 @@
     if (!dash) return;
     const k = dash.key || {};
     const ov = dash.overview || {};
-    const boundModels = Array.isArray(k.models) ? k.models : [];
+    const boundModels = currentBoundModels(dash);
     const remEl = $("#quotaRemaining");
     const subEl = $("#quotaSubtext");
     const barWrap = $("#quotaProgressWrap");
@@ -361,12 +368,16 @@
     const dash = state.dash;
     const host = $("#userModelsList");
     if (!host || !dash) return;
-    const items = Array.isArray(dash.model_usage) ? dash.model_usage : [];
-    const boundCount = Array.isArray(dash.key?.models) ? dash.key.models.length : 0;
+    const currentModels = new Set(currentBoundModels(dash));
+    const availableModels = new Set(Array.isArray(dash.available_models) ? dash.available_models : currentModels);
+    const items = Array.isArray(dash.model_usage)
+      ? dash.model_usage.filter((item) => availableModels.has(item.model))
+      : [];
+    const boundCount = currentModels.size;
     if ($("#boundModelCount")) $("#boundModelCount").textContent = String(boundCount);
 
     if (!items.length) {
-      host.innerHTML = `<div class="empty-cell">当前密钥尚未绑定可用模型，请联系管理员分配模型。</div>`;
+      host.innerHTML = `<div class="empty-cell">当前暂无可用模型；如需开通模型，请联系管理员。</div>`;
       return;
     }
 

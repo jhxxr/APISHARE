@@ -682,7 +682,7 @@ func registerXAuthPublicRoutes(r *gin.Engine, publicSub fs.FS) {
 	userAPI.GET("/dashboard", func(c *gin.Context) {
 		rec := c.MustGet("xauthUser").(xauthUserRecord)
 		ak := c.MustGet("xauthKey").(ApiKey)
-		dash, err := buildUserDashboard(beijingNow(), &rec, &ak)
+		dash, err := buildUserDashboard(c.Request.Context(), beijingNow(), &rec, &ak)
 		if err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "暂时无法加载个人控制台数据，请稍后重试。"})
 			return
@@ -803,8 +803,9 @@ type userDashboardResponse struct {
 		ModelQuotas   map[string]ModelQuota `json:"model_quotas"`
 		CreatedAt     string                `json:"created_at"`
 	} `json:"key"`
-	Overview *KeyOverview `json:"overview"`
-	Summary  struct {
+	Overview        *KeyOverview `json:"overview"`
+	AvailableModels []string     `json:"available_models"`
+	Summary         struct {
 		Calls            int64   `json:"calls"`
 		Successes        int64   `json:"successes"`
 		PromptTokens     int64   `json:"prompt_tokens"`
@@ -817,19 +818,39 @@ type userDashboardResponse struct {
 	ModelUsage []userModelUsage `json:"model_usage"`
 }
 
-func buildUserDashboard(now time.Time, rec *xauthUserRecord, ak *ApiKey) (*userDashboardResponse, error) {
+func buildUserDashboard(ctx context.Context, now time.Time, rec *xauthUserRecord, ak *ApiKey) (*userDashboardResponse, error) {
 	now = now.In(beijingLocation)
 	overview := buildKeyOverview(ak)
 	boundModels := keyModelIDs(ak.Models)
 	if boundModels == nil {
 		boundModels = []string{}
 	}
+	catalog, catalogErr := availableModels(ctx)
+	if catalogErr != nil {
+		catalog = nil
+	} else {
+		catalog = ak.filterModels(catalog)
+	}
+	catalog = appendUserCatalogModels(*ak, catalog)
+	availableSet := make(map[string]bool, len(catalog))
+	availableModelsList := make([]string, 0, len(catalog))
+	for _, model := range catalog {
+		availableSet[model.ID] = true
+		availableModelsList = append(availableModelsList, model.ID)
+	}
+	activeBoundModels := make([]string, 0, len(boundModels))
+	for _, model := range boundModels {
+		if availableSet[model] {
+			activeBoundModels = append(activeBoundModels, model)
+		}
+	}
 	out := &userDashboardResponse{
-		UpdatedAt:  now.Format(time.RFC3339),
-		User:       *rec,
-		Overview:   overview,
-		Daily:      make([]userDailyPoint, 30),
-		ModelUsage: []userModelUsage{},
+		UpdatedAt:       now.Format(time.RFC3339),
+		User:            *rec,
+		Overview:        overview,
+		AvailableModels: availableModelsList,
+		Daily:           make([]userDailyPoint, 30),
+		ModelUsage:      []userModelUsage{},
 	}
 	out.Key.ID = ak.ID
 	out.Key.Name = ak.Name
@@ -872,7 +893,7 @@ func buildUserDashboard(now time.Time, rec *xauthUserRecord, ak *ApiKey) (*userD
 		byModel[m] = item
 		return item
 	}
-	for _, m := range boundModels {
+	for _, m := range activeBoundModels {
 		item := ensureModel(m)
 		item.Bound = true
 		if mq, ok := overview.Models[m]; ok {
@@ -901,6 +922,14 @@ func buildUserDashboard(now time.Time, rec *xauthUserRecord, ak *ApiKey) (*userD
 			if err := rows.Scan(&m, &calls, &succ, &pt, &ct, &cost, &lastAt); err != nil {
 				return err
 			}
+			out.Summary.Calls += calls
+			out.Summary.Successes += succ
+			out.Summary.PromptTokens += pt
+			out.Summary.CompletionTokens += ct
+			out.Summary.CostUSD += cost
+			if !availableSet[m] {
+				return nil
+			}
 			item := ensureModel(m)
 			item.Calls += calls
 			item.Successes += succ
@@ -910,11 +939,6 @@ func buildUserDashboard(now time.Time, rec *xauthUserRecord, ak *ApiKey) (*userD
 			if lastAt > item.LastCall {
 				item.LastCall = lastAt
 			}
-			out.Summary.Calls += calls
-			out.Summary.Successes += succ
-			out.Summary.PromptTokens += pt
-			out.Summary.CompletionTokens += ct
-			out.Summary.CostUSD += cost
 			return nil
 		}, ak.ID, ak.ID)
 	if err != nil {
