@@ -69,12 +69,22 @@ func keyAuth() gin.HandlerFunc {
 
 // ---------- 每 Key 限流：QPS 令牌桶 + 并发信号量 ----------
 
+type keyUsageWindow struct {
+	mu       sync.Mutex
+	start    time.Time
+	requests int
+	tokens   int
+}
+
 type keyLimit struct {
 	qps    float64
 	conc   int
+	rpm    int
+	tpm    int
 	lim    *rate.Limiter
 	sem    chan struct{}
 	active *atomic.Int64 // Shared by revisions so edits cannot reset in-flight usage.
+	usage  *keyUsageWindow
 	lastAt time.Time
 }
 
@@ -89,10 +99,12 @@ func getLimit(ak ApiKey) *keyLimit {
 	conc := max(1, ak.Concurrency)
 	kl, ok := limReg.m[ak.ID]
 	var active *atomic.Int64
+	var usage *keyUsageWindow
 	if ok {
 		active = kl.active
+		usage = kl.usage
 	}
-	if ok && (kl.qps != ak.QPS || kl.conc != conc) {
+	if ok && (kl.qps != ak.QPS || kl.conc != conc || kl.rpm != ak.RPM || kl.tpm != ak.TPM) {
 		ok = false // 管理端改过参数，重建
 	}
 	if !ok {
@@ -103,17 +115,55 @@ func getLimit(ak ApiKey) *keyLimit {
 		if active == nil {
 			active = &atomic.Int64{}
 		}
+		if usage == nil {
+			usage = &keyUsageWindow{start: time.Now()}
+		}
 		kl = &keyLimit{
 			qps:    ak.QPS,
 			conc:   conc,
+			rpm:    ak.RPM,
+			tpm:    ak.TPM,
 			lim:    rate.NewLimiter(rate.Limit(ak.QPS), burst),
 			sem:    make(chan struct{}, conc),
 			active: active,
+			usage:  usage,
 		}
 		limReg.m[ak.ID] = kl
 	}
 	kl.lastAt = time.Now()
 	return kl
+}
+
+func (limit *keyLimit) resetUsageWindowLocked(now time.Time) {
+	if now.Sub(limit.usage.start) >= time.Minute {
+		limit.usage.start = now
+		limit.usage.requests = 0
+		limit.usage.tokens = 0
+	}
+}
+
+func (limit *keyLimit) admit() string {
+	limit.usage.mu.Lock()
+	defer limit.usage.mu.Unlock()
+	limit.resetUsageWindowLocked(time.Now())
+	if limit.rpm > 0 && limit.usage.requests >= limit.rpm {
+		return "RPM"
+	}
+	if limit.tpm > 0 && limit.usage.tokens >= limit.tpm {
+		return "TPM"
+	}
+	limit.usage.requests++
+	return ""
+}
+
+func (limit *keyLimit) chargeTokens(tokens int) {
+	if tokens <= 0 || limit.tpm <= 0 {
+		return
+	}
+	limit.usage.mu.Lock()
+	limit.resetUsageWindowLocked(time.Now())
+	limit.usage.tokens += tokens
+	limit.usage.mu.Unlock()
 }
 
 func (limit *keyLimit) acquire() bool {
@@ -170,6 +220,15 @@ func keyRateLimit() gin.HandlerFunc {
 			return
 		}
 		if kl.acquire() {
+			if exceeded := kl.admit(); exceeded != "" {
+				kl.release()
+				c.Header("X-APISHARE-RateLimit-Source", "gateway-"+strings.ToLower(exceeded))
+				c.Header("Retry-After", "60")
+				errJSON(c, http.StatusTooManyRequests, exceeded+" limit exceeded for this key")
+				c.Abort()
+				return
+			}
+			c.Set("keyLimit", kl)
 			defer kl.release()
 			c.Next()
 		} else {

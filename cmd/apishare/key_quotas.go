@@ -19,6 +19,9 @@ func validQuota(value float64) bool {
 }
 
 func validateKeyQuotas(ak *ApiKey) error {
+	if ak.RPM < 0 || ak.TPM < 0 {
+		return fmt.Errorf("RPM 和 TPM 必须是大于或等于 0 的整数")
+	}
 	if !validQuota(ak.QuotaUSD) {
 		return fmt.Errorf("共享额度必须是大于或等于 0 的有效金额")
 	}

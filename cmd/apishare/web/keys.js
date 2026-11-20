@@ -566,6 +566,8 @@ function openKeyModels(id) {
   $("keyEditName").value = key.name || "";
   $("keyEditQps").value = key.qps || 3;
   $("keyEditConc").value = key.concurrency || 5;
+  $("keyEditRPM").value = key.rpm || 0;
+  $("keyEditTPM").value = key.tpm || 0;
   $("keyEditNote").value = key.note || "";
   $("keyEditModels").value = key.models || "";
   resetKeyModelPicker("keyEdit", key);
@@ -592,7 +594,9 @@ async function saveKeyModels(event) {
   if (!name) { $("keyEditName").focus(); return; }
   const qps = Number($("keyEditQps").value);
   const concurrency = Number($("keyEditConc").value);
-  if (!(qps > 0) || !(concurrency >= 1)) return;
+  const rpm = Number($("keyEditRPM").value);
+  const tpm = Number($("keyEditTPM").value);
+  if (!(qps > 0) || !(concurrency >= 1) || !(Number.isInteger(rpm) && rpm >= 0) || !(Number.isInteger(tpm) && tpm >= 0)) return;
   savingKeyModels = true;
   $("keyModelsFields").disabled = true;
   setBusy($("keyModelsSave"), true, "保存中…");
@@ -604,6 +608,8 @@ async function saveKeyModels(event) {
         name,
         qps,
         concurrency,
+        rpm,
+        tpm,
         note: $("keyEditNote").value.trim(),
         models: parseAllowlist($("keyEditModels").value).join(","),
         ...keyQuotaPayload("keyEdit"),

@@ -630,6 +630,10 @@ func (s *responsesWSSession) admit(model string, request *responsesWSRequest) (*
 	if !limit.acquire() {
 		return nil, 429, "concurrency limit exceeded for this key"
 	}
+	if exceeded := limit.admit(); exceeded != "" {
+		limit.release()
+		return nil, 429, exceeded + " limit exceeded for this key"
+	}
 	now := time.Now()
 	turn := &responsesWSTurn{
 		key: *key, streamID: request.StreamID, eventID: request.EventID, limit: limit,
@@ -842,6 +846,7 @@ func (s *responsesWSSession) finish(turn *responsesWSTurn, rawUsage json.RawMess
 	_ = json.Unmarshal(rawUsage, &usageObject)
 	usage := readUsage(usageObject, FormatOpenAIResponse)
 	counts := normalizeBillingUsage(usage)
+	turn.limit.chargeTokens(counts.inputTotal() + counts.outputTotal())
 	if turn.warmup && status == http.StatusOK && counts.inputTotal() == 0 && counts.outputTotal() == 0 {
 		return nil
 	}

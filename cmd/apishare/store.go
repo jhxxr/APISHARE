@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS api_keys (
   shared_used_usd REAL NOT NULL DEFAULT 0,
   qps REAL NOT NULL DEFAULT 3,
   concurrency INTEGER NOT NULL DEFAULT 5,
+  rpm INTEGER NOT NULL DEFAULT 0,
+  tpm INTEGER NOT NULL DEFAULT 0,
   enabled INTEGER NOT NULL DEFAULT 1,
   show_on_home INTEGER NOT NULL DEFAULT 0,
   models TEXT NOT NULL DEFAULT '',
@@ -253,7 +255,7 @@ CREATE INDEX IF NOT EXISTS idx_log_key_daily ON call_log_key_daily(key_id, day);
 	if err != nil {
 		return err
 	}
-	hasHome, hasModels, hasSharedUsed := false, false, false
+	hasHome, hasModels, hasSharedUsed, hasRPM, hasTPM := false, false, false, false, false
 	for rows.Next() {
 		var cid, notNull, pk int
 		var name, typ string
@@ -271,6 +273,12 @@ CREATE INDEX IF NOT EXISTS idx_log_key_daily ON call_log_key_daily(key_id, day);
 		if name == "shared_used_usd" {
 			hasSharedUsed = true
 		}
+		if name == "rpm" {
+			hasRPM = true
+		}
+		if name == "tpm" {
+			hasTPM = true
+		}
 	}
 	err = rows.Err()
 	rows.Close()
@@ -286,6 +294,16 @@ CREATE INDEX IF NOT EXISTS idx_log_key_daily ON call_log_key_daily(key_id, day);
 	// An empty allowlist denies model access until an administrator binds models.
 	if !hasModels {
 		if _, err = db.Exec(`ALTER TABLE api_keys ADD COLUMN models TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	if !hasRPM {
+		if _, err = db.Exec(`ALTER TABLE api_keys ADD COLUMN rpm INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+	}
+	if !hasTPM {
+		if _, err = db.Exec(`ALTER TABLE api_keys ADD COLUMN tpm INTEGER NOT NULL DEFAULT 0`); err != nil {
 			return err
 		}
 	}
@@ -449,6 +467,8 @@ type ApiKey struct {
 	SharedUsedUSD float64               `json:"shared_used_usd"`
 	QPS           float64               `json:"qps"`
 	Concurrency   int                   `json:"concurrency"`
+	RPM           int                   `json:"rpm"`
+	TPM           int                   `json:"tpm"`
 	Enabled       bool                  `json:"enabled"`
 	ShowOnHome    bool                  `json:"-"`
 	Models        string                `json:"models"` // comma-separated client model IDs; empty denies access
@@ -636,12 +656,12 @@ func dbGetKeyByKey(key string) (*ApiKey, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
-	row := tx.QueryRow(`SELECT id,name,key,quota_usd,used_usd,qps,concurrency,enabled,note,created_at,show_on_home,models,shared_used_usd
+	row := tx.QueryRow(`SELECT id,name,key,quota_usd,used_usd,qps,concurrency,rpm,tpm,enabled,note,created_at,show_on_home,models,shared_used_usd
 		FROM api_keys WHERE key=?`, key)
 	ak := &ApiKey{}
 	var enabled, home int
 	if err := row.Scan(&ak.ID, &ak.Name, &ak.Key, &ak.QuotaUSD, &ak.UsedUSD, &ak.QPS,
-		&ak.Concurrency, &enabled, &ak.Note, &ak.CreatedAt, &home, &ak.Models, &ak.SharedUsedUSD); err != nil {
+		&ak.Concurrency, &ak.RPM, &ak.TPM, &enabled, &ak.Note, &ak.CreatedAt, &home, &ak.Models, &ak.SharedUsedUSD); err != nil {
 		return nil, err
 	}
 	ak.Enabled = enabled == 1
@@ -661,12 +681,12 @@ func dbGetKeyByID(id int64) (*ApiKey, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
-	row := tx.QueryRow(`SELECT id,name,key,quota_usd,used_usd,qps,concurrency,enabled,note,created_at,show_on_home,models,shared_used_usd
+	row := tx.QueryRow(`SELECT id,name,key,quota_usd,used_usd,qps,concurrency,rpm,tpm,enabled,note,created_at,show_on_home,models,shared_used_usd
 		FROM api_keys WHERE id=?`, id)
 	ak := &ApiKey{}
 	var enabled, home int
 	if err := row.Scan(&ak.ID, &ak.Name, &ak.Key, &ak.QuotaUSD, &ak.UsedUSD, &ak.QPS,
-		&ak.Concurrency, &enabled, &ak.Note, &ak.CreatedAt, &home, &ak.Models, &ak.SharedUsedUSD); err != nil {
+		&ak.Concurrency, &ak.RPM, &ak.TPM, &enabled, &ak.Note, &ak.CreatedAt, &home, &ak.Models, &ak.SharedUsedUSD); err != nil {
 		return nil, err
 	}
 	ak.Enabled = enabled == 1
@@ -686,7 +706,7 @@ func dbListKeys() ([]ApiKey, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.Query(`SELECT id,name,key,quota_usd,used_usd,qps,concurrency,enabled,note,created_at,show_on_home,models,shared_used_usd
+	rows, err := tx.Query(`SELECT id,name,key,quota_usd,used_usd,qps,concurrency,rpm,tpm,enabled,note,created_at,show_on_home,models,shared_used_usd
 		FROM api_keys ORDER BY id DESC`)
 	if err != nil {
 		return nil, err
@@ -697,7 +717,7 @@ func dbListKeys() ([]ApiKey, error) {
 		var ak ApiKey
 		var enabled, home int
 		if err := rows.Scan(&ak.ID, &ak.Name, &ak.Key, &ak.QuotaUSD, &ak.UsedUSD, &ak.QPS,
-			&ak.Concurrency, &enabled, &ak.Note, &ak.CreatedAt, &home, &ak.Models, &ak.SharedUsedUSD); err != nil {
+			&ak.Concurrency, &ak.RPM, &ak.TPM, &enabled, &ak.Note, &ak.CreatedAt, &home, &ak.Models, &ak.SharedUsedUSD); err != nil {
 			return nil, err
 		}
 		ak.Enabled = enabled == 1
@@ -730,9 +750,9 @@ func dbInsertKey(ak *ApiKey) error {
 	if len(ak.ModelQuotas) == 0 && ak.SharedUsedUSD == 0 {
 		ak.SharedUsedUSD = ak.UsedUSD
 	}
-	res, err := tx.Exec(`INSERT INTO api_keys(name,key,quota_usd,used_usd,qps,concurrency,enabled,note,created_at,show_on_home,models,shared_used_usd)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-		ak.Name, ak.Key, ak.QuotaUSD, ak.UsedUSD, ak.QPS, ak.Concurrency, boolToInt(ak.Enabled), ak.Note, nowStr(), boolToInt(ak.ShowOnHome), ak.Models, ak.SharedUsedUSD)
+	res, err := tx.Exec(`INSERT INTO api_keys(name,key,quota_usd,used_usd,qps,concurrency,rpm,tpm,enabled,note,created_at,show_on_home,models,shared_used_usd)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		ak.Name, ak.Key, ak.QuotaUSD, ak.UsedUSD, ak.QPS, ak.Concurrency, ak.RPM, ak.TPM, boolToInt(ak.Enabled), ak.Note, nowStr(), boolToInt(ak.ShowOnHome), ak.Models, ak.SharedUsedUSD)
 	if err != nil {
 		return err
 	}
@@ -752,8 +772,8 @@ func dbUpdateKey(ak *ApiKey) error {
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.Exec(`UPDATE api_keys SET name=?,quota_usd=?,qps=?,concurrency=?,enabled=?,note=?,show_on_home=?,models=? WHERE id=?`,
-		ak.Name, ak.QuotaUSD, ak.QPS, ak.Concurrency, boolToInt(ak.Enabled), ak.Note, boolToInt(ak.ShowOnHome), ak.Models, ak.ID)
+	_, err = tx.Exec(`UPDATE api_keys SET name=?,quota_usd=?,qps=?,concurrency=?,rpm=?,tpm=?,enabled=?,note=?,show_on_home=?,models=? WHERE id=?`,
+		ak.Name, ak.QuotaUSD, ak.QPS, ak.Concurrency, ak.RPM, ak.TPM, boolToInt(ak.Enabled), ak.Note, boolToInt(ak.ShowOnHome), ak.Models, ak.ID)
 	if err != nil {
 		return err
 	}

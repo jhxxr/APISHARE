@@ -177,6 +177,8 @@ func registerAdminRoutes(r *gin.Engine) {
 			QuotaUSD    float64               `json:"quota_usd"`
 			QPS         float64               `json:"qps"`
 			Concurrency int                   `json:"concurrency"`
+			RPM         int                   `json:"rpm"`
+			TPM         int                   `json:"tpm"`
 			Note        string                `json:"note"`
 			Models      string                `json:"models"`
 			ModelQuotas map[string]ModelQuota `json:"model_quotas"`
@@ -203,6 +205,8 @@ func registerAdminRoutes(r *gin.Engine) {
 			QuotaUSD:    req.QuotaUSD,
 			QPS:         req.QPS,
 			Concurrency: req.Concurrency,
+			RPM:         req.RPM,
+			TPM:         req.TPM,
 			Enabled:     true,
 			Note:        req.Note,
 			Models:      normalizeKeyModels(req.Models),
@@ -236,6 +240,8 @@ func registerAdminRoutes(r *gin.Engine) {
 			QuotaUSD    *float64               `json:"quota_usd"`
 			QPS         *float64               `json:"qps"`
 			Concurrency *int                   `json:"concurrency"`
+			RPM         *int                   `json:"rpm"`
+			TPM         *int                   `json:"tpm"`
 			Enabled     *bool                  `json:"enabled"`
 			Note        *string                `json:"note"`
 			Models      *string                `json:"models"`
@@ -255,6 +261,12 @@ func registerAdminRoutes(r *gin.Engine) {
 		}
 		if req.Concurrency != nil {
 			ak.Concurrency = *req.Concurrency
+		}
+		if req.RPM != nil {
+			ak.RPM = *req.RPM
+		}
+		if req.TPM != nil {
+			ak.TPM = *req.TPM
 		}
 		if req.Enabled != nil {
 			ak.Enabled = *req.Enabled
@@ -1035,28 +1047,28 @@ func registerAdminRoutes(r *gin.Engine) {
 		retention := retentionOption(s.LogRetentionDays)
 		siteIconURL, siteIconType := currentSiteIcon()
 		c.JSON(200, gin.H{
-			"affinity_ttl_min":     s.AffinityTTLMin,
-			"retry":                s.Retry,
-			"inject_stream_usage":  s.InjectStreamUsage,
-			"log_retention_days":   s.LogRetentionDays,
-			"log_retention_label":  retention.label,
-			"log_retention_detail": retention.detail,
-			"pricing":              s.Pricing,
-			"auto_pricing_enabled": s.AutoPricingEnabled,
-			"auto_pricing_url":     s.AutoPricingURL,
-			"auto_pricing":         autoInfo,
-			"site_title":           s.SiteTitle,
-			"site_icon_url":        siteIconURL,
-			"site_icon_type":       siteIconType,
-			"site_icon_custom":           siteIconURL != "",
-			"xauth_enabled":              s.XAuthEnabled,
-			"xauth_issuer":               s.XAuthIssuer,
-			"xauth_client_id":            s.XAuthClientID,
-			"xauth_secret_saved":         strings.TrimSpace(s.XAuthClientSecret) != "",
-			"xauth_redirect_uri":         xauthRedirectURI(c),
-			"xauth_default_quota_usd":    s.XAuthDefaultQuotaUSD,
-			"xauth_default_qps":          s.XAuthDefaultQPS,
-			"xauth_default_concurrency":  s.XAuthDefaultConcurrency,
+			"affinity_ttl_min":            s.AffinityTTLMin,
+			"retry":                       s.Retry,
+			"inject_stream_usage":         s.InjectStreamUsage,
+			"log_retention_days":          s.LogRetentionDays,
+			"log_retention_label":         retention.label,
+			"log_retention_detail":        retention.detail,
+			"pricing":                     s.Pricing,
+			"auto_pricing_enabled":        s.AutoPricingEnabled,
+			"auto_pricing_url":            s.AutoPricingURL,
+			"auto_pricing":                autoInfo,
+			"site_title":                  s.SiteTitle,
+			"site_icon_url":               siteIconURL,
+			"site_icon_type":              siteIconType,
+			"site_icon_custom":            siteIconURL != "",
+			"xauth_enabled":               s.XAuthEnabled,
+			"xauth_issuer":                s.XAuthIssuer,
+			"xauth_client_id":             s.XAuthClientID,
+			"xauth_secret_saved":          strings.TrimSpace(s.XAuthClientSecret) != "",
+			"xauth_redirect_uri":          xauthRedirectURI(c),
+			"xauth_default_quota_usd":     s.XAuthDefaultQuotaUSD,
+			"xauth_default_qps":           s.XAuthDefaultQPS,
+			"xauth_default_concurrency":   s.XAuthDefaultConcurrency,
 			"xauth_default_models":        s.XAuthDefaultModels,
 			"xauth_default_model_quotas":  s.XAuthDefaultModelQuotas,
 			"xauth_user_default_proxy_id": s.XAuthUserDefaultProxyID,

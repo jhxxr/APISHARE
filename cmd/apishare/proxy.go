@@ -707,6 +707,9 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 		usage := reported
 		usage.Prompt, usage.Completion = prompt, completion
 		counts := normalizeBillingUsage(usage)
+		if limit, ok := c.Get("keyLimit"); ok {
+			limit.(*keyLimit).chargeTokens(counts.inputTotal() + counts.outputTotal())
+		}
 		price, priceSource, pricingModel := lookupRelayPrice(task.model, info.UpstreamModel)
 		cost := costForUsage(counts, price)
 		_, independent := ak.ModelQuotas[task.model]
