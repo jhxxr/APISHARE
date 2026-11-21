@@ -200,25 +200,19 @@
           <div>
             <span class="eyebrow">AGENT PURGE · PROMPT PERSONALIZATION</span>
             <h2 id="agentPurgeTitle">个性化提示词 <span id="agentPurgeStatus" class="status-pill off">未启用</span></h2>
-            <p class="card-sub">选择内置角色并开启后，使用下方可用模型的请求会自动应用角色，仅路由到管理员授权的渠道。你只需选择适用客户端。</p>
+            <p class="card-sub">选择内置角色并开启后，所有客户端使用下方可用模型的请求都会自动应用角色，仅路由到管理员授权的渠道，不依赖 User-Agent。</p>
           </div>
           <button id="saveAgentPurgeUser" type="button" class="btn primary mini">保存提示词设置</button>
         </div>
         <div id="agentPurgeUnavailable" class="agent-purge-notice hidden" role="status"></div>
-        <label class="user-switch-row agent-purge-master"><input id="agentPurgeUserEnabled" type="checkbox"><span><strong>启用我的个性化提示词</strong><small>关闭后，即使保留下方选择，也不会改写请求。</small></span></label>
+        <label class="user-switch-row agent-purge-master"><input id="agentPurgeUserEnabled" type="checkbox"><span><strong>启用我的个性化提示词</strong><small>开启后对所有客户端生效；关闭后保留角色设置，恢复普通路由且不再改写请求。</small></span></label>
         <label class="user-field agent-purge-mode"><span>内置模板 <span id="agentPurgeTemplateCount" class="count-badge">0</span></span><select id="agentPurgeTemplateSelect" aria-describedby="agentPurgeTemplateDescription" disabled><option value="neutral">中性模板</option></select><small id="agentPurgeTemplateDescription">正在加载完整模板库…</small></label>
         <label class="user-field agent-purge-mode"><span>处理模式</span><select id="agentPurgeMode" aria-describedby="agentPurgeModeHint"><option value="append">追加模板（推荐）</option><option value="replace">替换身份行（近似）</option><option value="strict">严格替换可控提示词</option></select><small id="agentPurgeModeHint"></small></label>
         <details class="agent-purge-preview"><summary>查看「<span id="agentPurgeTemplateName">中性模板</span>」原文与来源</summary><p id="agentPurgeTemplateSource" class="agent-purge-footnote">ZiChuanLan/agent-purge · neutral</p><pre id="agentPurgePromptPreview"></pre></details>
-        <div class="agent-purge-columns">
-          <section class="agent-purge-subpanel" aria-labelledby="agentPurgeClientsTitle">
-            <div class="agent-purge-subhead"><h3 id="agentPurgeClientsTitle">适用客户端</h3><p>按请求声明的 User-Agent 识别，可被自定义。无法归类或识别冲突的请求不改写。</p></div>
-            <div id="agentPurgeClients" class="agent-purge-options"></div>
-          </section>
-          <section class="agent-purge-subpanel" aria-labelledby="agentPurgeModelsTitle">
-            <div class="agent-purge-subhead"><h3 id="agentPurgeModelsTitle">可用于角色替换的模型</h3><p>以下模型由管理员授权，且你的 API Key 有权使用，无需勾选。渠道由系统自动选择；授权渠道不可用时会报错。</p></div>
-            <ul id="agentPurgeModels" class="agent-purge-options agent-purge-models" aria-label="可用于角色替换的模型"></ul>
-          </section>
-        </div>
+        <section class="agent-purge-subpanel" aria-labelledby="agentPurgeModelsTitle">
+          <div class="agent-purge-subhead"><h3 id="agentPurgeModelsTitle">可用于角色替换的模型</h3><p>以下模型由管理员授权，且你的 API Key 有权使用，无需勾选。渠道由系统自动选择；授权渠道不可用时会报错。</p></div>
+          <ul id="agentPurgeModels" class="agent-purge-options agent-purge-models" aria-label="可用于角色替换的模型"></ul>
+        </section>
         <p id="agentPurgeSelectionNote" class="agent-purge-footnote" role="status"></p>
       </section>
 

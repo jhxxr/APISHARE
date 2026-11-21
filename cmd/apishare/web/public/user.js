@@ -582,8 +582,6 @@
     templateSelect.value = view.persona_id || "neutral";
     templateSelect.disabled = !available || !templates.length;
     renderAgentPurgeTemplatePreview();
-    const selected = new Set(view.selected_clients || []);
-    $("#agentPurgeClients").innerHTML = (view.clients || []).map((client) => `<label class="agent-purge-option"><input type="checkbox" data-purge-client="${esc(client.id)}"${selected.has(client.id) ? " checked" : ""}${!available || !client.available ? " disabled" : ""}><span><strong>${esc(client.name)}</strong>${client.note ? `<small>${esc(client.note)}</small>` : ""}${client.sdk ? "<small>仅匹配未识别出具体应用的该 SDK 请求</small>" : ""}</span></label>`).join("");
     const models = Array.isArray(view.models) ? view.models : [];
     $("#agentPurgeModels").innerHTML = models.length
       ? models.map((model) => `<li class="agent-purge-model">${esc(model)}</li>`).join("")
@@ -611,14 +609,13 @@
   function updateAgentPurgeSelection() {
     const view = state.agentPurge;
     if (!view) return;
-    const clients = $$("[data-purge-client]:checked").length;
     const models = Array.isArray(view.models) ? view.models.length : 0;
     const templateSelected = !!$("#agentPurgeTemplateSelect").value;
     const enabled = $("#agentPurgeUserEnabled").checked && view.enabled;
     const badge = $("#agentPurgeStatus");
-    badge.textContent = !view.enabled ? "站点未开放" : !enabled ? "未启用" : !clients || !templateSelected ? "待选择角色与客户端" : !models ? "暂无可用模型" : "已选择启用";
-    badge.className = "status-pill " + (enabled && clients && models && templateSelected ? "on" : "off");
-    $("#agentPurgeSelectionNote").textContent = `已选 ${clients} 类客户端，${models} 个模型可用于角色替换，无需选择渠道。修改后请保存；失败重试也只会使用管理员授权的渠道。`;
+    badge.textContent = !view.enabled ? "站点未开放" : !enabled ? "未启用" : !templateSelected ? "待选择角色" : !models ? "暂无可用模型" : "已选择启用";
+    badge.className = "status-pill " + (enabled && models && templateSelected ? "on" : "off");
+    $("#agentPurgeSelectionNote").textContent = `${models} 个模型可用于角色替换，无需选择渠道。开启后对所有客户端生效，不依赖 User-Agent；失败重试也只会使用管理员授权的渠道。修改后请保存。`;
     const mode = $("#agentPurgeMode").value;
     $("#agentPurgeModeHint").textContent = mode === "strict"
       ? "严格替换会移除请求中可控的 system/developer 原文，可能影响工具使用说明。独立结构化工具仍保留；客户端或上游另加的内容不受此开关控制。"
@@ -635,14 +632,9 @@
       mode: $("#agentPurgeMode").value,
       persona_id: $("#agentPurgeTemplateSelect").value,
       revision: view.revision,
-      clients: $$("[data-purge-client]:checked").map((input) => input.dataset.purgeClient),
     };
     if (!payload.persona_id) {
       toast("请选择内置模板");
-      return;
-    }
-    if (payload.enabled && !payload.clients.length) {
-      toast("请至少选择一类适用客户端");
       return;
     }
     button.disabled = true;

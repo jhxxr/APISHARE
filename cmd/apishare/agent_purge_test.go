@@ -23,7 +23,7 @@ func TestAgentPurgeEligibility(t *testing.T) {
 		policy, enabled, want   bool
 	}{
 		{"selected", "codex_cli_rs/1.2.3", "codex", "alias", 7, true, true, true},
-		{"different client", "Cline/1.2.3", "codex", "alias", 7, true, true, false},
+		{"different client", "Cline/1.2.3", "codex", "alias", 7, true, true, true},
 		{"different upstream", "codex_cli_rs/1.2.3", "codex", "alias", 8, true, true, false},
 		{"different model", "codex_cli_rs/1.2.3", "codex", "other", 7, true, true, false},
 		{"case-sensitive model", "codex_cli_rs/1.2.3", "codex", "ALIAS", 7, true, true, false},
@@ -31,10 +31,14 @@ func TestAgentPurgeEligibility(t *testing.T) {
 		{"non-site upstream", "codex_cli_rs/1.2.3", "codex", "alias", -7, true, true, false},
 		{"admin off", "codex_cli_rs/1.2.3", "codex", "alias", 7, false, true, false},
 		{"user off", "codex_cli_rs/1.2.3", "codex", "alias", 7, true, false, false},
-		{"unknown", "Mozilla/5.0", "codex", "alias", 7, true, true, false},
+		{"unknown", "Mozilla/5.0", "codex", "alias", 7, true, true, true},
 		{"unknown SDK selected", "OpenAI/Python 2.1.0", "sdk:openai_python", "alias", 7, true, true, true},
-		{"SDK is not Codex", "OpenAI/Python 2.1.0", "codex", "alias", 7, true, true, false},
+		{"SDK is not Codex", "OpenAI/Python 2.1.0", "codex", "alias", 7, true, true, true},
 		{"declared Claude family", "claude-cli/2.1.20 (external, cli)", "claude_code", "alias", 7, true, true, true},
+		{"reported Claude CLI version", "claude-cli/2.1.273 (external, cli)", "codex", "alias", 7, true, true, true},
+		{"missing User-Agent", "", "codex", "alias", 7, true, true, true},
+		{"no legacy client selection", "claude-cli/2.1.273 (external, cli)", "", "alias", 7, true, true, true},
+		{"unknown legacy client", "custom-application/1.0", "removed-client", "alias", 7, true, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			pairs := []agentPurgePair{{Model: "alias", UpstreamID: 7}}
@@ -47,16 +51,25 @@ func TestAgentPurgeEligibility(t *testing.T) {
 				t.Fatalf("eligibility = %t, want %t", got, tc.want)
 			}
 			task.client.identity.Conflict = true
-			if shouldApplyAgentPurge(state, "personal-user", &Upstream{ID: tc.upstream}, task) {
-				t.Fatal("conflicting identity matched")
+			task.client.identity.Ambiguous = true
+			if got := shouldApplyAgentPurge(state, "personal-user", &Upstream{ID: tc.upstream}, task); got != tc.want {
+				t.Fatal("client identity conflicts changed persona eligibility")
 			}
-			task.client.identity.Conflict = false
+			task.client = nil
+			if got := shouldApplyAgentPurge(state, "personal-user", &Upstream{ID: tc.upstream}, task); got != tc.want {
+				t.Fatal("persona eligibility depends on client identity being present")
+			}
 			task.nativeOnly = true
 			if shouldApplyAgentPurge(state, "personal-user", &Upstream{ID: tc.upstream}, task) {
 				t.Fatal("native-only operation such as embeddings matched")
 			}
+			task.nativeOnly = false
 			if shouldApplyAgentPurge(state, "", &Upstream{ID: tc.upstream}, task) {
 				t.Fatal("ordinary key matched personal preferences")
+			}
+			state.user.PersonaID = "missing-persona"
+			if shouldApplyAgentPurge(state, "personal-user", &Upstream{ID: tc.upstream}, task) {
+				t.Fatal("unknown persona became eligible")
 			}
 		})
 	}
@@ -98,11 +111,11 @@ func TestAgentPurgeRelayAllProtocols(t *testing.T) {
 					up.ID, up.Enabled, up.Weight = 7, true, 1
 					task := fixtureTask(t, in, stream)
 					task.userSub = "personal-user"
-					task.client = &requestClientState{identity: detectRequestClient(http.Header{"User-Agent": {"codex_cli_rs/1.2.3"}})}
+					task.client = nil
 					pair := []agentPurgePair{{Model: "alias", UpstreamID: 7}}
 					task.agentPurgeState = &agentPurgeRequestState{
 						policy: agentPurgePolicy{Enabled: true, Pairs: pair},
-						user:   userAgentPurgeConfig{Enabled: true, Mode: "append", PersonaID: personaID, Clients: []string{"codex"}},
+						user:   userAgentPurgeConfig{Enabled: true, Mode: "append", PersonaID: personaID},
 					}
 					original := string(task.body)
 					for range 2 { // The same task retried must not accumulate prompt text.
@@ -209,12 +222,12 @@ func TestAgentPurgeRoutesPermissionsAndPersistence(t *testing.T) {
 	if w := requestUser("PUT", body, true, true); w.Code != 403 {
 		t.Fatalf("forged pair or model accepted: %d %s", w.Code, w.Body.String())
 	}
-	body = `{"enabled":true,"mode":"strict","revision":1,"clients":["codex"]}`
+	body = `{"enabled":true,"mode":"strict","revision":1}`
 	if w := requestUser("PUT", body, true, true); w.Code != 200 {
 		t.Fatalf("save user = %d %s", w.Code, w.Body.String())
 	}
 	stored := loadUserAgentPurgeConfig("purge-user")
-	if !stored.Enabled || stored.Mode != "strict" || len(stored.Pairs) != 0 || len(stored.Clients) != 1 {
+	if !stored.Enabled || stored.Mode != "strict" || len(stored.Pairs) != 0 || len(stored.Clients) != 0 {
 		t.Fatalf("user preferences not persisted: %+v", stored)
 	}
 	selectedBody := strings.TrimSuffix(body, "}") + `,"persona_id":"eni-deepseek-flash"}`
@@ -247,8 +260,12 @@ func TestAgentPurgeRoutesPermissionsAndPersistence(t *testing.T) {
 	if other.Enabled || len(other.Pairs) != 0 || len(other.Clients) != 0 {
 		t.Fatal("user preference leaked across identities")
 	}
-	if w := requestUser("PUT", strings.Replace(body, `"codex"`, `"unknown"`, 1), true, true); w.Code != 400 {
-		t.Fatalf("unsupported client = %d", w.Code)
+	legacyBody := strings.TrimSuffix(selectedBody, "}") + `,"clients":["unknown-legacy-client"]}`
+	if w := requestUser("PUT", legacyBody, true, true); w.Code != 200 {
+		t.Fatalf("legacy client selection must be ignored = %d %s", w.Code, w.Body.String())
+	}
+	if cfg := loadUserAgentPurgeConfig("purge-user"); !cfg.Enabled || cfg.PersonaID != "eni-deepseek-flash" || len(cfg.Clients) != 0 {
+		t.Fatalf("legacy client selection persisted or affected the selected role: %+v", cfg)
 	}
 	if err := saveAgentPurgePolicy(agentPurgePolicy{Enabled: true, Pairs: []agentPurgePair{}}); err != nil {
 		t.Fatal(err)
@@ -282,7 +299,7 @@ func TestAgentPurgeResponsesWSRefreshesPreferences(t *testing.T) {
 	if err := saveAgentPurgePolicy(agentPurgePolicy{Enabled: true, Pairs: pairs}); err != nil {
 		t.Fatal(err)
 	}
-	cfg := userAgentPurgeConfig{Enabled: true, Mode: "append", Pairs: pairs, Clients: []string{"codex"}}
+	cfg := userAgentPurgeConfig{Enabled: true, Mode: "append"}
 	if err := saveUserAgentPurgeConfig("purge-ws-user", cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -358,13 +375,15 @@ func TestAgentPurgeFailoverAndEstimatedBilling(t *testing.T) {
 		if err := saveAgentPurgePolicy(agentPurgePolicy{Enabled: true, Pairs: pairs}); err != nil {
 			t.Fatal(err)
 		}
-		if err := saveUserAgentPurgeConfig("purge-retry-user", userAgentPurgeConfig{Enabled: true, Mode: "append", Clients: []string{"codex"}}); err != nil {
+		if err := saveUserAgentPurgeConfig("purge-retry-user", userAgentPurgeConfig{Enabled: true, Mode: "append"}); err != nil {
 			t.Fatal(err)
 		}
 		body := `{"model":"alias","messages":[{"role":"system","content":"original"},{"role":"user","content":"hello"}]}`
 		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+key.Key)
-		req.Header.Set("User-Agent", "codex_cli_rs/1.2.3")
+		if iteration == 0 {
+			req.Header.Set("User-Agent", "claude-cli/2.1.273 (external, cli)")
+		}
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, req)
 		wantStatus, wantUpstream := http.StatusBadGateway, ups[0].ID

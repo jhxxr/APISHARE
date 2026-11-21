@@ -31,20 +31,11 @@ body {
 .muted { color: var(--muted); }
 
 .agent-purge-master { margin-bottom: 18px; min-height: 44px; }
-.agent-purge-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin-top: 18px; }
-.agent-purge-subpanel { min-width: 0; }
+.agent-purge-subpanel { min-width: 0; margin-top: 18px; }
 .agent-purge-subhead { margin-bottom: 10px; }
 .agent-purge-subhead h3 { margin: 0 0 4px; font-size: 14px; }
 .agent-purge-subhead p, .agent-purge-footnote { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .agent-purge-options { display: grid; gap: 8px; max-height: 340px; overflow: auto; padding: 2px; }
-.agent-purge-option { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; min-height: 48px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
-.agent-purge-option:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
-.agent-purge-option:has(input:disabled) { cursor: not-allowed; }
-.agent-purge-option:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
-.agent-purge-option input { margin-top: 4px; flex: 0 0 auto; }
-.agent-purge-option span { display: grid; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
-.agent-purge-option strong { font-size: 13px; }
-.agent-purge-option small { color: var(--muted); font-size: 12px; }
 .agent-purge-models { list-style: none; margin: 0; }
 .agent-purge-model { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; overflow-wrap: anywhere; }
 .agent-purge-footnote { margin-top: 16px; }
@@ -53,7 +44,6 @@ body {
 .agent-purge-preview summary { cursor: pointer; min-height: 44px; display: list-item; padding: 10px 0; }
 .agent-purge-preview pre { padding: 14px; background: var(--surface-soft); border-radius: 8px; max-height: 300px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.7 var(--mono); }
 .agent-purge-panel > .card-head .btn { min-height: 44px; }
-@media (max-width: 640px) { .agent-purge-columns { grid-template-columns: minmax(0, 1fr); } }
 
 /* Header */
 .user-topbar {

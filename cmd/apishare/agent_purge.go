@@ -33,8 +33,8 @@ type userAgentPurgeConfig struct {
 	Revision  int64            `json:"revision"`
 	Mode      string           `json:"mode"`
 	PersonaID string           `json:"persona_id"`
-	Pairs     []agentPurgePair `json:"pairs,omitempty"` // Legacy preference; routing is controlled by the administrator.
-	Clients   []string         `json:"clients"`
+	Pairs     []agentPurgePair `json:"pairs,omitempty"`   // Legacy preference; routing is controlled by the administrator.
+	Clients   []string         `json:"clients,omitempty"` // Legacy preference; all clients now share the user switch.
 }
 
 type agentPurgePairOption struct {
@@ -43,14 +43,6 @@ type agentPurgePairOption struct {
 	UpstreamName string `json:"upstream_name"`
 	UpstreamType string `json:"upstream_type"`
 	Enabled      bool   `json:"enabled,omitempty"`
-}
-
-type agentPurgeClientOption struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	SDK       bool   `json:"sdk,omitempty"`
-	Available bool   `json:"available"`
-	Note      string `json:"note,omitempty"`
 }
 
 type agentPurgeRequestState struct {
@@ -147,7 +139,6 @@ func loadUserAgentPurgeConfig(sub string) userAgentPurgeConfig {
 		return userAgentPurgeConfig{PersonaID: agentpurge.PersonaID, Pairs: []agentPurgePair{}, Clients: []string{}}
 	}
 	cfg.Pairs = normalizeAgentPurgePairs(cfg.Pairs)
-	cfg.Clients = normalizeAgentPurgeClients(cfg.Clients)
 	cfg.Mode = normalizeAgentPurgeMode(cfg.Mode)
 	cfg.PersonaID = agentpurge.NormalizePersonaID(cfg.PersonaID)
 	return cfg
@@ -201,54 +192,6 @@ func normalizeAgentPurgePairs(pairs []agentPurgePair) []agentPurgePair {
 	return out
 }
 
-func normalizeAgentPurgeClients(clients []string) []string {
-	allowed := make(map[string]bool)
-	for _, option := range agentPurgeClientOptions() {
-		if option.Available {
-			allowed[option.ID] = true
-		}
-	}
-	seen := make(map[string]bool, len(clients))
-	out := make([]string, 0, len(clients))
-	for _, client := range clients {
-		client = strings.TrimSpace(client)
-		if allowed[client] && !seen[client] {
-			seen[client] = true
-			out = append(out, client)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-func agentPurgeClientOptions() []agentPurgeClientOption {
-	out := make([]agentPurgeClientOption, 0, len(requestClientNames)+len(requestSDKUARules))
-	ids := make([]string, 0, len(requestClientNames))
-	for id := range requestClientNames {
-		if id != "unknown" {
-			ids = append(ids, id)
-		}
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		option := agentPurgeClientOption{ID: id, Name: requestClientNames[id], Available: true}
-		if id == "claude_code" {
-			option.Name = "Claude Code / 兼容标识"
-			option.Note = "按请求声明识别；使用相同标识的 Qwen 等代理模式也会生效"
-		}
-		if id == "pi" {
-			option.Note = "包括复用 pi-ai 默认 User-Agent 的其他应用"
-		}
-		out = append(out, option)
-	}
-	for _, rule := range requestSDKUARules {
-		out = append(out, agentPurgeClientOption{
-			ID: "sdk:" + rule.id, Name: rule.name + "（SDK）", SDK: true, Available: true,
-		})
-	}
-	return out
-}
-
 func agentPurgePairKey(upstreamID int64, model string) string {
 	return fmt.Sprintf("%d:%s", upstreamID, normalizeAgentPurgeModel(model))
 }
@@ -264,24 +207,11 @@ func agentPurgeModelMatches(pairModel, model string) bool {
 func agentPurgeEnabledForTask(state *agentPurgeRequestState, userSub string, task *relayTask) bool {
 	if state == nil || task == nil || userSub == "" ||
 		!state.policy.Enabled || len(state.policy.Pairs) == 0 ||
-		!state.user.Enabled || task.nativeOnly || task.client == nil {
+		!state.user.Enabled || task.nativeOnly {
 		return false
 	}
-	if _, ok := agentpurge.Lookup(state.user.PersonaID); !ok {
-		return false
-	}
-	client := task.client.identity
-	// Client identity is self-reported. Conflicting evidence never matches.
-	// The Claude-compatible option explicitly includes its shared Qwen marker.
-	if client.Conflict || (client.Ambiguous && client.ID != "claude_code") {
-		return false
-	}
-	for _, id := range state.user.Clients {
-		if (client.ID != "unknown" && id == client.ID) || (client.ID == "unknown" && client.SDKID != "" && id == "sdk:"+client.SDKID) {
-			return true
-		}
-	}
-	return false
+	_, available := agentpurge.Lookup(state.user.PersonaID)
+	return available
 }
 
 func agentPurgeAppliesToModel(task *relayTask) bool {
@@ -387,8 +317,8 @@ func saveUserAgentPurgeConfig(sub string, cfg userAgentPurgeConfig) error {
 	if strings.TrimSpace(sub) == "" {
 		return errors.New("缺少用户身份")
 	}
-	cfg.Pairs = nil // Discard legacy user channel selections on the next save.
-	cfg.Clients = normalizeAgentPurgeClients(cfg.Clients)
+	cfg.Pairs = nil   // Discard legacy user channel selections on the next save.
+	cfg.Clients = nil // User-Agent and legacy client selections no longer limit persona application.
 	cfg.Mode = normalizeAgentPurgeMode(cfg.Mode)
 	cfg.PersonaID = agentpurge.NormalizePersonaID(cfg.PersonaID)
 	if _, ok := agentpurge.Lookup(cfg.PersonaID); !ok {
@@ -427,8 +357,6 @@ func buildUserAgentPurgeView(sub string, ak ApiKey) (gin.H, error) {
 		"enabled":           policy.Enabled,
 		"user_enabled":      cfg.Enabled && personaAvailable,
 		"models":            models,
-		"clients":           agentPurgeClientOptions(),
-		"selected_clients":  cfg.Clients,
 		"persona_id":        cfg.PersonaID,
 		"persona_available": personaAvailable,
 		"personas":          agentpurge.Personas(),
@@ -519,15 +447,14 @@ func registerUserAgentPurgeRoutes(userAPI *gin.RouterGroup) {
 			PersonaID *string          `json:"persona_id"`
 			Revision  *int64           `json:"revision"`
 			Pairs     []agentPurgePair `json:"pairs"`
-			Clients   []string         `json:"clients"`
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "设置格式无效"})
 			return
 		}
-		if err := validateAgentPurgePairs(req.Pairs); err != nil || len(req.Clients) > 100 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "模型与上游设置无效，或客户端选项过多"})
+		if err := validateAgentPurgePairs(req.Pairs); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "模型与上游设置无效"})
 			return
 		}
 		agentPurgeConfigMu.Lock()
@@ -570,21 +497,8 @@ func registerUserAgentPurgeRoutes(userAPI *gin.RouterGroup) {
 				return
 			}
 		}
-		clients := normalizeAgentPurgeClients(req.Clients)
-		clientOptions := make(map[string]bool)
-		for _, option := range agentPurgeClientOptions() {
-			if option.Available {
-				clientOptions[option.ID] = true
-			}
-		}
-		for _, rawClient := range req.Clients {
-			if !clientOptions[strings.TrimSpace(rawClient)] {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "包含未支持的客户端选项"})
-				return
-			}
-		}
 		if err := saveUserAgentPurgeConfig(user.Sub, userAgentPurgeConfig{
-			Enabled: req.Enabled, Mode: req.Mode, PersonaID: personaID, Revision: policy.Revision, Clients: clients,
+			Enabled: req.Enabled, Mode: req.Mode, PersonaID: personaID, Revision: policy.Revision,
 		}); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存个性化提示词设置失败"})
 			return
