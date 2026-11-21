@@ -1,0 +1,77 @@
+.pricing-overview { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.pricing-metric { padding: 18px 22px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.pricing-metric span { color: var(--muted); font-size: 12px; }
+.pricing-metric strong { font-size: 23px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.pricing-sync-bar { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 18px 22px; }
+.pricing-sync-copy { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.pricing-sync-copy > strong { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; }
+.pricing-sync-copy > strong .icon { width: 16px; height: 16px; color: var(--accent); }
+.pricing-sync-actions, .pricing-row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 14px; }
+.pricing-sync-actions { flex-shrink: 0; }
+.pricing-sync-error { margin-top: -8px; }
+.pricing-sync-error:empty { display: none; }
+.pricing-config, .pricing-json { padding: 0; }
+.pricing-config > summary, .pricing-json > summary { padding: 18px 22px; display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 500; }
+.pricing-config > summary::after, .pricing-json > summary::after { content: "+"; margin-left: auto; color: var(--muted); font-size: 18px; }
+.pricing-config[open] > summary::after, .pricing-json[open] > summary::after { content: "−"; }
+.pricing-config-body { padding: 4px 22px 22px; display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 32px; }
+.pricing-config-body form { display: flex; flex-direction: column; gap: 18px; }
+.pricing-config-body .form-actions, .pricing-json .form-actions { margin-top: 0; }
+.pricing-policy { padding: 18px; background: var(--panel-soft); border-radius: 7px; align-self: start; }
+.pricing-policy h2 { font-size: 13px; margin-bottom: 8px; }
+.pricing-policy p { color: var(--muted); font-size: 12px; line-height: 1.9; }
+.pricing-policy p + p { margin-top: 8px; }
+.pricing-toolbar { gap: 16px; flex-wrap: wrap; }
+.pricing-toolbar .toolbar-filters { flex-wrap: wrap; }
+.pricing-toolbar .search-field { width: 260px; }
+.pricing-currency { color: var(--muted); font-size: 11px; font-weight: 400; }
+.pricing-table { min-width: 820px; }
+.pricing-table .pricing-model-cell { max-width: 350px; min-width: 180px; overflow-wrap: anywhere; }
+.pricing-model-cell > small { display: block; color: var(--muted); font-size: 11px; margin-top: 4px; }
+.pricing-rate { white-space: nowrap; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.pricing-source { white-space: nowrap; display: inline-block; padding: 3px 8px; background: var(--panel-soft); color: var(--muted); border-radius: 5px; font-size: 11px; }
+.pricing-source-override { background: var(--accent-soft); color: var(--accent-hover); }
+.pricing-source-official { background: var(--green-soft); color: var(--green); }
+.pricing-source-none { background: var(--amber-soft); color: var(--amber); }
+.pricing-row-actions { gap: 10px; white-space: nowrap; }
+.pricing-row-actions .icon { width: 14px; height: 14px; }
+.pricing-pagination { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 15px 22px; border-top: 1px solid var(--border); }
+.pricing-pagination > div { display: flex; gap: 10px; }
+.pricing-pagination > span { color: var(--muted); font-size: 12px; }
+.pricing-json form { padding: 0 22px 22px; display: flex; flex-direction: column; gap: 16px; }
+.pricing-json textarea { min-height: 220px; }
+.pricing-dialog { width: min(660px, calc(100% - 32px)); max-height: calc(100dvh - 48px); overflow-y: auto; padding: 26px; border: 1px solid var(--border); border-radius: 12px; color: var(--text); background: var(--panel); box-shadow: var(--shadow); }
+.pricing-dialog::backdrop { background: rgb(27 42 65 / 40%); }
+.pricing-dialog header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 22px; }
+.pricing-dialog h2 { font-size: 18px; }
+.pricing-dialog header p { color: var(--muted); font-size: 12px; margin-top: 6px; }
+.pricing-dialog form { display: flex; flex-direction: column; gap: 18px; }
+.pricing-dialog input[readonly] { background: var(--panel-soft); color: var(--muted); }
+.pricing-advanced summary { color: var(--text); font-size: 13px; padding: 6px 0; }
+.pricing-advanced > p { margin: 8px 0 16px; }
+.pricing-dialog .form-actions { margin-top: 0; padding-top: 16px; border-top: 1px solid var(--border); }
+.pricing-flash-hint { padding: 10px 12px; border-radius: 6px; background: var(--amber-soft); color: var(--amber); font-size: 12px; }
+.pricing-variants { padding: 12px; background: var(--panel-soft); border-radius: 6px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.pricing-variants:empty { display: none; }
+@media (max-width: 1024px) {
+  .pricing-toolbar .toolbar-filters { width: 100%; }
+  .pricing-toolbar .search-field { flex: 1; }
+}
+@media (max-width: 600px) {
+  .pricing-overview { gap: 8px; }
+  .pricing-metric { padding: 14px 12px; flex-direction: column; align-items: flex-start; gap: 4px; }
+  .pricing-metric span { font-size: 11px; }
+  .pricing-metric strong { font-size: 20px; }
+  .pricing-sync-bar { padding: 16px; flex-direction: column; align-items: stretch; gap: 14px; }
+  .pricing-sync-actions { justify-content: space-between; }
+  .pricing-config-body { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .pricing-config > summary, .pricing-json > summary { padding: 16px; }
+  .pricing-config-body, .pricing-json form { padding: 0 16px 16px; }
+  .pricing-toolbar .toolbar-filters { gap: 10px; }
+  .pricing-toolbar .search-field { flex-basis: 100%; }
+  .pricing-toolbar select { flex: 1; min-width: 0; }
+  .pricing-dialog { padding: 20px 16px; max-height: calc(100dvh - 24px); }
+  .pricing-dialog input, .pricing-config input, .pricing-json textarea, .pricing-toolbar input { font-size: 16px; }
+  .pricing-dialog .form-grid { grid-template-columns: minmax(0, 1fr); }
+  .pricing-pagination { padding: 14px 16px; }
+}

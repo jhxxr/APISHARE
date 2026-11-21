@@ -40,9 +40,9 @@ function editorOpenAIProtocol() {
   if (isOpenCodeType($("editType").value)) return $("editOpenCodeProtocol").value || "auto";
   return { "openai-chat": "chat", "openai-responses": "responses" }[$("editType").value] || "auto";
 }
-const tabNames = { dashboard: "仪表盘", keys: "API 密钥", upstreams: "上游服务", models: "模型总览", proxies: "代理配置", logs: "调用日志", announcements: "公告管理", settings: "工作空间设置", deployment: "部署配置" };
+const tabNames = { dashboard: "仪表盘", keys: "API 密钥", upstreams: "上游服务", models: "模型总览", proxies: "代理配置", logs: "调用日志", announcements: "公告管理", pricing: "模型定价", settings: "工作空间设置", deployment: "部署配置" };
 const siteTitle = () => document.documentElement.dataset.siteTitle || "API Share";
-const tabIcons = { dashboard: "grid", keys: "key", upstreams: "layers", models: "spark", proxies: "link", logs: "activity", announcements: "megaphone", settings: "sliders", deployment: "shield" };
+const tabIcons = { dashboard: "grid", keys: "key", upstreams: "layers", models: "spark", proxies: "link", logs: "activity", announcements: "megaphone", pricing: "wallet", settings: "sliders", deployment: "shield" };
 document.body.classList.toggle("sidebar-collapsed", localStorage.getItem("apishare_sidebar_collapsed") === "true");
 document.querySelectorAll(".tab").forEach((button) => {
   button.title = tabNames[button.dataset.tab];
@@ -288,6 +288,7 @@ async function loadCurrentTab() {
   if (activeTab === "proxies") return loadProxies();
   if (activeTab === "logs") return loadLogs(logsPage);
   if (activeTab === "announcements") return loadAnnouncements();
+  if (activeTab === "pricing") return loadPricing();
   if (activeTab === "settings") return loadSettings();
   if (activeTab === "deployment") return loadDeployment();
 }
@@ -1335,9 +1336,6 @@ async function loadSettings() {
     $("setInject").checked = !!settings.inject_stream_usage;
     $("setLogRetention").value = String(settings.log_retention_days ?? 7);
     if (settings.log_retention_detail) $("logRetentionHint").textContent = settings.log_retention_detail;
-    $("setAutoPricing").checked = !!settings.auto_pricing_enabled;
-    $("setPricingURL").value = settings.auto_pricing_url || "";
-    $("setPricing").value = JSON.stringify(settings.pricing, null, 2);
     $("setSiteTitle").value = settings.site_title || "";
     if ($("setXAuthEnabled")) {
       $("setXAuthEnabled").checked = !!settings.xauth_enabled;
@@ -1360,8 +1358,6 @@ async function loadSettings() {
       $("xauthTestStatus")?.classList.add("hidden");
     }
     applySiteBranding(settings);
-    setPricingError("");
-    renderPricingStatus(settings.auto_pricing);
     settingsReady = true; stampRefresh();
   } catch (error) { settingsReady = false; reportError(error, "设置加载失败"); }
 }
@@ -1405,65 +1401,24 @@ async function saveAgentPurgePolicy(button = $("saveAgentPurgePolicy")) {
   } catch (error) { reportError(error, "保存提示词授权失败"); }
   finally { setBusy(button, false); if (!agentPurgePolicyState) button.disabled = true; }
 }
-function renderPricingStatus(info) {
-  $("pricingStatus").textContent = !info?.last_update ? "尚未同步官方定价" : "已同步 " + number(info.model_count) + " 个模型 · " + fmtTime(info.last_update);
-}
-async function refreshPricing(button) {
-  setBusy(button, true, "正在同步…");
-  try {
-    const result = await api("api/settings/pricing/refresh", { method: "POST" });
-    if (!result.ok) throw new Error(result.error || "同步失败");
-    renderPricingStatus({ model_count: result.model_count, last_update: result.last_update });
-    toast("已同步 " + number(result.model_count) + " 个模型的官方定价");
-  } catch (error) { reportError(error, "定价同步失败"); } finally { setBusy(button, false); }
-}
-async function lookupPrice() {
-  const model = $("lookupModel").value.trim();
-  if (!model) { $("lookupModel").focus(); return; }
-  $("lookupResult").textContent = "正在查询…";
-  try {
-    const result = await api("api/settings/pricing/lookup?model=" + encodeURIComponent(model));
-    const sources = { override: "手动覆盖", official: "官方定价", builtin: "内置兜底", default: "default 兜底", none: "未找到" };
-    const price = result.price;
-    const cacheRead = price.cache_read ?? price.in;
-    const cacheWrite = price.cache_write ?? price.in;
-    const displayModel = modelLabel(result.model) + (result.pricing_model && result.pricing_model !== result.model ? "（按 " + modelLabel(result.pricing_model) + " 计价）" : "");
-    $("lookupResult").innerHTML = displayModel + esc(" · 输入 $" + price.in + " · 输出 $" + price.out + " · 缓存读取 $" + cacheRead + " · 缓存创建 $" + cacheWrite + " · 1 小时缓存创建 $" + (price.cache_write_1h ?? cacheWrite) + " · 推理 $" + (price.reasoning ?? price.out) + " / 1M tokens · 来源：" + (sources[result.source] || result.source));
-  } catch (error) { $("lookupResult").textContent = "查询失败：" + error.message; }
-}
 async function saveSettings(event) {
   event.preventDefault();
   if (!settingsReady) { toast("设置尚未加载，请先刷新页面", "error"); return false; }
   const siteTitleValue = $("setSiteTitle").value.trim();
   if ([...siteTitleValue].length > 40) { toast("网站标题最多 40 个字", "error"); $("setSiteTitle").focus(); return false; }
-  let pricing;
-  try {
-    pricing = JSON.parse($("setPricing").value);
-    const validRate = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0;
-    if (!pricing || Array.isArray(pricing) || typeof pricing !== "object" || !Object.keys(pricing).length) throw new Error("请填写模型价格 JSON 对象。");
-    for (const [model, item] of Object.entries(pricing)) {
-      if (!item || Array.isArray(item) || typeof item !== "object" || !validRate(item.in) || !validRate(item.out)) throw new Error(model + "：in 和 out 必须是有限的非负单价。");
-      const allowedFields = ["in", "out", "cache_read", "cache_write", "cache_write_1h", "reasoning", "in_audio", "out_audio", "cache_read_audio"];
-      if (Object.keys(item).some((field) => !allowedFields.includes(field))) throw new Error(model + "：包含不支持的价格字段，请检查拼写。");
-      for (const field of ["cache_read", "cache_write", "cache_write_1h", "reasoning", "in_audio", "out_audio", "cache_read_audio"]) {
-        if (item[field] != null && !validRate(item[field])) throw new Error(model + "：" + field + " 必须是有限的非负单价，或留空使用默认单价。");
-      }
-    }
-  } catch (error) { setPricingError(error.message || "价格 JSON 无效。"); $("setPricing").focus(); return false; }
-  setPricingError("");
   if ($("xauthDefaultModels") && !validateKeyModels("xauthDefault")) return false;
   const xauthQuota = $("xauthDefaultModels") ? keyQuotaPayload("xauthDefault") : { quota_usd: 5, model_quotas: {} };
   const button = event.currentTarget.querySelector('[type="submit"]');
   setBusy(button, true, "正在保存…");
   try {
-    await api("api/settings", { method: "PUT", body: JSON.stringify({ affinity_ttl_min: Number($("setTtl").value), retry: Number($("setRetry").value), inject_stream_usage: $("setInject").checked, log_retention_days: Number($("setLogRetention").value), auto_pricing_enabled: $("setAutoPricing").checked, auto_pricing_url: $("setPricingURL").value.trim(), site_title: siteTitleValue, pricing, xauth_enabled: $("setXAuthEnabled")?.checked ?? false, xauth_issuer: ($("setXAuthIssuer")?.value || "").trim(), xauth_client_id: ($("setXAuthClientID")?.value || "").trim(), xauth_client_secret: ($("setXAuthClientSecret")?.value || "").trim(), xauth_clear_secret: $("setXAuthClearSecret")?.checked ?? false, xauth_default_qps: Number($("setXAuthQps")?.value) || 3, xauth_default_concurrency: Number($("setXAuthConc")?.value) || 5, xauth_default_models: parseAllowlist($("xauthDefaultModels")?.value || "").join(","), ...Object.fromEntries(Object.entries({ xauth_default_quota_usd: xauthQuota.quota_usd, xauth_default_model_quotas: xauthQuota.model_quotas })) }) });
+    await api("api/settings", { method: "PUT", body: JSON.stringify({ affinity_ttl_min: Number($("setTtl").value), retry: Number($("setRetry").value), inject_stream_usage: $("setInject").checked, log_retention_days: Number($("setLogRetention").value), site_title: siteTitleValue, xauth_enabled: $("setXAuthEnabled")?.checked ?? false, xauth_issuer: ($("setXAuthIssuer")?.value || "").trim(), xauth_client_id: ($("setXAuthClientID")?.value || "").trim(), xauth_client_secret: ($("setXAuthClientSecret")?.value || "").trim(), xauth_clear_secret: $("setXAuthClearSecret")?.checked ?? false, xauth_default_qps: Number($("setXAuthQps")?.value) || 3, xauth_default_concurrency: Number($("setXAuthConc")?.value) || 5, xauth_default_models: parseAllowlist($("xauthDefaultModels")?.value || "").join(","), ...Object.fromEntries(Object.entries({ xauth_default_quota_usd: xauthQuota.quota_usd, xauth_default_model_quotas: xauthQuota.model_quotas })) }) });
     await loadSettings(); toast("工作空间设置已保存");
   } catch (error) { reportError(error, "保存失败"); } finally { setBusy(button, false); }
   return false;
 }
 
 /* Reusable accessible confirmation and quota dialogs. */
-function syncModalLock() { document.body.classList.toggle("modal-open", $("editModal").open || $("actionDialog").open || $("keyModelsDialog").open || !!$("keyBatchModelsDialog")?.open || $("modelTestDialog").open || $("logDetailDialog").open || $("poolInspectorDialog").open); }
+function syncModalLock() { document.body.classList.toggle("modal-open", $("editModal").open || $("actionDialog").open || $("keyModelsDialog").open || !!$("keyBatchModelsDialog")?.open || $("modelTestDialog").open || $("logDetailDialog").open || $("poolInspectorDialog").open || !!$("pricingEditDialog")?.open); }
 async function testXAuthConnection(button) {
   const status = $("xauthTestStatus");
   status.className = "probe-info";
@@ -1487,12 +1442,6 @@ async function testXAuthConnection(button) {
   } finally {
     setBusy(button, false);
   }
-}
-function setPricingError(message) {
-  $("pricingError").textContent = message;
-  $("pricingError").classList.toggle("hidden", !message);
-  $("setPricing").setCustomValidity(message);
-  $("setPricing").setAttribute("aria-invalid", String(!!message));
 }
 function askAction(options) {
   if ($("actionDialog").open) resolveAction(false);
@@ -1526,7 +1475,6 @@ function resolveAction(confirmed) {
 $("actionForm").addEventListener("submit", (event) => { event.preventDefault(); resolveAction(true); });
 $("actionDialog").addEventListener("cancel", (event) => { event.preventDefault(); resolveAction(false); });
 $("keyName").addEventListener("input", () => $("keyName").setCustomValidity(""));
-$("setPricing").addEventListener("input", () => setPricingError(""));
 document.querySelector(".skip-link").addEventListener("click", (event) => { event.preventDefault(); $("mainContent").focus(); });
 document.addEventListener("invalid", (event) => {
   const field = event.target;
@@ -1564,6 +1512,7 @@ initModelEditor();
 initModelTest();
 initAnnouncements();
 initLogs();
+initPricing();
 $("agentPurgePolicySearch")?.addEventListener("input", renderAgentPurgePolicyPairs);
 $("agentPurgePolicyPairs")?.addEventListener("change", (event) => {
   const input = event.target.closest("[data-agent-purge-model]");

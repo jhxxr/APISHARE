@@ -148,6 +148,7 @@ func registerAdminRoutes(r *gin.Engine) {
 	registerSiteBrandingAdmin(auth)
 	registerXAuthAdminRoutes(auth)
 	registerAgentPurgeAdminRoutes(auth)
+	registerPricingAdminRoutes(auth)
 
 	// ---------- API Keys ----------
 	auth.GET("/keys/models", func(c *gin.Context) {
@@ -1040,14 +1041,7 @@ func registerAdminRoutes(r *gin.Engine) {
 	// ---------- Settings ----------
 	auth.GET("/settings", func(c *gin.Context) {
 		s := getSettings()
-		autoPricing.RLock()
-		autoInfo := gin.H{
-			"enabled":     s.AutoPricingEnabled,
-			"url":         s.AutoPricingURL,
-			"last_update": autoPricing.fetchedAt,
-			"model_count": len(autoPricing.data),
-		}
-		autoPricing.RUnlock()
+		autoInfo := autoPricingInfo(s)
 		retention := retentionOption(s.LogRetentionDays)
 		siteIconURL, siteIconType := currentSiteIcon()
 		c.JSON(200, gin.H{
@@ -1108,6 +1102,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			return
 		}
 		s := getSettings()
+		previousAutoPricingEnabled, previousAutoPricingURL := s.AutoPricingEnabled, s.AutoPricingURL
 		if req.SiteTitle != nil {
 			title, err := normalizeSiteTitle(*req.SiteTitle)
 			if err != nil {
@@ -1205,8 +1200,11 @@ func registerAdminRoutes(r *gin.Engine) {
 		if req.AutoPricingEnabled != nil {
 			s.AutoPricingEnabled = *req.AutoPricingEnabled
 		}
-		if req.AutoPricingURL != nil && strings.TrimSpace(*req.AutoPricingURL) != "" {
+		if req.AutoPricingURL != nil {
 			s.AutoPricingURL = strings.TrimSpace(*req.AutoPricingURL)
+			if s.AutoPricingURL == "" {
+				s.AutoPricingURL = defaultAutoPricingURL
+			}
 		}
 		if err := persistSettings(s); err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
@@ -1216,7 +1214,7 @@ func registerAdminRoutes(r *gin.Engine) {
 		if retentionChanged {
 			kickLogRetentionSweep()
 		}
-		if s.AutoPricingEnabled {
+		if s.AutoPricingEnabled && (!previousAutoPricingEnabled || previousAutoPricingURL != s.AutoPricingURL) {
 			go func() {
 				if _, err := refreshAutoPricing(); err != nil {
 					log.Printf("[pricing] manual-trigger sync failed: %v", err)

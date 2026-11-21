@@ -19,7 +19,7 @@ test("retired and unknown navigation links resolve to the dashboard without addi
 });
 
 test("supported deep links retain their destination", () => {
-  for (const name of ["settings", "logs", "models", "upstreams/7"]) {
+  for (const name of ["settings", "pricing", "logs", "models", "upstreams/7"]) {
     const context = vm.createContext({ location: { hash: "#" + name }, history: { replaceState() { throw Error("valid route was replaced"); } } });
     vm.runInContext(definitions + "\n" + resolver, context);
     assert.equal(vm.runInContext("tabFromHistory()", context), name);

@@ -8,12 +8,16 @@ package main
 //
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,7 +26,74 @@ import (
 const defaultAutoPricingURL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 
 const pricingRefreshInterval = 24 * time.Hour
-const pricingCacheSchemaVersion = "3"
+const pricingCacheSchemaVersion = "4"
+
+// Catalogs and mirrors can encode numbers as strings. Invalid fields reject
+// only their model entry; schema descriptions must never abort the whole sync.
+type catalogNumber float64
+
+func (n *catalogNumber) UnmarshalJSON(raw []byte) error {
+	raw = bytes.TrimSpace(raw)
+	text := string(raw)
+	if len(raw) > 0 && raw[0] == '"' {
+		if err := json.Unmarshal(raw, &text); err != nil {
+			return err
+		}
+	}
+	value, err := strconv.ParseFloat(strings.TrimSpace(text), 64)
+	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+		return fmt.Errorf("invalid catalog number")
+	}
+	*n = catalogNumber(value)
+	return nil
+}
+
+type catalogTokenLimit int
+
+func (n *catalogTokenLimit) UnmarshalJSON(raw []byte) error {
+	var value catalogNumber
+	if err := value.UnmarshalJSON(raw); err != nil {
+		return err
+	}
+	f := float64(value)
+	if f < 0 || math.Trunc(f) != f || f >= math.Pow(2, strconv.IntSize-1) {
+		return fmt.Errorf("invalid catalog token limit")
+	}
+	*n = catalogTokenLimit(f)
+	return nil
+}
+
+func indexAutoPrices(prices map[string]Price) map[string]Price {
+	indexed := make(map[string]Price, len(prices)*2)
+	keys := make([]string, 0, len(prices))
+	for key := range prices {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	tiers := map[string]int{}
+	for _, key := range keys {
+		price := prices[key]
+		indexed[key] = price
+		if name, tier := normalizePricingKey(key); name != "" {
+			if old, exists := tiers[name]; !exists || tier < old {
+				indexed["bare:"+name] = price
+				tiers[name] = tier
+			}
+		}
+	}
+	return indexed
+}
+
+// Normalized lookup aliases are internal indexes, not additional models.
+func autoPricingModelCount(data map[string]Price) int {
+	count := 0
+	for model := range data {
+		if !strings.HasPrefix(model, "bare:") {
+			count++
+		}
+	}
+	return count
+}
 
 // 内置兜底价格表（USD/1M tokens）：仅在官方价格库不可用且无手动覆盖时使用。
 var builtInPricing = map[string]Price{
@@ -92,7 +163,7 @@ func loadAutoPricingCache() {
 				at = ""
 			}
 			autoPricing.Lock()
-			autoPricing.data = data
+			autoPricing.data = indexAutoPrices(data)
 			autoPricing.fetchedAt = at
 			autoPricing.Unlock()
 		}
@@ -145,31 +216,28 @@ func refreshAutoPricing() (int, error) {
 	}
 
 	// LiteLLM 原始结构：{ "模型名": { "input_cost_per_token": 2.5e-6, "output_cost_per_token": 1e-5, "max_input_tokens": 128000, ... } }
-	var src map[string]struct {
-		InputCostPerToken          *float64 `json:"input_cost_per_token"`
-		OutputCostPerToken         *float64 `json:"output_cost_per_token"`
-		CacheReadCostPerToken      *float64 `json:"cache_read_input_token_cost"`
-		CacheWriteCostPerToken     *float64 `json:"cache_creation_input_token_cost"`
-		CacheWrite1hCostPerToken   *float64 `json:"cache_creation_input_token_cost_above_1hr"`
-		ReasoningCostPerToken      *float64 `json:"output_cost_per_reasoning_token"`
-		InputAudioCostPerToken     *float64 `json:"input_cost_per_audio_token"`
-		OutputAudioCostPerToken    *float64 `json:"output_cost_per_audio_token"`
-		CacheReadAudioCostPerToken *float64 `json:"cache_read_input_audio_token_cost"`
-		MaxInputTokens             *int     `json:"max_input_tokens"`
-		MaxOutputTokens            *int     `json:"max_output_tokens"`
-		MaxTokens                  *int     `json:"max_tokens"`
+	type catalogEntry struct {
+		InputCostPerToken          *catalogNumber     `json:"input_cost_per_token"`
+		OutputCostPerToken         *catalogNumber     `json:"output_cost_per_token"`
+		CacheReadCostPerToken      *catalogNumber     `json:"cache_read_input_token_cost"`
+		CacheWriteCostPerToken     *catalogNumber     `json:"cache_creation_input_token_cost"`
+		CacheWrite1hCostPerToken   *catalogNumber     `json:"cache_creation_input_token_cost_above_1hr"`
+		ReasoningCostPerToken      *catalogNumber     `json:"output_cost_per_reasoning_token"`
+		InputAudioCostPerToken     *catalogNumber     `json:"input_cost_per_audio_token"`
+		OutputAudioCostPerToken    *catalogNumber     `json:"output_cost_per_audio_token"`
+		CacheReadAudioCostPerToken *catalogNumber     `json:"cache_read_input_audio_token_cost"`
+		MaxInputTokens             *catalogTokenLimit `json:"max_input_tokens"`
+		MaxOutputTokens            *catalogTokenLimit `json:"max_output_tokens"`
+		MaxTokens                  *catalogTokenLimit `json:"max_tokens"`
 	}
+	var src map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &src); err != nil {
 		return 0, err
 	}
 
-	// 归一化索引：全名（含 provider/ 前缀）与归一化裸名两套索引。
+	// Decode entries independently: sample_spec contains human-readable field
+	// descriptions, and a malformed experimental entry must not poison prices.
 	byFull := map[string]Price{}
-	type bareEntry struct {
-		p    Price
-		tier int
-	}
-	bare := map[string]bareEntry{}
 
 	limitsByFull := map[string]ModelTokenLimits{}
 	type bareLimitEntry struct {
@@ -178,18 +246,33 @@ func refreshAutoPricing() (int, error) {
 	}
 	limitsBare := map[string]bareLimitEntry{}
 
-	for key, e := range src {
+	keys := make([]string, 0, len(src))
+	for key := range src {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	skipped := 0
+	for _, key := range keys {
+		if key == "sample_spec" {
+			continue
+		}
+		var e catalogEntry
+		entry := bytes.TrimSpace(src[key])
+		if len(entry) == 0 || entry[0] != '{' || json.Unmarshal(entry, &e) != nil {
+			skipped++
+			continue
+		}
 		ctxLimit := 0
 		if e.MaxInputTokens != nil && *e.MaxInputTokens > 0 {
-			ctxLimit = *e.MaxInputTokens
+			ctxLimit = int(*e.MaxInputTokens)
 		} else if e.MaxTokens != nil && *e.MaxTokens >= 2048 {
-			ctxLimit = *e.MaxTokens
+			ctxLimit = int(*e.MaxTokens)
 		}
 		maxOut := 0
 		if e.MaxOutputTokens != nil && *e.MaxOutputTokens > 0 {
-			maxOut = *e.MaxOutputTokens
+			maxOut = int(*e.MaxOutputTokens)
 		} else if e.MaxTokens != nil && *e.MaxTokens > 0 && e.MaxInputTokens != nil && *e.MaxTokens <= *e.MaxInputTokens {
-			maxOut = *e.MaxTokens
+			maxOut = int(*e.MaxTokens)
 		}
 		if ctxLimit > 0 || maxOut > 0 {
 			lim := ModelTokenLimits{ContextLimit: ctxLimit, MaxOutput: maxOut}
@@ -204,9 +287,9 @@ func refreshAutoPricing() (int, error) {
 		if e.InputCostPerToken == nil {
 			continue // 无定价的条目（部分 audio/图像/实验条目）跳过
 		}
-		p := Price{In: *e.InputCostPerToken * 1e6}
+		p := Price{In: float64(*e.InputCostPerToken) * 1e6}
 		if e.OutputCostPerToken != nil {
-			p.Out = *e.OutputCostPerToken * 1e6
+			p.Out = float64(*e.OutputCostPerToken) * 1e6
 		}
 		p.CacheRead = ratePerMillion(e.CacheReadCostPerToken)
 		p.CacheWrite = ratePerMillion(e.CacheWriteCostPerToken)
@@ -219,11 +302,6 @@ func refreshAutoPricing() (int, error) {
 			continue
 		}
 		byFull[key] = p
-		if name, tier := normalizePricingKey(key); name != "" {
-			if old, exists := bare[name]; !exists || tier < old.tier {
-				bare[name] = bareEntry{p: p, tier: tier}
-			}
-		}
 	}
 	if len(byFull) == 0 {
 		return 0, fmt.Errorf("pricing source parsed empty")
@@ -231,13 +309,7 @@ func refreshAutoPricing() (int, error) {
 
 	fetchedAt := nowStr()
 	autoPricing.Lock()
-	autoPricing.data = map[string]Price{}
-	for k, v := range byFull {
-		autoPricing.data[k] = v
-	}
-	for k, v := range bare {
-		autoPricing.data["bare:"+k] = v.p
-	}
+	autoPricing.data = indexAutoPrices(byFull)
 	autoPricing.fetchedAt = fetchedAt
 	autoPricing.Unlock()
 
@@ -261,15 +333,15 @@ func refreshAutoPricing() (int, error) {
 	_ = settingsSet("auto_pricing_fetched_at", fetchedAt)
 	_ = settingsSet("auto_pricing_schema_version", pricingCacheSchemaVersion)
 
-	log.Printf("[pricing] official prices synced: %d models (%d token limits) from %s", len(byFull), len(limitsByFull), url)
+	log.Printf("[pricing] official prices synced: %d models (%d token limits, %d malformed entries skipped) from %s", len(byFull), len(limitsByFull), skipped, url)
 	return len(byFull), nil
 }
 
-func ratePerMillion(value *float64) *float64 {
+func ratePerMillion(value *catalogNumber) *float64 {
 	if value == nil {
 		return nil
 	}
-	rate := *value * 1e6
+	rate := float64(*value) * 1e6
 	return &rate
 }
 
