@@ -57,11 +57,24 @@ func Decode(body []byte) (map[string]any, error) {
 // Prepare keeps client schemas and instructions while adding the captured CLI
 // prompt and the full tool set, except for tool-free title calls. It only edits
 // this request's decoded copy.
-func Prepare(body []byte, protocol Protocol, v1 bool) (map[string]any, *ToolRenames, error) {
+func Prepare(body []byte, protocol Protocol, v1 bool, sources ...EnvironmentSource) (map[string]any, *ToolRenames, error) {
 	payload, err := Decode(body)
 	if err != nil {
 		return nil, nil, err
 	}
+	source, sourceProtocol := payload, protocol
+	if len(sources) > 0 {
+		source, err = Decode(sources[0].Body)
+		if err != nil {
+			return nil, nil, err
+		}
+		sourceProtocol = sources[0].Protocol
+	}
+	environment, err := resolveClientEnvironment(source, sourceProtocol)
+	if err != nil {
+		return nil, nil, err
+	}
+	delete(payload, "client_environment")
 	for _, name := range []string{"tools", "functions"} {
 		if value := payload[name]; value != nil {
 			if _, ok := value.([]any); !ok {
@@ -87,10 +100,10 @@ func Prepare(body []byte, protocol Protocol, v1 bool) (map[string]any, *ToolRena
 			}
 		}
 	}
-	injectOfficialPrompt(payload, protocol, v1)
+	injectOfficialPrompt(payload, protocol, v1, environment)
 	if isTitle {
 		return payload, nil, nil
 	}
-	renames, _ := renameAndCompleteTools(payload, protocol, v1)
+	renames, _ := renameAndCompleteTools(payload, protocol, v1, environment.Platform)
 	return payload, renames, nil
 }

@@ -117,6 +117,10 @@ func openCodeToolContract(raw json.RawMessage, format clientFormat) (string, jso
 }
 
 func (u *Upstream) shapeOpenCodeFreeRequest(body []byte, format clientFormat, model string, compatibility ...*openCodeToolCompatibility) ([]byte, bool, error) {
+	return u.shapeOpenCodeFreeRequestFrom(body, format, model, nil, compatibility...)
+}
+
+func (u *Upstream) shapeOpenCodeFreeRequestFrom(body []byte, format clientFormat, model string, source *opencodecompat.EnvironmentSource, compatibility ...*openCodeToolCompatibility) ([]byte, bool, error) {
 	if !u.isOpenCode() || (!u.openCodePublic() && !u.openCodeFreeModel(model)) {
 		return body, false, nil
 	}
@@ -124,7 +128,11 @@ func (u *Upstream) shapeOpenCodeFreeRequest(body []byte, format clientFormat, mo
 		return body, false, nil
 	}
 	legacy := u.openCodeLegacy()
-	payload, renames, err := opencodecompat.Prepare(body, opencodecompat.Protocol(format), legacy)
+	var sources []opencodecompat.EnvironmentSource
+	if source != nil {
+		sources = append(sources, *source)
+	}
+	payload, renames, err := opencodecompat.Prepare(body, opencodecompat.Protocol(format), legacy, sources...)
 	if err != nil {
 		return nil, false, err
 	}

@@ -2,11 +2,7 @@ package opencodecompat
 
 import (
 	_ "embed"
-	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -38,40 +34,35 @@ Use the skill tool to load a skill when a task matches its description.
   </skill>
 </available_skills>`
 
-var (
-	opencodeEnvOnce sync.Once
-	opencodeWorkDir string
-)
-
-// opencodeEnvironment renders the <env> block the CLI puts after its base
-// prompt. The working directory is resolved once per process; a platform
-// without one falls back to the official container path.
-func opencodeEnvironment(model string) string {
-	opencodeEnvOnce.Do(func() {
-		directory := ""
-		if current, err := os.Getwd(); err == nil {
-			directory = filepath.Clean(strings.TrimSpace(current))
-		}
-		if directory == "" || directory == "." {
-			directory = "/workspace"
-		}
-		opencodeWorkDir = directory
-	})
+// opencodeEnvironment describes only the request's client, never the host.
+func opencodeEnvironment(model string, environment clientEnvironment) string {
 	apiModel := strings.TrimSpace(strings.TrimPrefix(model, "opencode/"))
 	if apiModel == "" {
 		apiModel = "unknown"
 	}
-	platform := runtime.GOOS
-	if platform == "windows" {
-		platform = "win32"
+	directory, workspace, platform, gitRepo := "unknown", "unknown", "unknown", "unknown"
+	if environment.WorkingDirectory != "" {
+		directory = environment.WorkingDirectory
+	}
+	if environment.WorkspaceRoot != "" {
+		workspace = environment.WorkspaceRoot
+	}
+	if environment.Platform != "" {
+		platform = environment.Platform
+	}
+	if environment.IsGitRepo != nil {
+		gitRepo = "no"
+		if *environment.IsGitRepo {
+			gitRepo = "yes"
+		}
 	}
 	return strings.Join([]string{
 		"You are powered by the model named " + apiModel + ". The exact model ID is opencode/" + apiModel,
 		"Here is some useful information about the environment you are running in:",
 		"<env>",
-		"  Working directory: " + opencodeWorkDir,
-		"  Workspace root folder: " + opencodeWorkDir,
-		"  Is directory a git repo: yes",
+		"  Working directory: " + directory,
+		"  Workspace root folder: " + workspace,
+		"  Is directory a git repo: " + gitRepo,
 		"  Platform: " + platform,
 		"  Today's date: " + time.Now().UTC().Format("Mon Jan 02 2006"),
 		"</env>",
@@ -80,12 +71,12 @@ func opencodeEnvironment(model string) string {
 
 // opencodeSystemPrompt assembles the full CLI system prompt for model and the
 // upstream generation's tool naming.
-func opencodeSystemPrompt(model string, v1 bool) string {
+func opencodeSystemPrompt(model string, v1 bool, environment clientEnvironment) string {
 	base := opencodePromptV2
 	if v1 {
 		base = opencodePromptV1
 	}
-	return base + opencodeEnvironment(model) + "\n" + opencodeSkills
+	return base + opencodeEnvironment(model, environment) + "\n" + opencodeSkills
 }
 
 // injectOfficialPrompt prepends the official CLI system prompt to a shaped
@@ -93,12 +84,16 @@ func opencodeSystemPrompt(model string, v1 bool) string {
 // already carries the marker is left untouched, so repeated shaping cannot
 // duplicate the prompt. System One payloads are not chat bodies and are never
 // touched.
-func injectOfficialPrompt(payload map[string]any, protocol Protocol, v1 bool) bool {
+func injectOfficialPrompt(payload map[string]any, protocol Protocol, v1 bool, environments ...clientEnvironment) bool {
 	if payload == nil || protocol == SystemOne {
 		return false
 	}
 	model, _ := payload["model"].(string)
-	prompt := opencodeSystemPrompt(model, v1)
+	var environment clientEnvironment
+	if len(environments) > 0 {
+		environment = environments[0]
+	}
+	prompt := opencodeSystemPrompt(model, v1, environment)
 	switch protocol {
 	case Chat:
 		return injectChatPrompt(payload, prompt)

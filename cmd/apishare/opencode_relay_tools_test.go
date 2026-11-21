@@ -48,6 +48,9 @@ func testOpenCodeFreeRelayRestoresToolsAcrossProtocols(t *testing.T, clientName,
 						if !strings.Contains(string(body), `"stream":true`) || !strings.Contains(string(body), fmt.Sprintf(`"name":%q`, wireWeather)) {
 							t.Errorf("free request lost streaming/tool shaping: %s", body)
 						}
+						if strings.Contains(string(body), `"client_environment"`) || !strings.Contains(string(body), "Working directory: /remote-client") || !strings.Contains(string(body), "Platform: win32") {
+							t.Errorf("original client environment lost or extension leaked across %s -> %s", client, wire)
+						}
 						w.Header().Set("Content-Type", "text/event-stream")
 						upstream := fixtureSSE(wire)
 						if wire == FormatAnthropic {
@@ -68,6 +71,7 @@ func testOpenCodeFreeRelayRestoresToolsAcrossProtocols(t *testing.T, clientName,
 						OpenAIProtocol: map[clientFormat]string{FormatOpenAIChat: "chat", FormatOpenAIResponse: "responses", FormatAnthropic: "anthropic"}[wire]}
 					task := fixtureTask(t, client, stream)
 					task.body = []byte(strings.ReplaceAll(string(task.body), `"weather"`, fmt.Sprintf("%q", clientName)))
+					task.body = []byte(strings.Replace(string(task.body), "{", `{"client_environment":{"working_directory":"/remote-client","platform":"windows"},`, 1))
 					var parseErr error
 					task.canon, parseErr = parseClientRequest(client, task.body, task.model)
 					if parseErr != nil {

@@ -46,8 +46,8 @@ func TestPrepareOpaqueClientToolsAndProtocolReferences(t *testing.T) {
 					}
 				}
 				encoded, _ := Marshal(payload)
-				if !bytes.Contains(encoded, []byte(`"const":9007199254740993`)) || !bytes.Contains(encoded, []byte("Keep this description")) {
-					t.Fatalf("description or schema changed: %s", encoded)
+				if !bytes.Contains(encoded, []byte(`"const":9007199254740993`)) || !bytes.Contains(encoded, []byte("Keep\u00a0this\u00a0description")) {
+					t.Fatalf("description conversion or schema preservation failed: %s", encoded)
 				}
 				choice := payload["tool_choice"].(map[string]any)
 				var historyName, argumentName, result string

@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -98,12 +97,9 @@ func TestOpenCodeV2FreeBodyPreservesClientOptions(t *testing.T) {
 			t.Errorf("%s did not default to strict:false", tool.Function.Name)
 		}
 		if tool.Function.Name == "shell" {
-			want := "on Linux using bash"
-			if runtime.GOOS == "windows" {
-				want = "on Windows using powershell"
-			}
+			want := "in the client's shell environment"
 			if !strings.Contains(tool.Function.Description, want) {
-				t.Errorf("shell description does not match host: %q", tool.Function.Description)
+				t.Errorf("shell description assumes a host platform: %q", tool.Function.Description)
 			}
 		}
 	}

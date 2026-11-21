@@ -18,6 +18,7 @@ import (
 
 	"apishare/internal/agentpurge"
 	"apishare/internal/cliproxy"
+	"apishare/internal/opencodecompat"
 	"github.com/gin-gonic/gin"
 )
 
@@ -926,7 +927,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	}
 	var freeShaped bool
 	var freeTools openCodeToolCompatibility
-	reqBody, freeShaped, err = up.shapeOpenCodeFreeRequest(reqBody, wireFormat, upModel, &freeTools)
+	reqBody, freeShaped, err = up.shapeOpenCodeFreeRequestFrom(reqBody, wireFormat, upModel, &opencodecompat.EnvironmentSource{Body: task.body, Protocol: opencodecompat.Protocol(task.format)}, &freeTools)
 	if err != nil {
 		info.Status = http.StatusBadRequest
 		return info, false, &protocolConversionError{err}
