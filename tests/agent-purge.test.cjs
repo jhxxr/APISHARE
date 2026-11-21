@@ -36,7 +36,7 @@ function personalConsole(overrides = {}) {
     },
   });
   const source = read("cmd/apishare/web/public/user.js");
-  vm.runInContext(source.slice(source.indexOf("  async function loadAgentPurgeSettings("), source.indexOf("  async function loadUserRouterAndByok(")), context);
+  vm.runInContext(source.slice(source.indexOf("  async function loadAgentPurgeSettings("), source.indexOf("  function bindEvents(")), context);
   vm.runInContext("renderAgentPurgeSettings()", context);
   return { $, context, view, requests, notices };
 }

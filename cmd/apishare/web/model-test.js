@@ -25,6 +25,10 @@ function modelTestCachedCatalog(upstream) {
 function openModelTest(id) {
   const upstream = upsCache.find((item) => item.id === id);
   if (!upstream) return;
+  if (!upstreamFormatNames[upstreamFormat(upstream)]) {
+    toast("原渠道类型已移除，请先编辑为支持的类型");
+    return;
+  }
   // A dialog left open for another upstream must not deliver its catalog here.
   modelTest.probeController?.abort();
   modelTest.probeController = null;
@@ -34,13 +38,6 @@ function openModelTest(id) {
   if (!mapping || Array.isArray(mapping) || typeof mapping !== "object") mapping = {};
   modelTest.mapping = mapping;
   modelTest.configured = uniqueModelNames([...parseAllowlist(upstream.models), ...Object.keys(mapping)]);
-  if (!modelTest.configured.length && (upstream.type === "openrouter" || upstream.type === "systemone" || upstream.type === "cloudflare")) {
-    modelTest.configured = upstream.type === "cloudflare"
-      ? ["@cf/cloudflare/clef-flash", "@cf/cloudflare/clef"]
-      : upstream.type === "openrouter"
-        ? ["parallel/decisions-fast:free", "parallel/decisions-fast"]
-        : ["jev", "Julia-1", "parallel/decisions-fast:free"];
-  }
   const cached = modelTestCachedCatalog(upstream);
   modelTest.fetched = cached.models;
   modelTest.selected = modelTest.configured[0] || modelTest.fetched[0] || "";

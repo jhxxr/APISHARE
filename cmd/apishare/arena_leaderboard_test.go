@@ -66,7 +66,7 @@ func TestArenaDailySchedule(t *testing.T) {
 			t.Fatalf("%s: next sync %s, want %s", tc.now, got, tc.want)
 		}
 	}
-	setupAutoRouterTestDB(t)
+	gatewayTestDB(t)
 	board, _ := findArenaBoard("text")
 	setArenaFixture(t, "text", []arenaModel{{Rank: 1, Model: "cached", Score: 1500}})
 	// A fresh daily cache prevents even constructing a remote request.
@@ -78,7 +78,7 @@ func TestArenaDailySchedule(t *testing.T) {
 }
 
 func TestArenaFetchAndPersistentFallback(t *testing.T) {
-	setupAutoRouterTestDB(t)
+	gatewayTestDB(t)
 	blob := arenaTestParquet(t, []arenaDatasetRow{{ModelName: "Example", Rating: arenaFloat(1450), Rank: arenaRank(1), Category: "overall", PublishDate: "2026-11-09"}})
 	status := http.StatusOK
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

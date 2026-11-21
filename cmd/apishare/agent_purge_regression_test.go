@@ -22,7 +22,9 @@ func TestAgentPurgeLongTemplateBudget(t *testing.T) {
 	if !changed {
 		t.Fatal("long original template was not selected")
 	}
-	task := &relayTask{modelContextLimits: map[string]int{model: 4096}}
+	resetModelLimitsForTest(t)
+	recordProbedModelLimits(model, 4096, 0)
+	task := &relayTask{}
 	_, err := boundAgentPurgeBody(body, FormatOpenAIChat, model, task)
 	var budget *agentPurgeBudgetError
 	if !errors.As(err, &budget) || budget.Input <= budget.Limit {
@@ -67,6 +69,8 @@ func TestAgentPurgeRegressionReplaceReintroducesEmptySystemBlock(t *testing.T) {
 func TestAgentPurgeRegressionDeepSeekContextLimitAfterInjection(t *testing.T) {
 	const model = "deepseek-v4.1-flash"
 	const contextLimit = 4096
+	resetModelLimitsForTest(t)
+	recordProbedModelLimits(model, contextLimit, 0)
 	body := []byte(fmt.Sprintf(`{"model":%q,"max_tokens":2048,"messages":[{"role":"user","content":%q}]}`, model, strings.Repeat("a", 12000)))
 	cr, err := parseClientRequest(FormatOpenAIChat, body, "")
 	if err != nil {
@@ -88,8 +92,8 @@ func TestAgentPurgeRegressionDeepSeekContextLimitAfterInjection(t *testing.T) {
 	defer server.Close()
 	pair := []agentPurgePair{{Model: model, UpstreamID: 7}}
 	task := &relayTask{format: FormatOpenAIChat, endpoint: "/v1/chat/completions", model: model, body: body, canon: cr,
-		candidateRawModel: model + "(high)", estimatedInputTokens: before, modelContextLimits: map[string]int{model: contextLimit},
-		userSub: "review-user", client: &requestClientState{identity: detectRequestClient(http.Header{"User-Agent": {"codex_cli_rs/1.2.3"}})},
+		requestedModel: model + "(high)",
+		userSub:        "review-user", client: &requestClientState{identity: detectRequestClient(http.Header{"User-Agent": {"codex_cli_rs/1.2.3"}})},
 		agentPurgeState: &agentPurgeRequestState{policy: agentPurgePolicy{Enabled: true, Pairs: pair}, user: userAgentPurgeConfig{Enabled: true, Mode: "append", Pairs: pair, Clients: []string{"codex"}}},
 	}
 	rec := httptest.NewRecorder()

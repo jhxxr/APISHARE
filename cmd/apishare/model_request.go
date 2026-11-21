@@ -1,9 +1,7 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"regexp"
@@ -12,12 +10,7 @@ import (
 	"sync"
 )
 
-var errAutoRouterModelIncompatible = errors.New("auto-router candidate model incompatible with request")
-
-// routerModelSpec represents a parsed candidate model entry in Auto-Router tiers,
-// supporting inline thinking effort/budget and context window overrides such as
-// "gpt-5.2(high)", "claude-sonnet-4-5(4096)", "deepseek-chat(none,64k)", etc.
-type routerModelSpec struct {
+type modelRequestSpec struct {
 	Raw          string
 	BaseModel    string
 	Thinking     string // "", "auto", "keep", "none", "minimal", "low", "medium", "high", "xhigh", "max", "adaptive", "enabled"
@@ -25,9 +18,9 @@ type routerModelSpec struct {
 	ContextLimit int    // >0 when explicit context window limit is specified
 }
 
-func parseRouterModelSpec(raw string) routerModelSpec {
+func parseModelRequestSpec(raw string) modelRequestSpec {
 	trimmed := strings.TrimSpace(raw)
-	spec := routerModelSpec{
+	spec := modelRequestSpec{
 		Raw:       trimmed,
 		BaseModel: trimmed,
 	}
@@ -78,7 +71,7 @@ func parseRouterModelSpec(raw string) routerModelSpec {
 		}
 		if strings.HasPrefix(t, "think=") || strings.HasPrefix(t, "think:") || strings.HasPrefix(t, "thinking=") || strings.HasPrefix(t, "thinking:") || strings.HasPrefix(t, "effort=") || strings.HasPrefix(t, "effort:") {
 			valStr := t[strings.IndexAny(t, "=:"):][1:]
-			if norm := normalizeCandidateThinkingToken(valStr); norm != "" {
+			if norm := normalizeModelThinkingToken(valStr); norm != "" {
 				thinking = norm
 				recognized = true
 				continue
@@ -90,7 +83,7 @@ func parseRouterModelSpec(raw string) routerModelSpec {
 				continue
 			}
 		}
-		if norm := normalizeCandidateThinkingToken(t); norm != "" {
+		if norm := normalizeModelThinkingToken(t); norm != "" {
 			thinking = norm
 			recognized = true
 			continue
@@ -120,7 +113,7 @@ func parseRouterModelSpec(raw string) routerModelSpec {
 	return spec
 }
 
-func normalizeCandidateThinkingToken(raw string) string {
+func normalizeModelThinkingToken(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "auto", "default":
 		return "auto"
@@ -147,35 +140,6 @@ func normalizeCandidateThinkingToken(raw string) string {
 	default:
 		return ""
 	}
-}
-
-func normalizeTierThinkingPolicy(raw string) string {
-	norm := normalizeCandidateThinkingToken(raw)
-	if norm == "" {
-		return "auto"
-	}
-	return norm
-}
-
-func defaultTierThinkingMap() map[string]string {
-	return map[string]string{
-		TierSimple:    "auto",
-		TierMedium:    "auto",
-		TierComplex:   "auto",
-		TierReasoning: "auto",
-	}
-}
-
-func normalizeTierThinkingMap(in map[string]string) map[string]string {
-	out := defaultTierThinkingMap()
-	for _, tier := range allRouterTiers {
-		if v, ok := in[tier]; ok {
-			out[tier] = normalizeTierThinkingPolicy(v)
-		} else if v, ok := in[strings.ToLower(tier)]; ok {
-			out[tier] = normalizeTierThinkingPolicy(v)
-		}
-	}
-	return out
 }
 
 func parseTokenCountSpec(raw string) int {
@@ -205,27 +169,19 @@ func parseTokenCountSpec(raw string) int {
 	return 0
 }
 
-func canonicalModelIdent(model string) string {
-	s := protocolModelName(model)
-	return strings.ReplaceAll(s, ".", "-")
-}
-
-// Upstream & ApiKey helpers that transparently match both the raw candidate
-// string and its stripped BaseModel when an inline spec like "gpt-5.2(high)" is used.
-
-func servesRouterCandidate(u *Upstream, raw string) bool {
+func servesModelRequest(u *Upstream, raw string) bool {
 	if u == nil {
 		return false
 	}
 	if u.servesModel(raw) {
 		return true
 	}
-	spec := parseRouterModelSpec(raw)
+	spec := parseModelRequestSpec(raw)
 	return spec.BaseModel != "" && spec.BaseModel != raw && u.servesModel(spec.BaseModel)
 }
 
-func resolveUpstreamCandidateModel(u *Upstream, raw string) string {
-	spec := parseRouterModelSpec(raw)
+func resolveModelRequest(u *Upstream, raw string) string {
+	spec := parseModelRequestSpec(raw)
 	if u != nil && u.servesModel(raw) {
 		return raw
 	}
@@ -235,80 +191,6 @@ func resolveUpstreamCandidateModel(u *Upstream, raw string) string {
 	return raw
 }
 
-func pickUpstreamForRouterCandidate(format clientFormat, rawCandidate string, tried map[int64]bool, nativeOnly bool, cr *canonReq) (*Upstream, string, error) {
-	up, err := pickUpstream(format, rawCandidate, tried, nativeOnly, cr)
-	if err == nil {
-		return up, rawCandidate, nil
-	}
-	spec := parseRouterModelSpec(rawCandidate)
-	if spec.BaseModel != "" && spec.BaseModel != rawCandidate {
-		up2, err2 := pickUpstream(format, spec.BaseModel, tried, nativeOnly, cr)
-		if err2 == nil {
-			return up2, spec.BaseModel, nil
-		}
-		return nil, spec.BaseModel, err2
-	}
-	return nil, rawCandidate, err
-}
-
-func splitRouterModelList(raw string) []string {
-	var out []string
-	var buf strings.Builder
-	depth := 0
-	for _, r := range raw {
-		switch r {
-		case '(':
-			depth++
-			buf.WriteRune(r)
-		case ')':
-			if depth > 0 {
-				depth--
-			}
-			buf.WriteRune(r)
-		case ',', '，', '\n', '\r':
-			if depth == 0 {
-				if s := strings.TrimSpace(buf.String()); s != "" {
-					out = append(out, s)
-				}
-				buf.Reset()
-				continue
-			}
-			buf.WriteRune(r)
-		default:
-			buf.WriteRune(r)
-		}
-	}
-	if s := strings.TrimSpace(buf.String()); s != "" {
-		out = append(out, s)
-	}
-	return out
-}
-
-func allowsRouterCandidate(ak ApiKey, raw string) bool {
-	if ak.ID == 0 {
-		return true
-	}
-	if ak.allowsModel(raw) {
-		return true
-	}
-	spec := parseRouterModelSpec(raw)
-	return spec.BaseModel != "" && spec.BaseModel != raw && ak.allowsModel(spec.BaseModel)
-}
-
-func routerCandidateQuotaExhausted(ak ApiKey, virtualModel, raw string) bool {
-	if ak.allowsModel(raw) {
-		return autoRouterCandidateQuotaExhausted(ak, virtualModel, raw)
-	}
-	spec := parseRouterModelSpec(raw)
-	if spec.BaseModel != "" && spec.BaseModel != raw {
-		return autoRouterCandidateQuotaExhausted(ak, virtualModel, spec.BaseModel)
-	}
-	return autoRouterCandidateQuotaExhausted(ak, virtualModel, raw)
-}
-
-// estimateRequestContextTokens estimates the total input token footprint of a
-// canonical request across system prompt, conversation history, tool calls/results,
-// reasoning history, tool definitions, and media blocks.
 func estimateRequestContextTokens(cr *canonReq) int {
 	if cr == nil {
 		return 0
@@ -473,7 +355,7 @@ func learnModelLimitFromErrorBody(model string, status int, body []byte) (learne
 	if status != 400 && status != 413 && status != 422 {
 		return 0, 0
 	}
-	spec := parseRouterModelSpec(model)
+	spec := parseModelRequestSpec(model)
 	base := strings.TrimSpace(spec.BaseModel)
 	if base == "" || len(body) == 0 {
 		return 0, 0
@@ -497,14 +379,14 @@ func learnModelLimitFromErrorBody(model string, status int, body []byte) (learne
 	}
 	if learnedCtx > 0 || learnedMaxOut > 0 {
 		recordLearnedModelLimits(base, learnedCtx, learnedMaxOut)
-		log.Printf("[auto-router] learned token limits for model=%s from HTTP %d error: context=%d max_output=%d",
+		log.Printf("[model-limits] learned token limits for model=%s from HTTP %d error: context=%d max_output=%d",
 			base, status, learnedCtx, learnedMaxOut)
 	}
 	return learnedCtx, learnedMaxOut
 }
 
 // effectiveModelContextLimit returns the maximum context window (in tokens) for
-// a candidate model, checking inline spec overrides, admin config overrides,
+// a model, checking explicit model options and supplied context limits,
 // runtime error-learned limits, upstream /v1/models probed limits, LiteLLM catalog
 // synced limits, model name suffixes, and built-in model family profiles.
 func effectiveModelContextLimit(rawModel string, customLimits map[string]int) int {
@@ -513,7 +395,7 @@ func effectiveModelContextLimit(rawModel string, customLimits map[string]int) in
 }
 
 func effectiveModelContextLimitWithSource(rawModel string, customLimits map[string]int) (int, string) {
-	spec := parseRouterModelSpec(rawModel)
+	spec := parseModelRequestSpec(rawModel)
 	if spec.ContextLimit > 0 {
 		return spec.ContextLimit, "spec"
 	}
@@ -550,7 +432,7 @@ func modelMaxOutputLimit(rawModel string) int {
 }
 
 func modelMaxOutputLimitWithSource(rawModel string) (int, string) {
-	spec := parseRouterModelSpec(rawModel)
+	spec := parseModelRequestSpec(rawModel)
 	base := strings.TrimSpace(spec.BaseModel)
 	if base == "" {
 		return 16384, "builtin"
@@ -689,7 +571,8 @@ func builtinModelContextAndOutputLimits(model string) (contextLimit int, maxOutp
 }
 
 // modelThinkingProfile describes how a target model supports reasoning/thinking
-// so Auto-Router can adapt or strip thinking parameters across heterogeneous models.
+// for explicit model options across supported provider formats.
+
 type modelThinkingProfile struct {
 	SupportsThinking        bool
 	Efforts                 []string
@@ -705,7 +588,7 @@ type modelThinkingProfile struct {
 }
 
 func classifyModelThinkingCapability(up *Upstream, rawModel string) modelThinkingProfile {
-	spec := parseRouterModelSpec(rawModel)
+	spec := parseModelRequestSpec(rawModel)
 	base := strings.TrimSpace(spec.BaseModel)
 	if base == "" {
 		return modelThinkingProfile{}
@@ -877,39 +760,36 @@ func classifyModelThinkingCapability(up *Upstream, rawModel string) modelThinkin
 	}
 }
 
-// autoRouterThinkingPlan describes the resolved thinking configuration for a
-// specific candidate model and routing tier.
-type autoRouterThinkingPlan struct {
+// modelThinkingPlan describes explicit options supplied in the model name.
+type modelThinkingPlan struct {
 	StripAll        bool   // Remove all thinking/reasoning parameters
 	DisableExplicit bool   // Explicitly send disabled thinking config if needed
 	Effort          string // Resolved effort level ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 	ThinkingMode    string // "", "adaptive", "enabled", "disabled"
 	ThinkingBudget  int    // Resolved token budget (>0 when fixed budget is used)
-	EffectiveLabel  string // Human-readable summary for dry-run / headers / logs
+	EffectiveLabel  string // Explicit directive; empty/default preserves client parameters
 }
 
-func resolveAutoRouterThinking(
+func resolveModelThinking(
 	up *Upstream,
 	targetModel string,
-	sourceTier string,
-	rawCandidate string,
-	tierPolicy string,
-	cause string,
+	rawModel string,
 	cr *canonReq,
-) autoRouterThinkingPlan {
+) modelThinkingPlan {
+	spec := parseModelRequestSpec(rawModel)
+	if spec.BudgetTokens == 0 && (spec.Thinking == "" || spec.Thinking == "auto" || spec.Thinking == "keep") {
+		return modelThinkingPlan{EffectiveLabel: "default"}
+	}
 	if strings.TrimSpace(targetModel) == "" {
-		targetModel = rawCandidate
+		targetModel = rawModel
 	}
 	profile := classifyModelThinkingCapability(up, targetModel)
 	if !profile.SupportsThinking {
-		return autoRouterThinkingPlan{
+		return modelThinkingPlan{
 			StripAll:       true,
 			EffectiveLabel: "none",
 		}
 	}
-
-	spec := parseRouterModelSpec(rawCandidate)
-	policy := normalizeTierThinkingPolicy(tierPolicy)
 
 	var clientEffort string
 	var clientMode string
@@ -937,47 +817,13 @@ func resolveAutoRouterThinking(
 		directive = "enabled"
 		desiredBudget = spec.BudgetTokens
 		explicitConfig = true
-	case policy != "" && policy != "auto":
-		directive = policy
-		explicitConfig = true
 	default:
-		// "auto" policy: combine client hints with 2D Adaptive Test-Time Compute Scaling
-		if strings.HasPrefix(cause, "housekeeping") || strings.HasPrefix(cause, "short_circuit") {
-			directive = "none"
-		} else if clientMode == "disabled" || clientEffort == "none" {
-			directive = "none"
-		} else if clientSentThinking {
-			directive, desiredBudget = adaptClientThinkingForTier(sourceTier, clientEffort, clientMode, clientBudget)
-			if strings.Contains(cause, "retry_escalated") || (isFastLightweightModel(targetModel) && (sourceTier == TierComplex || sourceTier == TierReasoning)) {
-				directive = stepUpEffort(directive)
-				if desiredBudget > 0 {
-					desiredBudget = desiredBudget * 3 / 2
-				}
-			}
-		} else if strings.Contains(cause, "retry_escalated") {
-			// User reported error/retry: proactively activate deep thinking even if client omitted reasoning_effort
-			directive = "high"
-			if sourceTier == TierReasoning {
-				directive = "xhigh"
-			}
-		} else if isFastLightweightModel(targetModel) && (sourceTier == TierComplex || sourceTier == TierReasoning) {
-			// Small-model deep-thinking compensation: when a lightweight model serves COMPLEX/REASONING,
-			// automatically enable medium/high thinking to compensate for smaller parameter count.
-			if sourceTier == TierReasoning {
-				directive = "high"
-			} else {
-				directive = "medium"
-			}
-		} else {
-			return autoRouterThinkingPlan{
-				EffectiveLabel: "default",
-			}
-		}
+		return modelThinkingPlan{EffectiveLabel: "default"}
 	}
 
 	if directive == "keep" {
 		if !clientSentThinking {
-			return autoRouterThinkingPlan{EffectiveLabel: "default"}
+			return modelThinkingPlan{EffectiveLabel: "default"}
 		}
 		if clientMode == "disabled" || clientEffort == "none" {
 			directive = "none"
@@ -1001,7 +847,7 @@ func resolveAutoRouterThinking(
 			if minB <= 0 {
 				minB = 128
 			}
-			return autoRouterThinkingPlan{
+			return modelThinkingPlan{
 				ThinkingMode:   "enabled",
 				ThinkingBudget: minB,
 				EffectiveLabel: fmt.Sprintf("budget:%d", minB),
@@ -1009,14 +855,14 @@ func resolveAutoRouterThinking(
 		}
 		if explicitConfig {
 			if containsEffort(profile.Efforts, "none") {
-				return autoRouterThinkingPlan{
+				return modelThinkingPlan{
 					DisableExplicit: true,
 					Effort:          "none",
 					EffectiveLabel:  "none",
 				}
 			}
 			if profile.GeminiUseThinkingBudget && profile.GeminiCanDisable {
-				return autoRouterThinkingPlan{
+				return modelThinkingPlan{
 					DisableExplicit: true,
 					Effort:          "none",
 					ThinkingMode:    "disabled",
@@ -1025,7 +871,7 @@ func resolveAutoRouterThinking(
 				}
 			}
 		}
-		return autoRouterThinkingPlan{
+		return modelThinkingPlan{
 			StripAll:       true,
 			EffectiveLabel: "none",
 		}
@@ -1039,14 +885,14 @@ func resolveAutoRouterThinking(
 		} else if desiredBudget > 0 {
 			desiredEffort = budgetToEffort(desiredBudget)
 		} else {
-			desiredEffort = defaultEffortForTier(sourceTier)
+			desiredEffort = "high"
 		}
 	}
 	if desiredBudget <= 0 {
 		if clientBudget > 0 && !explicitConfig {
 			desiredBudget = clientBudget
 		} else {
-			desiredBudget = effortToBudgetTokens(desiredEffort, sourceTier)
+			desiredBudget = explicitThinkingBudget(desiredEffort)
 		}
 	}
 
@@ -1057,7 +903,7 @@ func resolveAutoRouterThinking(
 		if matchedEffort == "" {
 			matchedEffort = "high"
 		}
-		return autoRouterThinkingPlan{
+		return modelThinkingPlan{
 			Effort:         matchedEffort,
 			ThinkingMode:   "adaptive",
 			ThinkingBudget: 0,
@@ -1075,7 +921,7 @@ func resolveAutoRouterThinking(
 		if profile.AnthropicSupportsEffort && matchedEffort != "" {
 			eff = matchedEffort
 		}
-		return autoRouterThinkingPlan{
+		return modelThinkingPlan{
 			Effort:         eff,
 			ThinkingMode:   "enabled",
 			ThinkingBudget: budget,
@@ -1092,7 +938,7 @@ func resolveAutoRouterThinking(
 		if profile.GeminiMaxBudget > 0 && budget > profile.GeminiMaxBudget {
 			budget = profile.GeminiMaxBudget
 		}
-		return autoRouterThinkingPlan{
+		return modelThinkingPlan{
 			Effort:         "",
 			ThinkingMode:   "enabled",
 			ThinkingBudget: budget,
@@ -1105,7 +951,7 @@ func resolveAutoRouterThinking(
 		if matchedEffort == "" {
 			matchedEffort = "medium"
 		}
-		return autoRouterThinkingPlan{
+		return modelThinkingPlan{
 			Effort:         matchedEffort,
 			ThinkingMode:   "adaptive",
 			ThinkingBudget: 0,
@@ -1117,115 +963,11 @@ func resolveAutoRouterThinking(
 	if matchedEffort == "" {
 		matchedEffort = "medium"
 	}
-	return autoRouterThinkingPlan{
+	return modelThinkingPlan{
 		Effort:         matchedEffort,
 		ThinkingMode:   "",
 		ThinkingBudget: 0,
 		EffectiveLabel: matchedEffort,
-	}
-}
-
-func adaptClientThinkingForTier(tier, clientEffort, clientMode string, clientBudget int) (string, int) {
-	eff := clientEffort
-	if eff == "" {
-		if clientBudget > 0 {
-			eff = budgetToEffort(clientBudget)
-		} else {
-			eff = defaultEffortForTier(tier)
-		}
-	}
-	budget := clientBudget
-
-	switch strings.ToUpper(strings.TrimSpace(tier)) {
-	case TierSimple:
-		if effortRank(eff) > effortRank("low") {
-			eff = "low"
-		}
-		if budget > 1024 {
-			budget = 1024
-		} else if budget <= 0 {
-			budget = 1024
-		}
-	case TierMedium:
-		if effortRank(eff) > effortRank("medium") {
-			eff = "medium"
-		}
-		if budget > 4096 {
-			budget = 4096
-		} else if budget <= 0 {
-			budget = 4096
-		}
-	case TierReasoning:
-		if effortRank(eff) < effortRank("high") {
-			eff = "high"
-		}
-		if budget > 0 && budget < 8192 {
-			budget = 8192
-		}
-	default: // COMPLEX or DEFAULT
-		if budget <= 0 {
-			budget = effortToBudgetTokens(eff, tier)
-		}
-	}
-	return eff, budget
-}
-
-func defaultEffortForTier(tier string) string {
-	switch strings.ToUpper(strings.TrimSpace(tier)) {
-	case TierSimple:
-		return "low"
-	case TierMedium:
-		return "medium"
-	case TierReasoning:
-		return "high"
-	default:
-		return "high"
-	}
-}
-
-func effortRank(effort string) int {
-	switch strings.ToLower(strings.TrimSpace(effort)) {
-	case "none":
-		return 0
-	case "minimal":
-		return 1
-	case "low":
-		return 2
-	case "medium":
-		return 3
-	case "high":
-		return 4
-	case "xhigh":
-		return 5
-	case "max":
-		return 6
-	default:
-		return 3
-	}
-}
-
-func effortToBudgetTokens(effort, tier string) int {
-	switch strings.ToLower(strings.TrimSpace(effort)) {
-	case "minimal":
-		return 1024
-	case "low":
-		if strings.EqualFold(tier, TierSimple) {
-			return 1024
-		}
-		return 2048
-	case "medium":
-		return 4096
-	case "high":
-		if strings.EqualFold(tier, TierReasoning) {
-			return 16384
-		}
-		return 8192
-	case "xhigh":
-		return 24576
-	case "max":
-		return 31999
-	default:
-		return 4096
 	}
 }
 
@@ -1293,6 +1035,7 @@ func matchSupportedEffort(desired string, supported []string) string {
 
 // computeClampedMaxTokens returns the safe max_tokens value for targetModel
 // given the client's requestedMaxTokens and estimatedInputTokens.
+
 func computeClampedMaxTokens(targetModel string, requestedMaxTokens, estimatedInputTokens int, customLimits map[string]int) int {
 	if requestedMaxTokens <= 0 {
 		return 0
@@ -1313,589 +1056,7 @@ func computeClampedMaxTokens(targetModel string, requestedMaxTokens, estimatedIn
 	return requestedMaxTokens
 }
 
-func isFastLightweightModel(rawModel string) bool {
-	base := protocolModelName(parseRouterModelSpec(rawModel).BaseModel)
-	for _, kw := range []string{"flash", "mini", "haiku", "lite", "turbo", "nano", "instant", "8b", "7b"} {
-		if strings.Contains(base, kw) {
-			return true
-		}
-	}
-	return false
-}
-
-func stepUpEffort(effort string) string {
-	switch strings.ToLower(strings.TrimSpace(effort)) {
-	case "", "none", "minimal":
-		return "low"
-	case "low":
-		return "medium"
-	case "medium":
-		return "high"
-	case "high":
-		return "xhigh"
-	case "xhigh", "max":
-		return "max"
-	default:
-		return "high"
-	}
-}
-
-// modelSupportsRequestModalities checks whether a candidate model supports
-// modalities required by the request (such as Vision/Multimodal or Tool Calling).
-func modelSupportsRequestModalities(rawModel string, sig routerRequestSignals) (bool, string) {
-	base := protocolModelName(parseRouterModelSpec(rawModel).BaseModel)
-	if base == "" {
-		return true, ""
-	}
-	if sig.HasVision {
-		// Pure text / pure reasoning models without vision support
-		if strings.HasPrefix(base, "deepseek-reasoner") ||
-			strings.HasPrefix(base, "deepseek-r1") ||
-			strings.HasPrefix(base, "deepseek-chat") ||
-			strings.HasPrefix(base, "deepseek-v3") ||
-			strings.HasPrefix(base, "deepseek-coder") ||
-			strings.HasPrefix(base, "qwq") ||
-			strings.HasPrefix(base, "o1-mini") ||
-			strings.HasPrefix(base, "o1-preview") ||
-			strings.HasPrefix(base, "o3-mini") ||
-			strings.HasPrefix(base, "glm-z1") {
-			return false, "vision_unsupported"
-		}
-	}
-	if sig.HasTools {
-		if strings.HasPrefix(base, "o1-mini") || strings.HasPrefix(base, "o1-preview") {
-			return false, "tools_unsupported"
-		}
-	}
-	return true, ""
-}
-
-// effectiveContextCapacityForRequest computes the usable input token ceiling for
-// a model by reserving output + thinking headroom when context size is non-trivial.
-func effectiveContextCapacityForRequest(ctxLimit int, estimatedInputTokens int) int {
-	if ctxLimit <= 0 {
-		return 0
-	}
-	if estimatedInputTokens <= 4096 || ctxLimit < 8192 {
-		return ctxLimit
-	}
-	reserve := ctxLimit / 16
-	if reserve > 4096 {
-		reserve = 4096
-	} else if reserve < 512 {
-		reserve = 512
-	}
-	return ctxLimit - reserve
-}
-
-// compressCanonReqToFitContext performs loss-minimizing middle-out compression
-// when a multi-turn conversation exceeds the target model's context ceiling:
-//  1. Truncates oversized historical tool_result outputs (older than the last 4 messages).
-//  2. If still over capacity, drops middle conversation turns while keeping the initial
-//     user goal, recent turns, and tool_use/tool_result pair integrity.
-func compressCanonReqToFitContext(cr *canonReq, ctxLimit int) bool {
-	if cr == nil || ctxLimit <= 0 || len(cr.Messages) <= 2 {
-		return false
-	}
-	targetInput := ctxLimit - 2048
-	if targetInput < ctxLimit*3/4 {
-		targetInput = ctxLimit * 3 / 4
-	}
-	if estimateRequestContextTokens(cr) <= targetInput {
-		return false
-	}
-
-	msgs := make([]canonMsg, len(cr.Messages))
-	copy(msgs, cr.Messages)
-	changed := false
-
-	// Phase 1: Compress oversized historical tool_result outputs (older than last 4 messages)
-	safeTailStart := len(msgs) - 4
-	if safeTailStart < 1 {
-		safeTailStart = 1
-	}
-	for i := 0; i < safeTailStart; i++ {
-		m := &msgs[i]
-		if (m.ToolID != "" || m.ToolName != "") && len(m.Text) > 1200 {
-			m.Text = m.Text[:600] + "\n...[auto-router compressed historical tool output]...\n" + m.Text[len(m.Text)-400:]
-			changed = true
-		}
-		if len(m.Parts) > 0 {
-			parts := make([]canonPart, len(m.Parts))
-			copy(parts, m.Parts)
-			for j := range parts {
-				if parts[j].Kind == "tool_result" && len(parts[j].Text) > 1200 {
-					t := parts[j].Text
-					parts[j].Text = t[:600] + "\n...[auto-router compressed historical tool output]...\n" + t[len(t)-400:]
-					changed = true
-				}
-			}
-			m.Parts = parts
-		}
-	}
-	cr.Messages = msgs
-	if estimateRequestContextTokens(cr) <= targetInput {
-		return changed
-	}
-
-	// Phase 2: Middle-out sliding window (preserve message[0] and the latest tail that fits,
-	// never starting the tail on an orphan tool_result message).
-	for dropEnd := 2; dropEnd < len(msgs)-2; dropEnd++ {
-		// Do not start the kept tail right on a tool_result turn without its preceding assistant tool_use
-		tailMsg := msgs[dropEnd]
-		isOrphanToolResult := tailMsg.ToolID != "" || tailMsg.ToolName != ""
-		if !isOrphanToolResult {
-			for _, p := range tailMsg.Parts {
-				if p.Kind == "tool_result" {
-					isOrphanToolResult = true
-					break
-				}
-			}
-		}
-		if isOrphanToolResult {
-			continue
-		}
-		candidate := make([]canonMsg, 0, 1+len(msgs)-dropEnd)
-		candidate = append(candidate, msgs[0])
-		candidate = append(candidate, msgs[dropEnd:]...)
-		cr.Messages = candidate
-		changed = true
-		if estimateRequestContextTokens(cr) <= targetInput {
-			break
-		}
-	}
-	return changed
-}
-
-func isRecoverableAutoRouterConversionError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "thinking") ||
-		strings.Contains(msg, "reasoning") ||
-		strings.Contains(msg, "budget") ||
-		strings.Contains(msg, "context_management") ||
-		strings.Contains(msg, "includethoughts") ||
-		strings.Contains(msg, "output_config")
-}
-
-// adaptAutoRouterCanonReq adapts a canonical request (used when converting between
-// wire formats) for the selected candidate model's context window, multi-turn
-// history compatibility, and thinking capability.
-func adaptAutoRouterCanonReq(cr *canonReq, wireFormat clientFormat, up *Upstream, upModel string, task *relayTask, effortLevels []string) {
-	if cr == nil || task == nil {
-		return
-	}
-
-	// 0. If request tokens exceed target model's context window, perform middle-out compression
-	targetCtxLimit := effectiveModelContextLimit(upModel, task.modelContextLimits)
-	if compressCanonReqToFitContext(cr, targetCtxLimit) {
-		task.estimatedInputTokens = estimateRequestContextTokens(cr)
-	}
-
-	plan := resolveAutoRouterThinking(
-		up,
-		upModel,
-		task.sourceTier,
-		task.candidateRawModel,
-		task.tierThinkingPolicy,
-		task.routerCause(),
-		cr,
-	)
-
-	if isRecoverableAutoRouterConversionError(cr.ConversionError) {
-		cr.ConversionError = nil
-	}
-
-	// 1. Multi-turn cross-model history sanitization
-	sameModelAndUpstream := task.prevUpstreamID != 0 &&
-		task.prevUpstreamID == up.ID &&
-		strings.EqualFold(task.prevUpstreamModel, upModel)
-	thinkingActive := !plan.StripAll && plan.Effort != "none" && plan.ThinkingMode != "disabled"
-
-	if !sameModelAndUpstream || !thinkingActive {
-		sanitized := make([]canonMsg, len(cr.Messages))
-		copy(sanitized, cr.Messages)
-		for i := range sanitized {
-			msg := &sanitized[i]
-			msg.ReasoningIDs = nil
-			msg.ReasoningItems = nil
-			if msg.Role == "assistant" && msg.Reasoning != "" {
-				if strings.TrimSpace(msg.Text) == "" && len(msg.Parts) == 0 && len(msg.Calls) == 0 {
-					msg.Text = msg.Reasoning
-					msg.Parts = []canonPart{{Kind: "text", Text: msg.Reasoning}}
-				}
-				msg.Reasoning = ""
-			}
-		}
-		cr.Messages = sanitized
-	}
-
-	// 2. Apply thinking plan to canonical request
-	switch {
-	case plan.StripAll:
-		cr.ReasoningEffort = ""
-		cr.ThinkingMode = ""
-		cr.ThinkingBudget = nil
-	case plan.DisableExplicit:
-		cr.ReasoningEffort = plan.Effort
-		cr.ThinkingMode = plan.ThinkingMode
-		cr.ThinkingBudget = nil
-	case plan.EffectiveLabel != "" && plan.EffectiveLabel != "default":
-		cr.ReasoningEffort = plan.Effort
-		cr.ThinkingMode = plan.ThinkingMode
-		if plan.ThinkingBudget > 0 {
-			b := plan.ThinkingBudget
-			cr.ThinkingBudget = &b
-		} else {
-			cr.ThinkingBudget = nil
-		}
-	default:
-		if len(effortLevels) > 0 {
-			cr.ReasoningEffort = mapReasoningEffort(protocolReasoningEffort(wireFormat, cr), effortLevels)
-		}
-	}
-
-	// Ensure applyProtocolThinking compatibility for target wireFormat
-	switch wireFormat {
-	case FormatGemini:
-		if cr.ThinkingBudget != nil {
-			cr.ReasoningEffort = ""
-		} else if cr.ReasoningEffort != "" && cr.ReasoningEffort != "none" {
-			levels := geminiThinkingLevels(protocolModelName(upModel))
-			if len(levels) == 0 {
-				cr.ReasoningEffort = ""
-			} else {
-				cr.ReasoningEffort = matchSupportedEffort(cr.ReasoningEffort, levels)
-			}
-		}
-	case FormatAnthropic:
-		if !supportsAnthropicFixedBudget(protocolModelName(upModel)) {
-			cr.ThinkingBudget = nil
-			if cr.ThinkingMode == "enabled" {
-				if supportsAnthropicAdaptive(protocolModelName(upModel)) {
-					cr.ThinkingMode = "adaptive"
-				} else {
-					cr.ThinkingMode = ""
-				}
-			}
-		}
-		if !supportsAnthropicAdaptive(protocolModelName(upModel)) && cr.ThinkingMode == "adaptive" {
-			if supportsAnthropicFixedBudget(protocolModelName(upModel)) {
-				b := 4096
-				if plan.ThinkingBudget >= 1024 {
-					b = plan.ThinkingBudget
-				}
-				cr.ThinkingMode = "enabled"
-				cr.ThinkingBudget = &b
-			} else {
-				cr.ThinkingMode = ""
-			}
-		}
-	case FormatOpenAIChat, FormatOpenAIResponse:
-		if cr.ThinkingMode == "adaptive" && cr.ReasoningEffort == "" {
-			cr.ThinkingMode = ""
-		}
-	}
-
-	// 3. Clamp max_tokens to target model's output & context limits
-	if cr.MaxTokens > 0 {
-		cr.MaxTokens = computeClampedMaxTokens(upModel, cr.MaxTokens, task.estimatedInputTokens, task.modelContextLimits)
-	}
-
-	// 4. Enforce Anthropic budget_tokens < max_tokens invariant
-	if wireFormat == FormatAnthropic && cr.ThinkingBudget != nil && *cr.ThinkingBudget > 0 {
-		budget := *cr.ThinkingBudget
-		maxOut := modelMaxOutputLimit(upModel)
-		if maxOut <= 0 {
-			maxOut = 64000
-		}
-		if cr.MaxTokens <= budget {
-			desiredMax := budget + 4096
-			if desiredMax > maxOut {
-				desiredMax = maxOut
-			}
-			if desiredMax > budget {
-				cr.MaxTokens = desiredMax
-			} else if cr.MaxTokens >= 2048 {
-				b := cr.MaxTokens - 1024
-				cr.ThinkingBudget = &b
-			} else {
-				cr.ThinkingMode = ""
-				cr.ThinkingBudget = nil
-			}
-		}
-	}
-}
-
-// adaptAutoRouterNativeBody adapts a native-format JSON request body without
-// mutating task.body or rounding 64-bit integer IDs.
-func adaptAutoRouterNativeBody(body []byte, wireFormat clientFormat, up *Upstream, upModel string, task *relayTask, effortLevels []string) []byte {
-	if len(body) == 0 || task == nil {
-		return body
-	}
-	raw, err := decodeProtocolObject(body)
-	if err != nil {
-		return body
-	}
-
-	plan := resolveAutoRouterThinking(
-		up,
-		upModel,
-		task.sourceTier,
-		task.candidateRawModel,
-		task.tierThinkingPolicy,
-		task.routerCause(),
-		task.canon,
-	)
-
-	sameModelAndUpstream := task.prevUpstreamID != 0 &&
-		task.prevUpstreamID == up.ID &&
-		strings.EqualFold(task.prevUpstreamModel, upModel)
-	profile := classifyModelThinkingCapability(up, upModel)
-	thinkingActive := profile.SupportsThinking && !plan.StripAll && plan.Effort != "none" && plan.ThinkingMode != "disabled"
-
-	changed := false
-
-	// 1. Multi-turn history sanitization in native body
-	switch wireFormat {
-	case FormatAnthropic:
-		if sanitizeAnthropicNativeHistory(raw, sameModelAndUpstream, thinkingActive) {
-			changed = true
-		}
-	case FormatOpenAIResponse:
-		if sanitizeOpenAIResponsesNativeHistory(raw, sameModelAndUpstream, thinkingActive) {
-			changed = true
-		}
-	case FormatGemini:
-		if sanitizeGeminiNativeHistory(raw, sameModelAndUpstream, thinkingActive) {
-			changed = true
-		}
-	case FormatOpenAIChat:
-		if !thinkingActive && sanitizeOpenAIChatNativeHistory(raw) {
-			changed = true
-		}
-	}
-
-	// 2. Thinking parameter adaptation in native body
-	if adaptNativeThinkingFields(raw, wireFormat, plan, effortLevels) {
-		changed = true
-	}
-
-	// 3. Max tokens clamping & Anthropic budget_tokens < max_tokens enforcement
-	if clampNativeMaxTokensFields(raw, wireFormat, upModel, task.estimatedInputTokens, task.modelContextLimits) {
-		changed = true
-	}
-
-	if !changed {
-		return body
-	}
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(raw); err != nil {
-		return body
-	}
-	return bytes.TrimRight(buf.Bytes(), "\n")
-}
-
-func sanitizeAnthropicNativeHistory(raw map[string]any, sameModelAndUpstream, thinkingActive bool) bool {
-	msgs, ok := raw["messages"].([]any)
-	if !ok || len(msgs) == 0 {
-		return false
-	}
-	changed := false
-	for i, item := range msgs {
-		msgMap, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		role, _ := msgMap["role"].(string)
-		if role != "assistant" {
-			continue
-		}
-		blocks, ok := msgMap["content"].([]any)
-		if !ok || len(blocks) == 0 {
-			continue
-		}
-		var filtered []any
-		var fallbackThinkingTexts []string
-		blocksModified := false
-		for _, b := range blocks {
-			bm, ok := b.(map[string]any)
-			if !ok {
-				filtered = append(filtered, b)
-				continue
-			}
-			bType, _ := bm["type"].(string)
-			switch bType {
-			case "thinking":
-				sig, _ := bm["signature"].(string)
-				if !thinkingActive || !sameModelAndUpstream || strings.TrimSpace(sig) == "" {
-					if txt, _ := bm["thinking"].(string); strings.TrimSpace(txt) != "" {
-						fallbackThinkingTexts = append(fallbackThinkingTexts, txt)
-					}
-					blocksModified = true
-					continue
-				}
-			case "redacted_thinking":
-				if !thinkingActive || !sameModelAndUpstream {
-					blocksModified = true
-					continue
-				}
-			}
-			filtered = append(filtered, b)
-		}
-		if blocksModified {
-			if len(filtered) == 0 {
-				text := strings.Join(fallbackThinkingTexts, "\n\n")
-				if strings.TrimSpace(text) == "" {
-					text = "..."
-				}
-				filtered = []any{map[string]any{
-					"type": "text",
-					"text": text,
-				}}
-			}
-			clonedMsg := cloneMapShallow(msgMap)
-			clonedMsg["content"] = filtered
-			msgs[i] = clonedMsg
-			changed = true
-		}
-	}
-	if changed {
-		raw["messages"] = msgs
-	}
-	return changed
-}
-
-func sanitizeOpenAIResponsesNativeHistory(raw map[string]any, sameModelAndUpstream, thinkingActive bool) bool {
-	if sameModelAndUpstream && thinkingActive {
-		return false
-	}
-	changed := false
-	if items, ok := raw["input"].([]any); ok && len(items) > 0 {
-		if _, hasPrev := raw["previous_response_id"]; hasPrev && !sameModelAndUpstream {
-			delete(raw, "previous_response_id")
-			changed = true
-		}
-		var filtered []any
-		for _, item := range items {
-			im, ok := item.(map[string]any)
-			if !ok {
-				filtered = append(filtered, item)
-				continue
-			}
-			itemType, _ := im["type"].(string)
-			if itemType == "reasoning" {
-				changed = true
-				continue
-			}
-			filtered = append(filtered, item)
-		}
-		if changed && len(filtered) > 0 {
-			raw["input"] = filtered
-		}
-	}
-	return changed
-}
-
-func sanitizeGeminiNativeHistory(raw map[string]any, sameModelAndUpstream, thinkingActive bool) bool {
-	if sameModelAndUpstream && thinkingActive {
-		return false
-	}
-	contents, ok := raw["contents"].([]any)
-	if !ok || len(contents) == 0 {
-		return false
-	}
-	changed := false
-	for i, item := range contents {
-		cm, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		parts, ok := cm["parts"].([]any)
-		if !ok || len(parts) == 0 {
-			continue
-		}
-		var newParts []any
-		var fallbackParts []any
-		partsModified := false
-		for _, p := range parts {
-			pm, ok := p.(map[string]any)
-			if !ok {
-				newParts = append(newParts, p)
-				continue
-			}
-			clonedPart := cloneMapShallow(pm)
-			if _, hasSig := clonedPart["thoughtSignature"]; hasSig {
-				delete(clonedPart, "thoughtSignature")
-				partsModified = true
-			}
-			if _, hasSig := clonedPart["thought_signature"]; hasSig {
-				delete(clonedPart, "thought_signature")
-				partsModified = true
-			}
-			if thought, _ := clonedPart["thought"].(bool); thought {
-				delete(clonedPart, "thought")
-				fallbackParts = append(fallbackParts, clonedPart)
-				partsModified = true
-				continue
-			}
-			newParts = append(newParts, clonedPart)
-		}
-		if partsModified {
-			if len(newParts) == 0 && len(fallbackParts) > 0 {
-				newParts = fallbackParts
-			}
-			clonedContent := cloneMapShallow(cm)
-			clonedContent["parts"] = newParts
-			contents[i] = clonedContent
-			changed = true
-		}
-	}
-	if changed {
-		raw["contents"] = contents
-	}
-	return changed
-}
-
-func sanitizeOpenAIChatNativeHistory(raw map[string]any) bool {
-	msgs, ok := raw["messages"].([]any)
-	if !ok || len(msgs) == 0 {
-		return false
-	}
-	changed := false
-	for i, item := range msgs {
-		mm, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		_, hasRC := mm["reasoning_content"]
-		_, hasR := mm["reasoning"]
-		if hasRC || hasR {
-			cloned := cloneMapShallow(mm)
-			if str, _ := cloned["content"].(string); strings.TrimSpace(str) == "" {
-				if rc, _ := cloned["reasoning_content"].(string); strings.TrimSpace(rc) != "" {
-					if _, hasTC := cloned["tool_calls"]; !hasTC {
-						cloned["content"] = rc
-					}
-				}
-			}
-			delete(cloned, "reasoning_content")
-			delete(cloned, "reasoning")
-			msgs[i] = cloned
-			changed = true
-		}
-	}
-	if changed {
-		raw["messages"] = msgs
-	}
-	return changed
-}
-
-func adaptNativeThinkingFields(raw map[string]any, wireFormat clientFormat, plan autoRouterThinkingPlan, effortLevels []string) bool {
+func adaptNativeThinkingFields(raw map[string]any, wireFormat clientFormat, plan modelThinkingPlan, effortLevels []string) bool {
 	changed := false
 
 	// Default passthrough case: only map existing effort if effortLevels is non-empty
@@ -2216,49 +1377,85 @@ func cloneMapShallow(in map[string]any) map[string]any {
 	return out
 }
 
-// isAutoRouterFailoverableError inspects an upstream HTTP 400/404/413/422 response
-// body when routing via Auto-Router and returns true if the error is caused by
-// model-specific context overflow, unsupported thinking/reasoning parameters,
-// foreign signature rejection, or model unavailability—allowing relayHandler to
-// seamlessly try the next candidate model in the tier.
-func isAutoRouterFailoverableError(status int, body []byte) bool {
-	switch status {
-	case 404, 413, 422:
-		return true
-	case 400:
-		lower := strings.ToLower(string(body))
-		for _, kw := range []string{
-			"context_length_exceeded",
-			"context length",
-			"maximum context length",
-			"too many tokens",
-			"prompt is too long",
-			"input is too long",
-			"request too large",
-			"max_tokens",
-			"max_completion_tokens",
-			"max_output_tokens",
-			"maxoutputtokens",
-			"budget_tokens",
-			"thinking",
-			"reasoning_effort",
-			"reasoning",
-			"output_config",
-			"signature",
-			"thought_signature",
-			"thoughtsignature",
-			"encrypted_content",
-			"previous_response_id",
-			"model_not_found",
-			"model not found",
-			"does not exist",
-			"unsupported model",
-			"unknown model",
-		} {
-			if strings.Contains(lower, kw) {
-				return true
-			}
+func explicitThinkingBudget(effort string) int {
+	switch effort {
+	case "minimal":
+		return 1024
+	case "low":
+		return 2048
+	case "medium":
+		return 4096
+	case "high":
+		return 8192
+	case "xhigh":
+		return 24576
+	case "max":
+		return 31999
+	default:
+		return 4096
+	}
+}
+
+// applyModelThinking applies only options supplied in the model name.
+func applyModelThinking(cr *canonReq, plan modelThinkingPlan) {
+	switch {
+	case plan.StripAll:
+		cr.ReasoningEffort, cr.ThinkingMode, cr.ThinkingBudget = "", "", nil
+	case plan.DisableExplicit || (plan.EffectiveLabel != "" && plan.EffectiveLabel != "default"):
+		cr.ReasoningEffort, cr.ThinkingMode, cr.ThinkingBudget = plan.Effort, plan.ThinkingMode, nil
+		if plan.ThinkingBudget > 0 {
+			budget := plan.ThinkingBudget
+			cr.ThinkingBudget = &budget
 		}
 	}
-	return false
+}
+
+func adaptModelRequestBody(body []byte, format clientFormat, up *Upstream, model string, task *relayTask, efforts []string) []byte {
+	raw, err := decodeProtocolObject(body)
+	if err != nil {
+		return body
+	}
+	plan := resolveModelThinking(up, model, task.modelRequest(), task.canon)
+	changed := adaptNativeThinkingFields(raw, format, plan, efforts)
+	changed = clampNativeMaxTokensFields(raw, format, model, estimateRequestContextTokens(task.canon), task.contextLimits(model)) || changed
+	if !changed {
+		return body
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return body
+	}
+	return encoded
+}
+
+func (t *relayTask) contextLimits(model string) map[string]int {
+	if t != nil {
+		if limit := parseModelRequestSpec(t.modelRequest()).ContextLimit; limit > 0 {
+			return map[string]int{strings.ToLower(model): limit}
+		}
+	}
+	return nil
+}
+
+func adaptModelRequestCanon(cr *canonReq, format clientFormat, up *Upstream, model string, task *relayTask, efforts []string) {
+	applyModelThinking(cr, resolveModelThinking(up, model, task.modelRequest(), cr))
+	cr.ReasoningEffort = mapReasoningEffort(protocolReasoningEffort(format, cr), efforts)
+	input := estimateRequestContextTokens(cr)
+	limits := task.contextLimits(model)
+	if format == FormatAnthropic && cr.ThinkingBudget != nil && cr.MaxTokens <= *cr.ThinkingBudget {
+		cr.MaxTokens = *cr.ThinkingBudget + 4096
+	}
+	cr.MaxTokens = computeClampedMaxTokens(model, cr.MaxTokens, input, limits)
+	if format == FormatAnthropic && cr.ThinkingBudget != nil && *cr.ThinkingBudget >= cr.MaxTokens {
+		if cr.MaxTokens >= 2048 {
+			budget := cr.MaxTokens - 1024
+			cr.ThinkingBudget = &budget
+		} else {
+			cr.ThinkingBudget, cr.ThinkingMode, cr.ReasoningEffort = nil, "", ""
+		}
+	}
+}
+
+func canonicalModelIdent(model string) string {
+	return strings.ReplaceAll(protocolModelName(model), ".", "-")
 }

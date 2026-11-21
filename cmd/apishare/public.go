@@ -226,10 +226,6 @@ func publicModelCatalogWithDiscovery(snapshot *routingSnapshot, discover bool) (
 			for _, id := range strings.Split(u.Models, ",") {
 				add(id)
 			}
-		} else if defaults := defaultDecisionModelsForType(u.Type); len(defaults) > 0 {
-			for _, id := range defaults {
-				add(id)
-			}
 		} else {
 			wildcard = true
 			var ids []string

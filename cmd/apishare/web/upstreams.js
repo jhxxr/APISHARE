@@ -51,7 +51,7 @@ function upstreamIdentity(item) {
   const keys = item.api_keys || [];
   const keyLabel = keys.length ? keys.length + " 把密钥 · " + keys.filter(key => key.healthy).length + " 把可用" : item.key_masked || "已保存密钥";
   const proxyLabel = keys.length ? item.key_proxy_mode === "individual" ? "按密钥配置代理" : "统一代理 · " + upstreamProxyLabel(item.proxy_id) : item.proxy_id ? upstreamProxyLabel(item.proxy_id) : "";
-  return '<div class="upstream-identity">' + providerIcon(item.type, item.base_url) + '<div class="upstream-identity-text"><button class="upstream-name" onclick="openEditUpstream(' + item.id + ')" title="编辑 ' + esc(item.name) + '">' + esc(item.name || "未命名上游") + '</button><span class="upstream-key-line" title="' + esc(item.base_url) + '">' + esc(item.base_url.replace(/^https?:\/\//, "").replace(/\/$/, "")) + ' <span>· ' + esc(keyLabel) + '</span></span><span class="upstream-format">' + esc(upstreamFormatNames[upstreamFormat(item)] || item.type) + (proxyLabel ? ' · ' + esc(proxyLabel) : '') + '</span></div></div>';
+  return '<div class="upstream-identity">' + providerIcon(item.type, item.base_url) + '<div class="upstream-identity-text"><button class="upstream-name" onclick="openEditUpstream(' + item.id + ')" title="编辑 ' + esc(item.name) + '">' + esc(item.name || "未命名上游") + '</button><span class="upstream-key-line" title="' + esc(item.base_url) + '">' + esc(item.base_url.replace(/^https?:\/\//, "").replace(/\/$/, "")) + ' <span>· ' + esc(keyLabel) + '</span></span><span class="upstream-format">' + esc(upstreamFormatNames[upstreamFormat(item)] || "已移除类型 · " + item.type) + (proxyLabel ? ' · ' + esc(proxyLabel) : '') + '</span></div></div>';
 }
 function upstreamHealthHTML(item) {
   const usage = upstreamUsageFor(item), buckets = usage?.health || Array.from({length: 20}, () => ({calls: 0, successes: 0}));
@@ -68,18 +68,12 @@ function upstreamHealthHTML(item) {
   }).join("") + '</span><span class="upstream-health-rate">' + rate + '</span></div><span class="badge ' + state + '"' + coolTitle + '>' + status + '</span>' + (item.cooldown_disabled ? '<span class="badge off" title="已禁用网关层错误冷却（号池模式）">免冷却</span>' : '') + (item.fails ? '<small class="upstream-failure-count">连续失败 ' + number(item.fails) + ' 次</small>' : '') + ((!item.healthy && item.enabled) ? ' <button class="text-btn upstream-recover" onclick="recoverUpstream(' + item.id + ', this)" aria-label="恢复 ' + esc(item.name) + '">恢复</button>' : '') + '</div>';
 }
 function upstreamToggle(item) {
+  if (!upstreamFormatNames[upstreamFormat(item)]) return '<button class="toggle-btn" role="switch" aria-checked="false" aria-label="渠道类型已移除" title="渠道类型已移除，请编辑为受支持类型或删除" disabled><span></span></button>';
   return '<button class="toggle-btn" role="switch" aria-checked="' + !!item.enabled + '" aria-label="' + (item.enabled ? "停用 " : "启用 ") + esc(item.name) + '" onclick="toggleUpstream(' + item.id + ', ' + !item.enabled + ', this)"><span></span></button>';
 }
 function upstreamModelsHTML(item) {
   const models = parseAllowlist(item.models);
-  if (!models.length && (item.type === "openrouter" || item.type === "systemone" || item.type === "cloudflare")) {
-    const defaults = item.type === "cloudflare"
-      ? ["@cf/cloudflare/clef-flash", "@cf/cloudflare/clef"]
-      : item.type === "openrouter"
-        ? ["parallel/decisions-fast:free", "parallel/decisions-fast"]
-        : ["jev", "Julia-1", "parallel/decisions-fast:free"];
-    return '<button class="upstream-model-count" onclick="openUpstreamSection(' + item.id + ',\'editorModels\')" title="' + esc("默认决策模型：" + defaults.join(", ")) + '">' + icon("layers") + defaults.length + ' 条</button>';
-  }
+
   return '<button class="upstream-model-count" onclick="openUpstreamSection(' + item.id + ',\'editorModels\')" title="' + esc(models.join(", ") || "允许全部模型") + '">' + icon("layers") + (models.length ? models.length + ' 条' : '全部') + '</button>';
 }
 function upstreamCooldownSummary(item) {

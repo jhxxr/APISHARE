@@ -168,23 +168,19 @@ func TestAgentPurgeCandidateRoutingAndSitePermissions(t *testing.T) {
 		want                       int64
 	}{
 		{"direct", "alias", "", false, approved.ID},
-		{"router candidate", "auto", "alias(high)", false, approved.ID},
+		{"explicit model options", "alias", "alias(high)", false, approved.ID},
 		{"unlisted model", "other", "", false, preferred.ID},
 		{"native-only endpoint", "alias", "", true, preferred.ID},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			task := &relayTask{model: tc.requested, candidateRawModel: tc.candidate, format: FormatOpenAIChat,
+			task := &relayTask{model: tc.requested, requestedModel: tc.candidate, format: FormatOpenAIChat,
 				userSub: "candidate-user", agentPurgeState: state, nativeOnly: tc.nativeOnly,
 				client: &requestClientState{identity: detectRequestClient(http.Header{"User-Agent": {"codex_cli_rs/1.2.3"}})}}
-			up, err := task.pickUpstream(userRouteTarget{AllowSite: true, AllowBYOK: true, PreferBYOK: true}, "", map[int64]bool{}, map[string]bool{})
+			up, err := task.pickUpstream("", map[int64]bool{}, map[string]bool{})
 			if err != nil || up == nil || up.ID != tc.want {
 				t.Fatalf("selected = %+v, err=%v; want upstream %d", up, err, tc.want)
 			}
-			if !tc.nativeOnly && tc.want == approved.ID {
-				if _, err := task.pickUpstream(userRouteTarget{AllowBYOK: true}, "", map[int64]bool{}, map[string]bool{}); err == nil {
-					t.Fatal("persona bypassed site permissions or quota using BYOK")
-				}
-			}
+
 		})
 	}
 }

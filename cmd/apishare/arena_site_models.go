@@ -84,10 +84,10 @@ func arenaSiteModelIndex(snapshot *routingSnapshot, catalog map[string]string) a
 	for model := range catalog {
 		for i := range snapshot.upstreams {
 			up := &snapshot.upstreams[i]
-			if !up.Enabled || up.Weight <= 0 || !servesRouterCandidate(up, model) {
+			if !up.Enabled || up.Weight <= 0 || !servesModelRequest(up, model) {
 				continue
 			}
-			wire := up.mapModel(resolveUpstreamCandidateModel(up, model))
+			wire := up.mapModel(resolveModelRequest(up, model))
 			version, official := arenaOfficialDeepSeekVersion(up, wire)
 			key := arenaPublicModelIdentity(version)
 			if key == "" {

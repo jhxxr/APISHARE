@@ -443,7 +443,10 @@ CREATE INDEX IF NOT EXISTS idx_log_key_daily ON call_log_key_daily(key_id, day);
 	if err := migrateRequestClientSchema(); err != nil {
 		return err
 	}
-	if err := migrateUserRouterSchema(); err != nil {
+	if err := migrateAgentPurgeSchema(); err != nil {
+		return err
+	}
+	if err := disableRemovedDecisionUpstreams(); err != nil {
 		return err
 	}
 	return migrateTimestampsToBeijing()
@@ -480,8 +483,6 @@ type ApiKey struct {
 
 type Upstream struct {
 	config             *upstreamConfig // Immutable parsed runtime configuration; never exposed by APIs.
-	customProxy        *OutboundProxy  // Optional user-configured custom proxy; never exposed by APIs.
-	userProxyMode      string          // Optional user BYOK proxy mode ("default" | "direct" | "custom").
 	selectedKeyID      string
 	ID                 int64                `json:"id"`
 	Name               string               `json:"name"`
@@ -1097,7 +1098,6 @@ type AppSettings struct {
 	XAuthDefaultConcurrency int                   `json:"xauth_default_concurrency"`
 	XAuthDefaultModels      string                `json:"xauth_default_models"`
 	XAuthDefaultModelQuotas map[string]ModelQuota `json:"xauth_default_model_quotas"`
-	XAuthUserDefaultProxyID int64                 `json:"xauth_user_default_proxy_id"`
 }
 
 var defaultManualPricing = map[string]Price{
@@ -1197,12 +1197,7 @@ func loadSettingsCache() error {
 			settingsCache.XAuthDefaultModelQuotas = mq
 		}
 	}
-	if v, err := settingsGet("xauth_user_default_proxy_id"); err == nil && v != "" {
-		var pid int64
-		if _, err := fmt.Sscanf(v, "%d", &pid); err == nil && pid >= 0 {
-			settingsCache.XAuthUserDefaultProxyID = pid
-		}
-	}
+
 	return nil
 }
 
@@ -1274,10 +1269,7 @@ func persistSettings(s AppSettings) error {
 	if err := settingsSet("xauth_default_model_quotas", string(mqb)); err != nil {
 		return err
 	}
-	if err := settingsSet("xauth_user_default_proxy_id", fmt.Sprintf("%d", s.XAuthUserDefaultProxyID)); err != nil {
-		return err
-	}
-	invalidateUserRouterCache("")
+
 	b, _ := json.Marshal(s.Pricing)
 	return settingsSet("pricing", string(b))
 }

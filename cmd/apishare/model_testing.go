@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -86,6 +85,9 @@ func registerModelTestRoutes(auth *gin.RouterGroup) {
 // Test only the selected upstream, even when disabled or cooling down. Reuse
 // protocol rendering/parsing without routing, billing or health-state changes.
 func testUpstreamModel(ctx context.Context, up *Upstream, model, message string, maxTokens int, stream bool) (*canonResponse, int, error) {
+	if !validUpstreamType(up.Type) {
+		return nil, http.StatusBadRequest, fmt.Errorf("upstream type is no longer supported")
+	}
 	selected, err := up.probeAPIKey("")
 	if err != nil {
 		return nil, 0, err
@@ -94,24 +96,7 @@ func testUpstreamModel(ctx context.Context, up *Upstream, model, message string,
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	model = up.mapModel(model)
-	if up.isDecisionUpstream(model) {
-		res, usage, dErr := classifyViaUpstream(ctx, up, model, up.Type, message, nil, "", 0, 15000)
-		if dErr != nil {
-			return nil, 0, dErr
-		}
-		decisionJSON, _ := json.Marshal(map[string]any{
-			"tier":          res.Tier,
-			"choice":        res.RawChoice,
-			"confidence":    res.Confidence,
-			"probabilities": res.Probabilities,
-			"latency_ms":    res.LatencyMS,
-		})
-		return &canonResponse{
-			Blocks: []responseBlock{{Kind: "text", Text: string(decisionJSON)}},
-			Finish: "stop",
-			Usage:  usage,
-		}, http.StatusOK, nil
-	}
+
 	format, err := up.resolveWireFormat(ctx, FormatOpenAIChat, model)
 	if err != nil {
 		return nil, 0, err

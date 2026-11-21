@@ -147,7 +147,6 @@ func registerAdminRoutes(r *gin.Engine) {
 	registerClientStatsRoutes(auth)
 	registerSiteBrandingAdmin(auth)
 	registerXAuthAdminRoutes(auth)
-	registerAutoRouterAdminRoutes(auth)
 	registerAgentPurgeAdminRoutes(auth)
 
 	// ---------- API Keys ----------
@@ -444,7 +443,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			return
 		}
 		if !validUpstreamType(u.Type) {
-			c.JSON(400, gin.H{"error": "type must be openai, cliproxy, opencode-free, opencode, cline, anthropic, gemini, openrouter, systemone or cloudflare"})
+			c.JSON(400, gin.H{"error": "type must be openai, cliproxy, opencode-free, opencode, cline, anthropic or gemini"})
 			return
 		}
 		if err := u.normalizeAPIKeys(nil); err != nil {
@@ -751,6 +750,10 @@ func registerAdminRoutes(r *gin.Engine) {
 			c.JSON(404, gin.H{"error": "upstream not found"})
 			return
 		}
+		if !validUpstreamType(src.Type) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "原渠道类型已移除，请先修改为支持的类型"})
+			return
+		}
 		var req struct {
 			Name string `json:"name"`
 		}
@@ -865,7 +868,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			return
 		}
 		if !validUpstreamType(req.Type) {
-			c.JSON(400, gin.H{"ok": false, "error": "type must be openai, cliproxy, opencode-free, opencode, cline, anthropic, gemini, openrouter, systemone or cloudflare"})
+			c.JSON(400, gin.H{"ok": false, "error": "type must be openai, cliproxy, opencode-free, opencode, cline, anthropic or gemini"})
 			return
 		}
 		up := &Upstream{Type: req.Type, BaseURL: req.BaseURL, APIKey: req.APIKey, APIKeys: req.APIKeys, KeyProxyMode: req.KeyProxyMode, ProxyID: req.ProxyID, HeaderOverrides: req.HeaderOverrides, OpenAIProtocol: req.OpenAIProtocol, OpenCodeTier: req.OpenCodeTier}
@@ -1048,31 +1051,30 @@ func registerAdminRoutes(r *gin.Engine) {
 		retention := retentionOption(s.LogRetentionDays)
 		siteIconURL, siteIconType := currentSiteIcon()
 		c.JSON(200, gin.H{
-			"affinity_ttl_min":            s.AffinityTTLMin,
-			"retry":                       s.Retry,
-			"inject_stream_usage":         s.InjectStreamUsage,
-			"log_retention_days":          s.LogRetentionDays,
-			"log_retention_label":         retention.label,
-			"log_retention_detail":        retention.detail,
-			"pricing":                     s.Pricing,
-			"auto_pricing_enabled":        s.AutoPricingEnabled,
-			"auto_pricing_url":            s.AutoPricingURL,
-			"auto_pricing":                autoInfo,
-			"site_title":                  s.SiteTitle,
-			"site_icon_url":               siteIconURL,
-			"site_icon_type":              siteIconType,
-			"site_icon_custom":            siteIconURL != "",
-			"xauth_enabled":               s.XAuthEnabled,
-			"xauth_issuer":                s.XAuthIssuer,
-			"xauth_client_id":             s.XAuthClientID,
-			"xauth_secret_saved":          strings.TrimSpace(s.XAuthClientSecret) != "",
-			"xauth_redirect_uri":          xauthRedirectURI(c),
-			"xauth_default_quota_usd":     s.XAuthDefaultQuotaUSD,
-			"xauth_default_qps":           s.XAuthDefaultQPS,
-			"xauth_default_concurrency":   s.XAuthDefaultConcurrency,
-			"xauth_default_models":        s.XAuthDefaultModels,
-			"xauth_default_model_quotas":  s.XAuthDefaultModelQuotas,
-			"xauth_user_default_proxy_id": s.XAuthUserDefaultProxyID,
+			"affinity_ttl_min":           s.AffinityTTLMin,
+			"retry":                      s.Retry,
+			"inject_stream_usage":        s.InjectStreamUsage,
+			"log_retention_days":         s.LogRetentionDays,
+			"log_retention_label":        retention.label,
+			"log_retention_detail":       retention.detail,
+			"pricing":                    s.Pricing,
+			"auto_pricing_enabled":       s.AutoPricingEnabled,
+			"auto_pricing_url":           s.AutoPricingURL,
+			"auto_pricing":               autoInfo,
+			"site_title":                 s.SiteTitle,
+			"site_icon_url":              siteIconURL,
+			"site_icon_type":             siteIconType,
+			"site_icon_custom":           siteIconURL != "",
+			"xauth_enabled":              s.XAuthEnabled,
+			"xauth_issuer":               s.XAuthIssuer,
+			"xauth_client_id":            s.XAuthClientID,
+			"xauth_secret_saved":         strings.TrimSpace(s.XAuthClientSecret) != "",
+			"xauth_redirect_uri":         xauthRedirectURI(c),
+			"xauth_default_quota_usd":    s.XAuthDefaultQuotaUSD,
+			"xauth_default_qps":          s.XAuthDefaultQPS,
+			"xauth_default_concurrency":  s.XAuthDefaultConcurrency,
+			"xauth_default_models":       s.XAuthDefaultModels,
+			"xauth_default_model_quotas": s.XAuthDefaultModelQuotas,
 		})
 	})
 
@@ -1097,7 +1099,6 @@ func registerAdminRoutes(r *gin.Engine) {
 			XAuthDefaultConcurrency *int                   `json:"xauth_default_concurrency"`
 			XAuthDefaultModels      *string                `json:"xauth_default_models"`
 			XAuthDefaultModelQuotas *map[string]ModelQuota `json:"xauth_default_model_quotas"`
-			XAuthUserDefaultProxyID *int64                 `json:"xauth_user_default_proxy_id"`
 		}
 		if c.BindJSON(&req) != nil {
 			return
@@ -1172,20 +1173,7 @@ func registerAdminRoutes(r *gin.Engine) {
 		} else if req.XAuthDefaultModels != nil {
 			s.XAuthDefaultModelQuotas = buildXAuthDefaultModelQuotas(s.XAuthDefaultModels, s.XAuthDefaultModelQuotas)
 		}
-		if req.XAuthUserDefaultProxyID != nil {
-			pid := *req.XAuthUserDefaultProxyID
-			if pid < 0 {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "请选择有效的默认代理"})
-				return
-			}
-			if pid != 0 && pid != s.XAuthUserDefaultProxyID {
-				if err := validateUpstreamProxy(pid); err != nil {
-					c.JSON(http.StatusBadRequest, gin.H{"error": "用户自带模型默认代理无效：" + err.Error()})
-					return
-				}
-			}
-			s.XAuthUserDefaultProxyID = pid
-		}
+
 		retentionChanged := false
 		if req.AffinityTTLMin != nil && *req.AffinityTTLMin > 0 {
 			s.AffinityTTLMin = *req.AffinityTTLMin

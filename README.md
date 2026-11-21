@@ -44,11 +44,9 @@ API Share 是一个用 Go 编写的 AI 网关。它统一接收 OpenAI Chat Comp
 
 ## ✨ 核心特性
 
-- **Smart Router 2.0 智能分流** — 支持虚拟聚合模型（如 `auto` / 个人 `my-auto`），六维结构探针、棘轮会话升档、Prompt Cache 亲和、模态过滤、82% 甜点区重排、多源极限发现、报错自学习与无损上下文压缩。
 - **全协议双向转换** — OpenAI Chat / Responses、Anthropic Messages、Gemini 四种格式任意入站与出站组合。
 - **会话粘性** — 通过请求头或对话指纹把同一会话绑定到同一上游，提升 Prompt Cache 命中率。
 - **优先级与加权路由** — 先按 `priority` 取最高可用层（数值越小越优先，主力 0、备用 1），同层内再按权重分流；上游返回 `401 / 403 / 408 / 429 / 5xx / 529` 或网络异常时自动切换；连续故障触发指数退避冷却。
-- **个人 BYOK 自带渠道** — 普通用户可在个人面板绑定私有渠道（免扣站点额度），配置个人虚拟模型，并与站点渠道实现智能双备。
 - **可选个性化提示词** — 完整内置 Agent Purge 与默认 some-magic 人设库共 21 份模板，用户可选择；管理员按「模型 × 上游」授权，用户按客户端与模型组合自行开启，支持追加、近似替换身份行和严格替换，默认关闭。[配置与边界](docs/AGENT_PURGE.md)
 - **计费与配额** — 每日同步 LiteLLM 价格库，支持每 Key 的 QPS、并发、共享额度与模型专属额度。
 - **独立代理池** — 每个上游可单独绑定 HTTP / HTTPS / SOCKS5 / SOCKS5h 代理（均支持用户名密码），OpenCode 免费流量同样经所选代理出站；内置订阅账号池也可从同一代理池选择核心出站代理。代理列表可逐个测试连通性与延迟。
@@ -56,7 +54,7 @@ API Share 是一个用 Go 编写的 AI 网关。它统一接收 OpenAI Chat Comp
 - **内置订阅账号池** — CLIProxyAPI SDK 随程序编译、默认启动，在现有后台完成 OAuth 登录、凭据导入与账号管理，核心版本随 API Share 发版更新。[使用与升级](docs/CLIPROXY.md)
 - **管理与监控** — 初始化向导、热重命名后台路径、公开状态页、自定义站点标题与图标、调用日志与速度指标；仪表盘提供实时 RPM、消费/请求趋势、缓存命中分析与密钥 / 模型 / 上游排行，并自动识别请求客户端，记录版本与 User-Agent，支持客户端筛选和长期用量统计。
 - **公开模型排行** — 首页「查看模型排行」进入 `/public/rankings/`，完整展示 Arena 官方历史数据集的 Text、Vision、WebDev、Agent、图像及视频分榜，保留原始名次（含并列）、评分、区间与样本量；站点启用渠道的模型加「本站已接入」标记，支持“只看本站已接入”、名称搜索和提供方筛选。后台每日北京时间 04:00 同步一次、持久化本地缓存；页面操作不请求外部源。无真实数据时不生成排名，源站故障保留上次成功快照，不把路由启发式分数或 Bandit 后验当成公开榜单。
-- **真实榜单辅助自动选模** — 站点和私人路由均支持 `arena_mode=shadow/live/off`，默认正式启用，观察模式仅作可选调试；统一候选池取代手动四档优先级。启用后，按任务对应分榜和可信候选组，再比较已知成本与渠道延迟；不把 HTTP 200 当成回答能力，不凭模型名补分。[策略、门槛与对照说明](docs/ARENA_ROUTING.md)
+- **公开模型排行榜** — 展示本地缓存的官方 Arena 分榜、源榜分数和本站接入情况，保留版本与思考配置差异说明。[排行榜说明](docs/ARENA_RANKINGS.md)
 
 ---
 
@@ -66,7 +64,6 @@ API Share 是一个用 Go 编写的 AI 网关。它统一接收 OpenAI Chat Comp
 
 | 协议 | 端点 | 认证方式 |
 |---|---|---|
-| 智能路由虚拟模型 | `auto`（站点默认）或自定义虚拟模型（如 `my-auto`） | 任意支持的入站端点均可直接传入虚拟模型调用 |
 | OpenAI Chat Completions | `POST /v1/chat/completions` | `Authorization: Bearer` |
 | OpenAI Responses | `POST /v1/responses`、`/v1/responses/compact` | `Authorization: Bearer` |
 | OpenAI Responses WebSocket | `GET /v1/responses`（WebSocket Upgrade） | `Authorization: Bearer` |
@@ -84,7 +81,6 @@ API Share 是一个用 Go 编写的 AI 网关。它统一接收 OpenAI Chat Comp
 | OpenAI Responses | `openai` + `openai_protocol: "responses"` | 支持 Responses 协议的上游 |
 | Anthropic Messages | `anthropic` | Claude 官方端点 |
 | Google Gemini | `gemini` | AI Studio 官方端点 |
-| 决策模型上游 | `openrouter`、`cloudflare`、`systemone`、`jev` | 为智能分流提供低延迟（50~300ms）、低成本的任务难度判定 |
 | Cline 免费模型 | `cline` | 账号登录、令牌刷新与免费模型发现 |
 | CLIProxyAPI 订阅账号池 | `cliproxy` | 内置 OAuth 账号池，四种模型协议按客户端原生格式转交核心 |
 | OpenCode 免费模型 | `opencode-free` | 自动发现免费模型、按模型选择原生协议，并对官方免费入口模拟 Bun TLS/HTTP 指纹 |
@@ -93,17 +89,11 @@ API Share 是一个用 Go 编写的 AI 网关。它统一接收 OpenAI Chat Comp
 
 ---
 
-## 🧠 智能分流 (Smart Router 2.0)
+## 模型调用与公开排行
 
-API Share 提供内置的 **Smart Router 2.0 智能分流与自适应编排引擎**。客户端只需将请求模型设置为虚拟模型（如 `auto` 或个人 `my-auto`），网关即可毫秒级感知任务复杂度，智能分发至最具性价比的模型候选。
+客户端指定站点实际提供的模型名，网关按管理员设置的渠道优先级、权重与健康状态分配请求，并在同模型渠道间故障切换。公开 Arena 排行用于查看官方榜单和本站接入情况，不参与请求选模。[排行榜说明](docs/ARENA_RANKINGS.md)
 
-- **六维全量结构探针** — 分类器不仅分析当前用户文本，还全面感知会话中的 **Assistant 历史代码密度**、**工具循环调用深度（`ToolLoopDepth`）**、**编译/运行时报错堆栈**、**多模态图片/附件**、**短指令追问（如“继续 / 改一下”）** 以及 **用户挫败/重试意图（如“还是报错 / 不对”）**，计算结构保底档位（`StructuralFloor`），根治多轮编程中短指令追问误落弱模型的痛点。
-- **棘轮会话状态机（Session Ratchet）与 Prompt Cache 亲和** — 针对 Coding Agent 长对话场景，同档请求优先保持原模型以最大化上游 Prompt KV Cache 命中率；而当后续提问复杂度上升或遇到挫败报错时，会话状态机立即单向升档（棘轮向上突破），兼顾缓存经济性与智商上限。
-- **模态感知与 82% 甜点区重排** — 携带图片时自动跳过纯文本推理模型；预留输出与思考 Token 余量，若某候选模型已进入 $>82\%$ 窗口容量衰减区，自动提升同档充裕候选优先级。
-- **多源极限发现与 400 报错自学习** — 自动整合 LiteLLM 官方 3900+ 模型库同步、上游 `/v1/models` 原生元数据提取、以及上游 `400 / 413 / 422` 报错实时自学习，毫秒级自适应更新真实上下文窗口与最大输出上限。
-- **二维测试时算力（TTC）自适应缩放** — 跨厂商（OpenAI、Claude 3.7/4.x、Gemini 2.5/3、DeepSeek、Qwen）自适应转换 Thinking 思考参数；在重试报错或小模型承担复杂任务时自动提升思考强度补偿参数量差距。
-- **Middle-Out 无损上下文压缩** — 当长对话逼近模型上下文上限时，优先折叠陈旧大工具日志（保留头尾），并保证 `tool_use`/`tool_result` 结对完整性，告别 400 Context Exceeded。
-- **个人 BYOK 混合路由** — 普通用户可在个人中心绑定个人私有 API Key（调用免扣站点额度），并与站点授权模型组成双备容灾。
+升级后，旧智能路由和用户自带渠道配置保留在数据库中但不再使用；专用决策渠道自动停用。原先使用虚拟模型的客户端和密钥需改为真实模型及对应权限，已有历史账单和额度不会自动迁移。
 
 ---
 
@@ -280,7 +270,6 @@ go test ./cmd/apishare -run TestCodexCLIResponsesToolLoop -v -count=1
 ## 🗺️ 路线图
 
 - [x] OpenAI Chat / Responses、Anthropic Messages、Gemini 全协议覆盖
-- [x] Smart Router 2.0 智能分流引擎与个人 BYOK 混合编排
 - [x] 会话粘性与 Prompt Cache 优化
 - [x] LiteLLM 价格库每日同步
 - [x] 独立代理池与动态请求头

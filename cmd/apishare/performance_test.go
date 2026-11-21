@@ -74,7 +74,6 @@ func TestRelayHealthCooldownAndRecovery(t *testing.T) {
 
 func TestRelayHealthIgnoresClientErrorsAndCancellation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	// Negative IDs are reserved for user-owned BYOK channels.
 	const id = int64(1<<60 + 71)
 	defer healthMarkSuccess(id)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

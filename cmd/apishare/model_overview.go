@@ -128,10 +128,6 @@ func buildModelOverview() (*modelOverviewResponse, error) {
 			for _, model := range strings.Split(list, ",") {
 				add(model)
 			}
-		} else if defaults := defaultDecisionModelsForType(u.Type); len(defaults) > 0 {
-			for _, model := range defaults {
-				add(model)
-			}
 		} else {
 			ids, pending := publicWildcardModels(*u)
 			modelsLoading = modelsLoading || pending

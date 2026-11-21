@@ -96,10 +96,3 @@ test("thinking-level connection notes do not change the source label or score",a
  assert.match(p.get("rankingList").innerHTML,/1456.78/);
  assert.match(p.get("rankingList").innerHTML,/思考配置可能不同/);
 });
-test("admin reset and capability metadata regressions stay fixed",async()=>{
- let requested;const ctx=vm.createContext({esc:String,setBusy(){},toast(){},reportError(e){throw e},api:async(url)=>{requested=url}});
- vm.runInContext(read("cmd/apishare/web/router.js"),ctx);vm.runInContext("loadAutoRouter=async()=>{}",ctx);await vm.runInContext("resetAutoRouterBanditState({})",ctx);
- const route=read("cmd/apishare/auto_router.go").match(/auth.POST\("(\/auto-router\/bandit\/reset)"/)[1];assert.equal(requested,"api"+route);
- vm.runInContext("routerConfigCache={model_health:{example:{capabilities:{coding_swe:90,frontend_ui:88},bandit_calls:5,bandit_win_rate:0.9}}}",ctx);
- assert.match(vm.runInContext("capabilityTagsForRouterModel('example')",ctx),/SWE 90/);
-});

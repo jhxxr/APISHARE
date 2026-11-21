@@ -62,7 +62,6 @@ func buildPublicRankings(now time.Time, board arenaBoard) (*PublicRankings, erro
 		return nil, err
 	}
 	catalog, _, loading := publicModelCatalogWithDiscovery(routing, false)
-	delete(catalog, getAutoRouterConfig().VirtualModel)
 	siteModels := arenaSiteModelIndex(routing, catalog)
 	snapshot, refreshing, failed := getArenaSnapshot(db, board.ID)
 	result := &PublicRankings{UpdatedAt: now.In(beijingLocation).Format(time.RFC3339), SourceName: "Arena 官方历史数据集 · overall", SourceURL: arenaDatasetURL, Board: board.ID, BoardLabel: board.Label, Boards: arenaBoards, Loading: refreshing, Stale: failed, ModelsLoading: loading, Models: []PublicModelRanking{}}

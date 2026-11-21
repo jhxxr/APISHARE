@@ -11,10 +11,8 @@ import (
 	"log"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"apishare/internal/agentpurge"
 	"apishare/internal/cliproxy"
@@ -137,93 +135,25 @@ type relayTask struct {
 	userSub                   string // Authenticated personal-console identity, empty for ordinary API keys.
 	agentPurgeState           *agentPurgeRequestState
 	wantUsageChunk            bool   // openai chat 流式：客户端是否要求 include_usage
-	openCodeSession           string // Reused across retries, tiers, and protocol conversions.
+	openCodeSession           string // Reused across retries and protocol conversions.
 	openCodeRequest           string
 	openCodeReasoningRepaired bool
-	router                    *routerDecisionDetails
-	byokUsed                  bool
-	sourceTier                string
-	candidateRawModel         string
-	tierThinkingPolicy        string
-	estimatedInputTokens      int
-	modelContextLimits        map[string]int
-	prevUpstreamID            int64
-	prevUpstreamModel         string
-	hasMoreCandidates         bool
-	speculativeProbe          bool
-	primaryDomain             string
+
+	requestedModel string
 }
 
-func (t *relayTask) isAutoRouted() bool {
-	if t == nil {
-		return false
-	}
-	if t.router != nil {
-		return true
-	}
-	if t.candidateRawModel != "" {
-		spec := parseRouterModelSpec(t.candidateRawModel)
-		return spec.Thinking != "" || spec.BudgetTokens > 0 || spec.ContextLimit > 0
-	}
-	return false
-}
-
-func (t *relayTask) routerCause() string {
-	if t == nil || t.router == nil {
-		return ""
-	}
-	return t.router.Cause
-}
-
-func (t *relayTask) effectiveCandidateModel() string {
-	if t == nil {
-		return ""
-	}
-	if strings.TrimSpace(t.candidateRawModel) != "" {
-		return t.candidateRawModel
-	}
-	return t.model
-}
-
-func pickSessionUpstreamForCandidate(format clientFormat, model string, skey string, tried map[int64]bool, triedKeys map[string]bool, nativeOnly bool, cr *canonReq) (*Upstream, error) {
+func pickSessionModelUpstream(format clientFormat, model string, skey string, tried map[int64]bool, triedKeys map[string]bool, nativeOnly bool, cr *canonReq) (*Upstream, error) {
 	up, err := pickSessionUpstream(format, model, skey, tried, triedKeys, nativeOnly, cr)
 	if err == nil && up != nil {
 		return up, nil
 	}
-	spec := parseRouterModelSpec(model)
+	spec := parseModelRequestSpec(model)
 	if spec.BaseModel != "" && !strings.EqualFold(spec.BaseModel, model) {
 		if up2, err2 := pickSessionUpstream(format, spec.BaseModel, skey, tried, triedKeys, nativeOnly, cr); err2 == nil && up2 != nil {
 			return up2, nil
 		}
 	}
 	return up, err
-}
-
-func pickTargetUpstream(userSub string, target userRouteTarget, format clientFormat, model string, skey string, tried map[int64]bool, triedKeys map[string]bool, nativeOnly bool, cr *canonReq) (*Upstream, error) {
-	if target.PreferBYOK {
-		if target.AllowBYOK && userSub != "" {
-			if up, err := pickUserUpstream(userSub, format, model, tried, nativeOnly, cr); err == nil && up != nil {
-				return up, nil
-			} else if !target.AllowSite {
-				return nil, err
-			}
-		}
-		if target.AllowSite {
-			return pickSessionUpstreamForCandidate(format, model, skey, tried, triedKeys, nativeOnly, cr)
-		}
-		return nil, fmt.Errorf("no personal BYOK upstream available for model %q", model)
-	}
-	if target.AllowSite {
-		if up, err := pickSessionUpstreamForCandidate(format, model, skey, tried, triedKeys, nativeOnly, cr); err == nil && up != nil {
-			return up, nil
-		} else if !target.AllowBYOK || userSub == "" {
-			return nil, err
-		}
-	}
-	if target.AllowBYOK && userSub != "" {
-		return pickUserUpstream(userSub, format, model, tried, nativeOnly, cr)
-	}
-	return nil, fmt.Errorf("no available upstream for model %q", model)
 }
 
 // relayHandler 返回转发处理器（一种客户端格式一个实例）。
@@ -258,145 +188,22 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			cr.Stream = method == "streamGenerateContent"
 		}
 
+		if !ak.allowsModel(cr.Model) {
+			writeFormatError(c, format, http.StatusForbidden, "model is not allowed for this API key")
+			return
+		}
+		if ak.quotaExhausted(cr.Model) {
+			writeFormatError(c, format, http.StatusPaymentRequired, "quota exhausted for model "+cr.Model)
+			return
+		}
 		requestedModel := cr.Model
-		var targets []userRouteTarget
-		var routerDecision *routerDecisionDetails
-		var routerDefaultModel string
-		var rSessionKey string
-		var routerTierThinking map[string]string
-		var routerModelContextLimits map[string]int
-		var routerSpeculativeCascade bool
-		var routerBanditEnabled bool
-		var routerModelCaps map[string]ModelCapabilityVector
-		var routerDemand TaskDemandProfile
+		spec := parseModelRequestSpec(requestedModel)
+		if spec.BaseModel != "" {
+			cr.Model = spec.BaseModel
+		}
+		requestClientFor(c).model = cr.Model
 		userSub := userSubForKey(ak)
 		agentPurgeState := loadAgentPurgeRequestState(userSub)
-
-		switch {
-		case !nativeOnly && isAutoRouterModel(cr.Model):
-			// Enforce permissions before affinity, routing, retries or billing.
-			if !ak.allowsModel(cr.Model) {
-				writeFormatError(c, format, http.StatusForbidden, "model is not allowed for this API key")
-				return
-			}
-			if ak.quotaExhausted(cr.Model) {
-				writeFormatError(c, format, http.StatusPaymentRequired, "quota exhausted for model "+cr.Model)
-				return
-			}
-			rcfg := getAutoRouterConfig()
-			routerDefaultModel = rcfg.DefaultModel
-			routerTierThinking = rcfg.TierThinking
-			routerModelContextLimits = rcfg.ModelContextLimits
-			routerSpeculativeCascade = rcfg.SpeculativeCascade
-			routerBanditEnabled = rcfg.BanditEnabled
-			routerModelCaps = rcfg.ModelCapabilities
-			endpointForKey := nativeEndpoint(format, cr)
-			rSessionKey = scopedSessionKey(ak.ID, sessionKeyFromCanon(endpointForKey, c.Request.Header, cr))
-			dec, cands, quotaErr := resolveAutoRoute(c.Request.Context(), ak, format, nativeOnly, c.Request.Header, cr)
-			if quotaErr != nil {
-				status := http.StatusPaymentRequired
-				if errors.Is(quotaErr, errModelNotAllowed) {
-					status = http.StatusForbidden
-				}
-				writeFormatError(c, format, status, quotaErr.Error())
-				return
-			}
-			stepTierMap := make(map[string]string)
-			if dec != nil {
-				routerDemand = TaskDemandProfile{
-					PrimaryDomain:      dec.PrimaryDomain,
-					RequiredDifficulty: dec.RequiredDifficulty,
-					Weights:            dec.DomainWeights,
-					EquivalentTier:     dec.Tier,
-				}
-				for _, st := range dec.Steps {
-					if st.Model != "" && stepTierMap[st.Model] == "" {
-						stepTierMap[st.Model] = st.SourceTier
-					}
-				}
-			}
-			for _, cm := range cands {
-				stTier := stepTierMap[cm]
-				if stTier == "" && dec != nil {
-					stTier = dec.Tier
-				}
-				targets = append(targets, userRouteTarget{Model: cm, SourceTier: stTier, AllowSite: true})
-			}
-			if len(targets) == 0 {
-				targets = []userRouteTarget{{Model: cr.Model, AllowSite: true}}
-			}
-			routerDecision = dec
-			applyAutoRouterHeaders(c, rcfg, routerDecision)
-
-		case !nativeOnly && isUserAutoRouterModel(ak, cr.Model):
-			ucfg := getUserAutoRouterConfig(userSub)
-			routerDefaultModel = ucfg.DefaultModel
-			routerTierThinking = ucfg.TierThinking
-			routerSpeculativeCascade = ucfg.SpeculativeCascade
-			routerBanditEnabled = ucfg.BanditEnabled
-			endpointForKey := nativeEndpoint(format, cr)
-			rSessionKey = "user:" + userSub + ":" + scopedSessionKey(ak.ID, sessionKeyFromCanon(endpointForKey, c.Request.Header, cr))
-			dec, uTargets, quotaErr := resolveUserAutoRoute(c.Request.Context(), ak, format, nativeOnly, c.Request.Header, cr, false)
-			if quotaErr != nil {
-				writeFormatError(c, format, http.StatusPaymentRequired, quotaErr.Error())
-				return
-			}
-			targets = uTargets
-			if len(targets) == 0 {
-				targets = []userRouteTarget{{Model: cr.Model, PreferBYOK: true, AllowBYOK: true}}
-			}
-			routerDecision = dec
-			if dec != nil {
-				routerDemand = TaskDemandProfile{
-					PrimaryDomain:      dec.PrimaryDomain,
-					RequiredDifficulty: dec.RequiredDifficulty,
-					Weights:            dec.DomainWeights,
-					EquivalentTier:     dec.Tier,
-				}
-			}
-			c.Header("X-APISHARE-Router-Tier", routerDecision.Tier)
-			c.Header("X-APISHARE-Router-Cause", routerDecision.Cause)
-			for name, value := range arenaRoutingHeaders(routerDecision) {
-				c.Header(name, value)
-			}
-			if routerDecision.PrimaryDomain != "" {
-				c.Header("X-APISHARE-Router-Domain", routerDecision.PrimaryDomain)
-			}
-			if routerDecision.RequiredDifficulty > 0 {
-				c.Header("X-APISHARE-Router-Difficulty", strconv.FormatFloat(routerDecision.RequiredDifficulty, 'f', 1, 64))
-			}
-			if routerDecision.StrategyProfile != "" {
-				c.Header("X-APISHARE-Router-Strategy", routerDecision.StrategyProfile)
-			}
-			if routerDecision.SelectedModel != "" {
-				c.Header("X-APISHARE-Router-Model", routerDecision.SelectedModel)
-			}
-			if routerDecision.SelectedThinking != "" {
-				c.Header("X-APISHARE-Router-Thinking", routerDecision.SelectedThinking)
-			}
-			if routerDecision.EstimatedInputTokens > 0 {
-				c.Header("X-APISHARE-Router-Context-Tokens", strconv.Itoa(routerDecision.EstimatedInputTokens))
-			}
-			if routerDecision.DegradedToDefault {
-				c.Header("X-APISHARE-Router-Degraded", "default")
-			}
-			if len(routerDecision.FailedModels) > 0 {
-				c.Header("X-APISHARE-Router-Failed-Models", strings.Join(routerDecision.FailedModels, ","))
-			}
-
-		default:
-			dTargets, dErr := buildDirectModelTargets(ak, format, nativeOnly, cr, cr.Model)
-			if errors.Is(dErr, errModelNotAllowed) {
-				writeFormatError(c, format, http.StatusForbidden, "model is not allowed for this API key")
-				return
-			}
-			var qErr *modelQuotaExhaustedError
-			if errors.As(dErr, &qErr) {
-				writeFormatError(c, format, http.StatusPaymentRequired, qErr.Error())
-				return
-			}
-			targets = dTargets
-		}
 
 		// OpenAI chat 流式注入 include_usage，尽量拿到真实用量计费
 		wantUsageChunk := false
@@ -404,7 +211,6 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			wantUsageChunk = hasIncludeUsage(body)
 			body = injectStreamUsage(body)
 		}
-		baseBody := body
 
 		s := getSettings()
 		normalAttempts := 1 + s.Retry
@@ -413,228 +219,103 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 		var task *relayTask
 		wrote := false
 		firstOutputTimeouts := 0
-		firstOutputBudgetExhausted := false
 		firstOutputFallbackPending := false
-		firstOutputFallbackUsed := false
 
-		var prevSessionUpID int64
-		var prevSessionUpModel string
-		if rSessionKey != "" {
-			_, _, prevSessionUpID, prevSessionUpModel, _ = lookupAutoRouterSessionFull(rSessionKey)
+		endpoint := nativeEndpoint(format, cr)
+		if nativeOnly {
+			endpoint = c.Request.URL.Path
 		}
-		estimatedInputTokens := 0
-		if routerDecision != nil {
-			estimatedInputTokens = routerDecision.EstimatedInputTokens
+		if format != FormatGemini && cr.Model != requestedModel {
+			body = replaceModelInBody(body, cr.Model)
 		}
-		targetModelStrings := make([]string, len(targets))
-		for k, tg := range targets {
-			targetModelStrings[k] = tg.Model
+		task = &relayTask{
+			client: requestClientFor(c), format: format, endpoint: endpoint,
+			body: body, canon: cr, model: cr.Model, requestedModel: requestedModel,
+			stream: cr.Stream, nativeOnly: nativeOnly, apiKeyID: ak.ID,
+			userSub: userSub, agentPurgeState: agentPurgeState, wantUsageChunk: wantUsageChunk,
 		}
-		enableFirstProbe := routerDecision != nil && !routerDecision.Shadow &&
-			shouldEnableSpeculativeProbe(routerSpeculativeCascade, targetModelStrings, routerDemand, routerModelCaps)
-		if enableFirstProbe && len(targetModelStrings) >= 2 {
-			enableFirstProbe = arenaAllowsSpeculativeProbe(routerDecision, targetModelStrings[0], targetModelStrings[1])
-		}
+		// Routing affinity is also scoped by gateway key: identical opening
+		// messages from different users must not share an upstream, its key,
+		// or its proxy egress.
+		skey := scopedSessionKey(ak.ID, sessionKeyFromCanon(endpoint, c.Request.Header, cr))
 
-		for candIdx, target := range targets {
-			candRawModel := target.Model
-			candSpec := parseRouterModelSpec(candRawModel)
-			candModel := candSpec.BaseModel
-			if candModel == "" {
-				candModel = candRawModel
-			}
-			sourceTier := target.SourceTier
-			if sourceTier == "" && routerDecision != nil {
-				sourceTier = routerDecision.Tier
-			}
-			if candIdx > 0 {
-				if err := c.Request.Context().Err(); err != nil {
-					attemptErr = err
-					break
-				}
-				if routerDecision != nil && !routerDecision.Shadow {
-					routerDecision.SelectedModel = candRawModel
-					tPlan := resolveAutoRouterThinking(nil, candRawModel, sourceTier, candRawModel, routerTierThinking[sourceTier], routerDecision.Cause, cr)
-					routerDecision.SelectedThinking = tPlan.EffectiveLabel
-					if !c.Writer.Written() && getAutoRouterConfig().ResponseHeaders {
-						c.Header("X-APISHARE-Router-Model", candRawModel)
-						if routerDecision.SelectedThinking != "" {
-							c.Header("X-APISHARE-Router-Thinking", routerDecision.SelectedThinking)
-						}
-					}
-				}
-			}
+		tried := map[int64]bool{}
+		triedKeys := map[string]bool{}
+		var conversionErr error
+		upstreamAttempted := false
+		attempts := normalAttempts
 
-			cr.Model = candModel
-			requestClientFor(c).model = candModel
-			endpoint := nativeEndpoint(format, cr)
-			if nativeOnly {
-				endpoint = c.Request.URL.Path
-			}
-			candBody := baseBody
-			if format != FormatGemini && candModel != requestedModel {
-				candBody = replaceModelInBody(baseBody, candModel)
-			}
-			var tierThinkingPolicy string
-			if routerTierThinking != nil && sourceTier != "" {
-				tierThinkingPolicy = routerTierThinking[sourceTier]
-			}
-			hasMore := candIdx+1 < len(targets)
-			task = &relayTask{
-				client:               requestClientFor(c),
-				format:               format,
-				endpoint:             endpoint,
-				body:                 candBody,
-				canon:                cr,
-				model:                candModel,
-				stream:               cr.Stream,
-				nativeOnly:           nativeOnly,
-				apiKeyID:             ak.ID,
-				userSub:              userSub,
-				agentPurgeState:      agentPurgeState,
-				wantUsageChunk:       wantUsageChunk,
-				router:               routerDecision,
-				sourceTier:           sourceTier,
-				candidateRawModel:    candRawModel,
-				tierThinkingPolicy:   tierThinkingPolicy,
-				estimatedInputTokens: estimatedInputTokens,
-				modelContextLimits:   routerModelContextLimits,
-				prevUpstreamID:       prevSessionUpID,
-				prevUpstreamModel:    prevSessionUpModel,
-				hasMoreCandidates:    hasMore,
-				speculativeProbe:     candIdx == 0 && hasMore && enableFirstProbe,
-				primaryDomain:        routerDemand.PrimaryDomain,
-			}
-
-			// Routing affinity is also scoped by gateway key: identical opening
-			// messages from different users must not share an upstream, its key,
-			// or its proxy egress.
-			skey := scopedSessionKey(ak.ID, sessionKeyFromCanon(endpoint, c.Request.Header, cr))
-
-			tried := map[int64]bool{}
-			triedKeys := map[string]bool{}
-			var conversionErr error
-			upstreamAttempted := false
-			attempts := normalAttempts
-
-			for i := 0; i < attempts; i++ {
-				if err := c.Request.Context().Err(); err != nil {
-					attemptErr = err
-					break
-				}
-				up, err := task.pickUpstream(target, skey, tried, triedKeys)
-				if err != nil {
-					if attemptErr != nil && upstreamAttempted {
-						attemptErr = fmt.Errorf("%w; failover unavailable: %v", attemptErr, err)
-					} else if conversionErr != nil && !upstreamAttempted {
-						attemptErr = conversionErr
-					} else {
-						attemptErr = err
-					}
-					break // Finalize once so unavailable models also contribute a failed request.
-				}
-				task.byokUsed = up.ID < 0
-
-				attemptWasFirstOutputFallback := firstOutputFallbackPending
-				previousInfo, previousErr := info, attemptErr
-				info, wrote, attemptErr = doRelay(c, up, task)
-				var conversion *protocolConversionError
-				if errors.As(attemptErr, &conversion) {
-					tried[up.ID] = true
-					conversionErr = attemptErr
-					if upstreamAttempted {
-						// A later local capability rejection must not replace the
-						// actual upstream failure, its usage or the last attempted ID.
-						info, attemptErr = previousInfo, previousErr
-					}
-					// A local conversion rejection made no upstream request. Try other
-					// eligible protocols without spending a network retry or breaking affinity.
-					i--
-					continue
-				}
-				if attemptWasFirstOutputFallback {
-					firstOutputFallbackPending = false
-					firstOutputFallbackUsed = true
-				}
-				upstreamAttempted = true
-				var toolLimit *upstreamToolLimitError
-				if errors.As(attemptErr, &toolLimit) {
-					if attemptWasFirstOutputFallback {
-						firstOutputBudgetExhausted = true
-						break
-					}
-					// This endpoint rejected the request before generation. Try
-					// another channel/protocol for the SAME model first; never retry
-					// the rejecting channel or discard any tool definitions.
-					tried[up.ID] = true
-					i--
-					continue
-				}
-				if errors.Is(attemptErr, errUpstreamFirstOutputTimeout) {
-					if firstOutputTimeouts >= maxFirstOutputTimeoutSwitches {
-						firstOutputBudgetExhausted = true
-						log.Printf("[failover] key=%s model=%s exhausted first-output timeout switch budget", ak.Name, cr.Model)
-						break
-					}
-					firstOutputTimeouts++
-					firstOutputFallbackPending = true
-					// Switch immediately and spend exactly one next attempt, even when
-					// Retry is zero. Do not continue walking the pool on the normal
-					// retry budget after a first-output timeout.
-					attempts = i + 2
-				}
-				if routerDecision != nil && routerBanditEnabled && c.Request.Context().Err() == nil && !errors.Is(attemptErr, errDownstreamWrite) {
-					if attemptErr != nil && strings.Contains(attemptErr.Error(), "speculative_probe:") {
-						recordBanditSpeculativeEscalation(up.ID, candRawModel, task.primaryDomain)
-					} else {
-						okCall := attemptErr == nil && info.Status >= 200 && info.Status < 300
-						validTransport := !info.startedAt.IsZero() && ((info.Status >= 200 && info.Status < 300) || isRetryableStatus(info.Status) || (attemptErr != nil && info.Status == 0))
-						recordBanditExplicitOutcome(up.ID, candRawModel, task.primaryDomain, okCall, info.FirstTokenMS, info.LatencyMS, info.elapsedMS(), info.CompletionTok, banditTransportObservation{Valid: validTransport, Stream: task.stream})
-					}
-				}
-				if wrote || errors.Is(attemptErr, errDownstreamWrite) || errors.Is(attemptErr, errAutoRouterModelIncompatible) {
-					break
-				}
-				if attemptErr != nil {
-					log.Printf("[failover] key=%s model=%s upstream=%s attempt=%d err=%v",
-						ak.Name, cr.Model, up.Name, i+1, attemptErr)
-				}
-				if attemptWasFirstOutputFallback {
-					firstOutputBudgetExhausted = true
-					break
-				}
-			}
-
-			if firstOutputFallbackPending || firstOutputFallbackUsed {
-				firstOutputBudgetExhausted = true
-			}
-			if firstOutputBudgetExhausted {
+		for i := 0; i < attempts; i++ {
+			if err := c.Request.Context().Err(); err != nil {
+				attemptErr = err
 				break
 			}
-			if wrote || errors.Is(attemptErr, errDownstreamWrite) || c.Request.Context().Err() != nil {
-				if routerDecision != nil && info.Status >= 200 && info.Status < 300 {
-					rememberAutoRouterSessionWithDomain(rSessionKey, candRawModel, routerDecision.Tier, routerDecision.PrimaryDomain, info.UpstreamID, info.UpstreamModel)
+			up, err := task.pickUpstream(skey, tried, triedKeys)
+			if err != nil {
+				if attemptErr != nil && upstreamAttempted {
+					attemptErr = fmt.Errorf("%w; failover unavailable: %v", attemptErr, err)
+				} else if conversionErr != nil && !upstreamAttempted {
+					attemptErr = conversionErr
+				} else {
+					attemptErr = err
 				}
+				break // Finalize once so unavailable models also contribute a failed request.
+			}
+
+			attemptWasFirstOutputFallback := firstOutputFallbackPending
+			previousInfo, previousErr := info, attemptErr
+			info, wrote, attemptErr = doRelay(c, up, task)
+			var conversion *protocolConversionError
+			if errors.As(attemptErr, &conversion) {
+				tried[up.ID] = true
+				conversionErr = attemptErr
+				if upstreamAttempted {
+					// A later local capability rejection must not replace the
+					// actual upstream failure, its usage or the last attempted ID.
+					info, attemptErr = previousInfo, previousErr
+				}
+				// A local conversion rejection made no upstream request. Try other
+				// eligible protocols without spending a network retry or breaking affinity.
+				i--
+				continue
+			}
+			if attemptWasFirstOutputFallback {
+				firstOutputFallbackPending = false
+			}
+			upstreamAttempted = true
+			var toolLimit *upstreamToolLimitError
+			if errors.As(attemptErr, &toolLimit) {
+				if attemptWasFirstOutputFallback {
+					break
+				}
+				// This endpoint rejected the request before generation. Try
+				// another channel/protocol for the SAME model first; never retry
+				// the rejecting channel or discard any tool definitions.
+				tried[up.ID] = true
+				i--
+				continue
+			}
+			if errors.Is(attemptErr, errUpstreamFirstOutputTimeout) {
+				if firstOutputTimeouts >= maxFirstOutputTimeoutSwitches {
+					log.Printf("[failover] key=%s model=%s exhausted first-output timeout switch budget", ak.Name, cr.Model)
+					break
+				}
+				firstOutputTimeouts++
+				firstOutputFallbackPending = true
+				// Switch immediately and spend exactly one next attempt, even when
+				// Retry is zero. Do not continue walking the pool on the normal
+				// retry budget after a first-output timeout.
+				attempts = i + 2
+			}
+			if wrote || errors.Is(attemptErr, errDownstreamWrite) {
 				break
 			}
-			if candIdx+1 < len(targets) && routerDecision != nil {
-				nextModel := targets[candIdx+1].Model
-				routerDecision.markRuntimeFailover(candRawModel, attemptErr, nextModel, routerDefaultModel)
-				if !c.Writer.Written() {
-					c.Header("X-APISHARE-Router-Model", nextModel)
-					if routerDecision.SpeculativeEscalated {
-						c.Header("X-APISHARE-Router-Speculative", routerDecision.SpeculativeReason)
-						c.Header("X-APISHARE-Router-Cause", routerDecision.Cause)
-					}
-					if routerDecision.DegradedToDefault {
-						c.Header("X-APISHARE-Router-Degraded", "default")
-					}
-					if len(routerDecision.FailedModels) > 0 {
-						c.Header("X-APISHARE-Router-Failed-Models", strings.Join(routerDecision.FailedModels, ","))
-					}
-				}
-				log.Printf("[auto-router] key=%s tier=%s candidate %s failed (%v), failing over to %s",
-					ak.Name, routerDecision.Tier, candRawModel, attemptErr, nextModel)
+			if attemptErr != nil {
+				log.Printf("[failover] key=%s model=%s upstream=%s attempt=%d err=%v",
+					ak.Name, cr.Model, up.Name, i+1, attemptErr)
+			}
+			if attemptWasFirstOutputFallback {
+				break
 			}
 		}
 
@@ -732,21 +413,8 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 		cost := costForUsage(counts, price)
 		_, independent := ak.ModelQuotas[task.model]
 		quotaPool := "shared"
-		if task.byokUsed {
-			info.UpstreamID = 0
-			if info.UpstreamName != "" && !strings.HasPrefix(info.UpstreamName, "User BYOK · ") {
-				info.UpstreamName = "User BYOK · " + info.UpstreamName
-			}
-			quotaPool = "byok"
-			priceSource = "byok"
-			cost = billingCost{}
-		} else if independent {
+		if independent {
 			quotaPool = "independent"
-		} else if task.router != nil && task.router.RequestedModel != "" {
-			if _, autoIndep := ak.ModelQuotas[task.router.RequestedModel]; autoIndep {
-				independent = true
-				quotaPool = "independent:router"
-			}
 		}
 		logStatus := info.Status
 		logError := ""
@@ -764,11 +432,9 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 			PromptTokens: counts.inputTotal(), CompletionTokens: counts.outputTotal(),
 			CostUSD: cost.Total, Status: logStatus, LatencyMS: info.LatencyMS, Error: logError,
 			FirstTokenMS: info.FirstTokenMS, DurationMS: info.DurationMS,
-			Billing: &billingDetails{Source: usage.Source, Reported: reported, Usage: counts, Cost: cost, Price: price, PriceSource: priceSource, PricingModel: pricingModel, UpstreamModel: info.UpstreamModel, QuotaPool: quotaPool, Router: task.router, AgentPurge: info.agentPurge},
+			Billing: &billingDetails{Source: usage.Source, Reported: reported, Usage: counts, Cost: cost, Price: price, PriceSource: priceSource, PricingModel: pricingModel, UpstreamModel: info.UpstreamModel, QuotaPool: quotaPool, AgentPurge: info.agentPurge},
 		}
-		if task.byokUsed {
-			dbInsertLog(entry)
-		} else if err := dbRecordBilledCall(entry, independent); err != nil {
+		if err := dbRecordBilledCall(entry, independent); err != nil {
 			log.Printf("[billing] key_id=%d model=%s: receipt and debit rolled back: %v", ak.ID, task.model, err)
 		}
 		if lastErr != nil {
@@ -788,19 +454,9 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 
 func insertFailureLog(ak ApiKey, info relayInfo, task *relayTask, status int, errMsg string) {
 	task.markClientRecorded()
-	if task.byokUsed {
-		info.UpstreamID = 0
-		if info.UpstreamName != "" && !strings.HasPrefix(info.UpstreamName, "User BYOK · ") {
-			info.UpstreamName = "User BYOK · " + info.UpstreamName
-		}
-	}
 	var billing *billingDetails
-	if task.router != nil || task.byokUsed || info.agentPurge != nil {
-		qp := ""
-		if task.byokUsed {
-			qp = "byok"
-		}
-		billing = &billingDetails{Source: task.format, QuotaPool: qp, Router: task.router, AgentPurge: info.agentPurge}
+	if info.agentPurge != nil {
+		billing = &billingDetails{Source: task.format, AgentPurge: info.agentPurge}
 	}
 	dbInsertLog(&CallLog{
 		Client:  task.clientIdentity(),
@@ -817,61 +473,11 @@ func insertFailureLog(ak ApiKey, info relayInfo, task *relayTask, status int, er
 
 func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wrote bool, err error) {
 	info = relayInfo{UpstreamID: up.ID, UpstreamName: up.Name}
-	upModel := up.mapModel(resolveUpstreamCandidateModel(up, task.effectiveCandidateModel()))
+	upModel := up.mapModel(resolveModelRequest(up, task.modelRequest()))
 	info.UpstreamModel = upModel
 	if limit := up.openCodeRateLimit(upModel); limit != nil {
 		info.Status = limit.statusCode()
 		return info, false, limit
-	}
-	if up.isDecisionUpstream(upModel) {
-		start := time.Now()
-		info.startedAt = start
-		defer func() { info.DurationMS = time.Since(start).Milliseconds() }()
-		_, state := extractClassifierState(task.canon, 2, 6000)
-		if strings.TrimSpace(state) == "" {
-			state = "hello"
-		}
-		res, usage, dErr := classifyViaUpstream(c.Request.Context(), up, task.model, up.Type, state, nil, "", 0, 15000)
-		info.LatencyMS = time.Since(start).Milliseconds()
-		if dErr != nil {
-			info.Status = http.StatusBadGateway
-			up.markRelayFailure(info.Status, time.Time{})
-			return info, false, dErr
-		}
-		info.Status = http.StatusOK
-		up.markRelaySuccess(start)
-		decisionJSON, _ := json.Marshal(map[string]any{
-			"tier":          res.Tier,
-			"choice":        res.RawChoice,
-			"confidence":    res.Confidence,
-			"probabilities": res.Probabilities,
-			"latency_ms":    res.LatencyMS,
-		})
-		result := &canonResponse{
-			Blocks: []responseBlock{{Kind: "text", Text: string(decisionJSON)}},
-			Finish: "stop",
-			Usage:  usage,
-		}
-		info.OutputText.WriteString(result.text())
-		info.mergeUsage(result.Usage)
-		if task.stream {
-			info.markFirstToken()
-			writer := newProtocolStream(c, task.format, task.model, task.wantUsageChunk)
-			for i, block := range result.Blocks {
-				if sErr := writer.push(c, streamDelta{Key: fmt.Sprintf("block_%d", i), Block: block}, result.Usage); sErr != nil {
-					writer.fail(c)
-					return info, true, sErr
-				}
-			}
-			sErr := writer.finish(c, result.Usage, result.Finish, result.StopSequence)
-			if sErr != nil {
-				writer.fail(c)
-			}
-			return info, true, sErr
-		}
-		response := renderProtocolResponse(task.format, task.model, "", result)
-		c.JSON(http.StatusOK, response)
-		return info, true, nil
 	}
 	replayScope := responseReplayScope{task.apiKeyID, up.ID, task.model, upModel}
 	wireFormat, err := up.resolveWireFormat(c.Request.Context(), task.format, upModel)
@@ -883,7 +489,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	var effortLevels []string
 	// A fully parsed request without an explicit or derived effort needs neither
 	// catalog lookup nor another JSON pass. Opaque native requests keep the old path.
-	if !task.nativeOnly && (task.isAutoRouted() || task.canon == nil || task.canon.ConversionError != nil || protocolReasoningEffort(wireFormat, task.canon) != "") {
+	if !task.nativeOnly && (task.hasModelRequestOptions() || task.canon == nil || task.canon.ConversionError != nil || protocolReasoningEffort(wireFormat, task.canon) != "") {
 		effortLevels = upstreamReasoningEfforts(up, upModel)
 	}
 
@@ -900,8 +506,8 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 			}
 		}
 		if !task.nativeOnly {
-			if task.isAutoRouted() {
-				reqBody = adaptAutoRouterNativeBody(reqBody, wireFormat, up, upModel, task, effortLevels)
+			if task.hasModelRequestOptions() {
+				reqBody = adaptModelRequestBody(reqBody, wireFormat, up, upModel, task, effortLevels)
 			} else {
 				reqBody = mapReasoningEffortBody(reqBody, wireFormat, effortLevels)
 			}
@@ -913,8 +519,8 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		if task.format == FormatOpenAIResponse {
 			cr.Messages = replayResponseReasoning(cr.Messages, replayScope)
 		}
-		if task.isAutoRouted() {
-			adaptAutoRouterCanonReq(&cr, wireFormat, up, upModel, task, effortLevels)
+		if task.hasModelRequestOptions() {
+			adaptModelRequestCanon(&cr, wireFormat, up, upModel, task, effortLevels)
 		} else {
 			cr.ReasoningEffort = mapReasoningEffort(protocolReasoningEffort(wireFormat, &cr), effortLevels)
 		}
@@ -1061,7 +667,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	// an upstream for client cancellation or request/configuration validation.
 	defer func() {
 		var toolLimit *upstreamToolLimitError
-		if c.Request.Context().Err() != nil || errors.Is(err, errDownstreamWrite) || errors.Is(err, errAutoRouterModelIncompatible) || errors.As(err, &toolLimit) {
+		if c.Request.Context().Err() != nil || errors.Is(err, errDownstreamWrite) || errors.As(err, &toolLimit) {
 			return
 		}
 		if up.isOpenCode() && rateLimit != nil && up.selectedKeyID == "" {
@@ -1190,8 +796,8 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 			}
 		}
 		learnModelLimitFromErrorBody(upModel, info.Status, b)
-		if cand := task.effectiveCandidateModel(); cand != "" {
-			if candBase := parseRouterModelSpec(cand).BaseModel; candBase != "" && !strings.EqualFold(candBase, parseRouterModelSpec(upModel).BaseModel) {
+		if cand := task.modelRequest(); cand != "" {
+			if candBase := parseModelRequestSpec(cand).BaseModel; candBase != "" && !strings.EqualFold(candBase, parseModelRequestSpec(upModel).BaseModel) {
 				learnModelLimitFromErrorBody(candBase, info.Status, b)
 			}
 		}
@@ -1203,9 +809,6 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 				return info, false, fmt.Errorf("upstream %s returned %d (model=%s, path=%s): %s", up.Name, info.Status, upModel, req.URL.EscapedPath(), truncate(detail, 1000))
 			}
 			return info, false, fmt.Errorf("upstream %s returned %d", up.Name, info.Status)
-		}
-		if task.isAutoRouted() && task.hasMoreCandidates && !c.Writer.Written() && isAutoRouterFailoverableError(info.Status, b) {
-			return info, false, fmt.Errorf("%w: upstream %s returned %d: %s", errAutoRouterModelIncompatible, up.Name, info.Status, truncate(detail, 300))
 		}
 		// 客户端错误（400/404/413/422 等）：不重试。原生透传原始错误体，转换路径包装成本格式错误
 		if native && !(task.format == FormatAnthropic && keepalive != nil && c.Writer.Written()) {
@@ -1237,16 +840,11 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 				info.OutputText.Reset()
 				info.OutputText.WriteString(finalInfo.OutputText.String())
 			}
-			if task.speculativeProbe && !c.Writer.Written() {
-				if esc, reason := shouldEscalateSpeculativeOutput(info.OutputText.String(), nativeBodyHasToolCall(body), true); esc {
-					return info, false, fmt.Errorf("%w: speculative_probe:%s", errAutoRouterModelIncompatible, reason)
-				}
-			}
 			c.Data(http.StatusOK, "application/json", body)
 			return info, true, nil
 		}
 		if task.stream && isSSE {
-			err = relaySSENative(c, resp, task.format, &info, !task.nativeOnly, task.speculativeProbe)
+			err = relaySSENative(c, resp, task.format, &info, !task.nativeOnly)
 			err = normalizePreOutputTimeout(err, &info)
 			if err != nil && keepalive != nil && keepalive.committed && !keepalive.upstreamError && !errors.Is(err, errDownstreamWrite) && c.Request.Context().Err() == nil {
 				writeMessagesStreamError(c, "upstream stream interrupted")
@@ -1263,11 +861,6 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 			}
 		}
 		parseNativeNonStream(task.format, b, &info)
-		if task.speculativeProbe && !c.Writer.Written() {
-			if esc, reason := shouldEscalateSpeculativeOutput(info.OutputText.String(), nativeBodyHasToolCall(b), true); esc {
-				return info, false, fmt.Errorf("%w: speculative_probe:%s", errAutoRouterModelIncompatible, reason)
-			}
-		}
 		if task.stream && !task.nativeOnly {
 			// The upstream answered with a single JSON body; the client still gets
 			// SSE, so the first token time is when that delivery starts.
@@ -1304,11 +897,6 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	info.mergeUsage(result.Usage)
 	if err := validateStructuredOutput(task.canon.OutputFormat, result); err != nil {
 		return info, false, err
-	}
-	if task.speculativeProbe && !c.Writer.Written() {
-		if esc, reason := shouldEscalateSpeculativeOutput(info.OutputText.String(), canonResponseHasToolCall(result), true); esc {
-			return info, false, fmt.Errorf("%w: speculative_probe:%s", errAutoRouterModelIncompatible, reason)
-		}
 	}
 	if task.canon.omitThinkingOutput() {
 		result.Blocks = slices.DeleteFunc(result.Blocks, func(block responseBlock) bool { return block.Kind == "thinking" })
@@ -1348,36 +936,10 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	return info, true, nil
 }
 
-func nativeBodyHasToolCall(b []byte) bool {
-	return bytes.Contains(b, []byte(`"tool_calls"`)) ||
-		bytes.Contains(b, []byte(`"tool_use"`)) ||
-		bytes.Contains(b, []byte(`"functionCall"`)) ||
-		bytes.Contains(b, []byte(`"function_call"`))
-}
-
-func canonResponseHasToolCall(r *canonResponse) bool {
-	if r == nil {
-		return false
-	}
-	for _, blk := range r.Blocks {
-		if blk.Kind == "tool_call" || blk.Call.Name != "" || blk.Call.Arguments != "" {
-			return true
-		}
-	}
-	return false
-}
-
-// relaySSENative preserves native frames, but holds initialization events until
-// output starts so an early failure can still fail over without mixing streams.
-// When checkTerminal[1] (speculativeProbe) is true, it also buffers the first ~84
-// runes of output text before committing HTTP 200 headers so refusal/punt responses
-// can transparently escalate to a stronger candidate model with 0 client disruption.
 func relaySSENative(c *gin.Context, resp *http.Response, format clientFormat, info *relayInfo, checkTerminal ...bool) error {
 	verify := len(checkTerminal) == 0 || checkTerminal[0]
-	speculative := len(checkTerminal) > 1 && checkTerminal[1]
 	terminal := false
 	committed := false
-	sawTool := false
 	keepalive := messagesState(c)
 	flushPending := false
 	flushToClient := func() {
@@ -1422,22 +984,11 @@ func relaySSENative(c *gin.Context, resp *http.Response, format clientFormat, in
 			if eventErr != nil && !committed {
 				return false, eventErr
 			}
-			if strings.Contains(payload, `"tool_calls"`) || strings.Contains(payload, `"tool_use"`) || strings.Contains(payload, `"functionCall"`) || strings.Contains(payload, `"function_call"`) {
-				sawTool = true
-			}
 			if parsed && recordNativeEventObject(format, event, info) {
 				info.markFirstToken()
 			}
 			output = !committed && (!parsed || !nativeSSEPreludeObject(format, event))
 			semanticOutput := parsed && !nativeSSEPreludeObject(format, event)
-			if !committed && speculative && !sawTool {
-				if esc, reason := shouldEscalateSpeculativeOutput(info.OutputText.String(), sawTool, done); esc {
-					return false, fmt.Errorf("%w: speculative_probe:%s", errAutoRouterModelIncompatible, reason)
-				}
-				if !done && utf8.RuneCountInString(info.OutputText.String()) < 84 {
-					output = false
-				}
-			}
 			if semanticOutput {
 				info.markFirstOutput()
 			}
@@ -1623,4 +1174,18 @@ func replaceGeminiModel(url, model string) string {
 		return prefix + model + rest[j:]
 	}
 	return url
+}
+
+func (t *relayTask) modelRequest() string {
+	if t.requestedModel != "" {
+		return t.requestedModel
+	}
+	return t.model
+}
+func (t *relayTask) hasModelRequestOptions() bool {
+	if t == nil {
+		return false
+	}
+	spec := parseModelRequestSpec(t.modelRequest())
+	return spec.Thinking != "" || spec.BudgetTokens > 0 || spec.ContextLimit > 0
 }

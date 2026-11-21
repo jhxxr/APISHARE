@@ -65,85 +65,68 @@ func TestToolsLimitRecognitionRequiresActualArrayOverflow(t *testing.T) {
 }
 
 func TestToolsLimitFallbackPreservesAllToolsAndChoice(t *testing.T) {
-	for _, auto := range []bool{false, true} {
-		t.Run(fmt.Sprintf("auto=%v", auto), func(t *testing.T) {
-			setupAutoRouterTestDB(t)
-			settings := getSettings()
-			settings.Retry = 0 // A rejected endpoint is not retried, even with no network retry budget.
-			if err := persistSettings(settings); err != nil {
-				t.Fatal(err)
-			}
-			var badCalls, goodCalls atomic.Int32
-			bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				badCalls.Add(1)
-				var body map[string]any
-				_ = json.NewDecoder(r.Body).Decode(&body)
-				if tools := array(body["tools"]); len(tools) != 129 || str(object(object(tools[len(tools)-1])["function"])["name"]) != "tool_128" {
-					t.Errorf("converted upstream lost tools: %v entries", len(tools))
-				}
-				if str(object(object(body["tool_choice"])["function"])["name"]) != "tool_128" {
-					t.Error("converted request lost forced last-tool choice")
-				}
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(400)
-				_, _ = io.WriteString(w, toolsLimitFixture)
-			}))
-			defer bad.Close()
-			good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				goodCalls.Add(1)
-				var body map[string]any
-				_ = json.NewDecoder(r.Body).Decode(&body)
-				if tools := array(body["tools"]); len(tools) != 129 || str(object(tools[len(tools)-1])["name"]) != "tool_128" || object(tools[len(tools)-1])["input_schema"] == nil {
-					t.Errorf("native fallback lost tools/schema: %v entries", len(tools))
-				}
-				if str(object(body["tool_choice"])["name"]) != "tool_128" {
-					t.Error("native fallback lost forced last-tool choice")
-				}
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = io.WriteString(w, `{"id":"msg-ok","type":"message","role":"assistant","model":"tool-b","content":[{"type":"text","text":"all tools retained"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
-			}))
-			defer good.Close()
-			upBad := &Upstream{Name: "limited-chat", Type: "openai", OpenAIProtocol: "chat", BaseURL: bad.URL, Models: "tool-a", Weight: 1, Enabled: true}
-			goodModel := "tool-a"
-			if auto {
-				goodModel = "tool-b"
-			}
-			upGood := &Upstream{Name: "compatible-native", Type: "anthropic", BaseURL: good.URL, Models: goodModel, Priority: 1, Weight: 1, Enabled: true}
-			for _, up := range []*Upstream{upBad, upGood} {
-				if err := dbInsertUpstream(up); err != nil {
-					t.Fatal(err)
-				}
-			}
-			model := "tool-a"
-			if auto {
-				cfg := defaultAutoRouterConfig()
-				cfg.Mode, cfg.Classifier, cfg.StrategyProfile = "live", "heuristic", StrategyQualityFirst
-				cfg.ModelPool = []string{"tool-a", "tool-b"}
-				if err := saveAutoRouterConfig(cfg); err != nil {
-					t.Fatal(err)
-				}
-				arenaRoutingTestSource(t, "text", arenaRoutingTestModel("tool-a", 1, 1500, 1490, 1510), arenaRoutingTestModel("tool-b", 2, 1400, 1390, 1410))
-				model = "auto"
-			}
-			r := gin.New()
-			r.POST("/relay", func(c *gin.Context) { c.Set("apiKey", ApiKey{Models: "auto,tool-a,tool-b"}) }, relayHandler(FormatAnthropic, false))
-			w := httptest.NewRecorder()
-			r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/relay", strings.NewReader(string(toolsLimitTestBody(model, 129, FormatAnthropic)))))
-			if w.Code != 200 || !strings.Contains(w.Body.String(), "all tools retained") || badCalls.Load() != 1 || goodCalls.Load() != 1 {
-				t.Fatalf("lossless fallback failed: HTTP %d bad=%d good=%d body=%s", w.Code, badCalls.Load(), goodCalls.Load(), w.Body)
-			}
-			if !upBad.availableForRelay("tool-a") {
-				t.Fatal("tool-count rejection incorrectly cooled the channel")
-			}
-			if _, ok := lookupBanditArmSummary(upBad.ID, "tool-a", DomainAgenticTools); ok {
-				t.Fatal("tool-count rejection incorrectly became a quality/service observation")
-			}
-		})
+	gatewayTestDB(t)
+	settings := getSettings()
+	settings.Retry = 0 // A rejected endpoint is not retried, even with no network retry budget.
+	if err := persistSettings(settings); err != nil {
+		t.Fatal(err)
 	}
+	var badCalls, goodCalls atomic.Int32
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		badCalls.Add(1)
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if tools := array(body["tools"]); len(tools) != 129 || str(object(object(tools[len(tools)-1])["function"])["name"]) != "tool_128" {
+			t.Errorf("converted upstream lost tools: %v entries", len(tools))
+		}
+		if str(object(object(body["tool_choice"])["function"])["name"]) != "tool_128" {
+			t.Error("converted request lost forced last-tool choice")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(400)
+		_, _ = io.WriteString(w, toolsLimitFixture)
+	}))
+	defer bad.Close()
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		goodCalls.Add(1)
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if tools := array(body["tools"]); len(tools) != 129 || str(object(tools[len(tools)-1])["name"]) != "tool_128" || object(tools[len(tools)-1])["input_schema"] == nil {
+			t.Errorf("native fallback lost tools/schema: %v entries", len(tools))
+		}
+		if str(object(body["tool_choice"])["name"]) != "tool_128" {
+			t.Error("native fallback lost forced last-tool choice")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"msg-ok","type":"message","role":"assistant","model":"tool-b","content":[{"type":"text","text":"all tools retained"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	defer good.Close()
+	upBad := &Upstream{Name: "limited-chat", Type: "openai", OpenAIProtocol: "chat", BaseURL: bad.URL, Models: "tool-a", Weight: 1, Enabled: true}
+	goodModel := "tool-a"
+
+	upGood := &Upstream{Name: "compatible-native", Type: "anthropic", BaseURL: good.URL, Models: goodModel, Priority: 1, Weight: 1, Enabled: true}
+	for _, up := range []*Upstream{upBad, upGood} {
+		if err := dbInsertUpstream(up); err != nil {
+			t.Fatal(err)
+		}
+	}
+	model := "tool-a"
+
+	r := gin.New()
+	r.POST("/relay", func(c *gin.Context) { c.Set("apiKey", ApiKey{Models: "tool-a"}) }, relayHandler(FormatAnthropic, false))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/relay", strings.NewReader(string(toolsLimitTestBody(model, 129, FormatAnthropic)))))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "all tools retained") || badCalls.Load() != 1 || goodCalls.Load() != 1 {
+		t.Fatalf("lossless fallback failed: HTTP %d bad=%d good=%d body=%s", w.Code, badCalls.Load(), goodCalls.Load(), w.Body)
+	}
+	if !upBad.availableForRelay("tool-a") {
+		t.Fatal("tool-count rejection incorrectly cooled the channel")
+	}
+
 }
 
 func TestToolsLimitAllChannelsRejectedReturnsActionable400(t *testing.T) {
-	setupAutoRouterTestDB(t)
+	gatewayTestDB(t)
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)

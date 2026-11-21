@@ -25,11 +25,6 @@ func compileUpstreamConfig(up *Upstream) {
 		for _, model := range strings.Split(up.Models, ",") {
 			config.models[strings.TrimSpace(model)] = true
 		}
-	} else if defaults := defaultDecisionModelsForType(up.Type); len(defaults) > 0 {
-		config.models = make(map[string]bool, len(defaults))
-		for _, dm := range defaults {
-			config.models[dm] = true
-		}
 	}
 	config.modelMap, _ = parseModelMap(up.ModelMap)
 	config.headerRules, config.headerError = parseHeaderOverrides(up.HeaderOverrides)
@@ -97,6 +92,13 @@ func getRoutingSnapshot() (*routingSnapshot, error) {
 	if err != nil {
 		return nil, err
 	}
+	eligible := ups[:0]
+	for _, up := range ups {
+		if validUpstreamType(up.Type) {
+			eligible = append(eligible, up)
+		}
+	}
+	ups = eligible
 	snapshot = &routingSnapshot{database: db, expires: time.Now().Add(routingSnapshotTTL), upstreams: ups, byID: make(map[int64]Upstream, len(ups))}
 	for i := range snapshot.upstreams {
 		up := &snapshot.upstreams[i]

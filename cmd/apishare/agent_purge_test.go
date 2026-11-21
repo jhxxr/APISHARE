@@ -28,7 +28,7 @@ func TestAgentPurgeEligibility(t *testing.T) {
 		{"different model", "codex_cli_rs/1.2.3", "codex", "other", 7, true, true, false},
 		{"case-sensitive model", "codex_cli_rs/1.2.3", "codex", "ALIAS", 7, true, true, false},
 		{"thinking variant", "codex_cli_rs/1.2.3", "codex", "alias(high)", 7, true, true, true},
-		{"BYOK", "codex_cli_rs/1.2.3", "codex", "alias", -7, true, true, false},
+		{"non-site upstream", "codex_cli_rs/1.2.3", "codex", "alias", -7, true, true, false},
 		{"admin off", "codex_cli_rs/1.2.3", "codex", "alias", 7, false, true, false},
 		{"user off", "codex_cli_rs/1.2.3", "codex", "alias", 7, true, false, false},
 		{"unknown", "Mozilla/5.0", "codex", "alias", 7, true, true, false},

@@ -20,7 +20,7 @@ func setArenaFixture(t *testing.T, board string, models []arenaModel) {
 	invalidatePublicOverviews()
 }
 func TestPublicRankingsFullSourceAndSiteBadges(t *testing.T) {
-	setupAutoRouterTestDB(t)
+	gatewayTestDB(t)
 	if err := dbInsertUpstream(&Upstream{Name: "private-upstream", Type: "openai", BaseURL: "https://private.invalid", APIKey: "private-key", Models: "anthropic/claude-sonnet-4-5,gpt-5.2-pro,public-alias", ModelMap: `{"public-alias":"gpt-5.2"}`, Weight: 1, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestArenaPublicIdentityIgnoresOnlyThinkingNotVersions(t *testing.T) {
 }
 
 func TestArenaPublicDeepSeekOfficial1017DoesNotBorrow0910Score(t *testing.T) {
-	setupAutoRouterTestDB(t)
+	gatewayTestDB(t)
 	for _, up := range []*Upstream{
 		{Name: "official", Type: "openai", BaseURL: "https://api.deepseek.com/v1", Models: "deepseek-flash,deepseek-v4-flash,deepseek-v4-pro", Weight: 1, Enabled: true},
 		{Name: "third-party", Type: "openai", BaseURL: "https://example.invalid", Models: "third-party-flash", ModelMap: `{"third-party-flash":"deepseek-flash"}`, Weight: 1, Enabled: true},
@@ -160,7 +160,7 @@ func TestArenaModelIdentityIsConservative(t *testing.T) {
 	}
 }
 func TestPublicRankingsPageAPIAndAssets(t *testing.T) {
-	setupAutoRouterTestDB(t)
+	gatewayTestDB(t)
 	r := gin.New()
 	registerPublic(r)
 	for _, path := range []string{"/public/rankings/", "/api/public/rankings", "/public/static/rankings.js", "/public/static/rankings.css"} {

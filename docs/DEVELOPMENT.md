@@ -69,6 +69,7 @@ go test ./cmd/apishare -run TestCodexCLIResponsesWebSocketToolLoop -v -count=1
 - [协议转换引擎](PROTOCOL_CONVERSION.md)
 - [会话粘性、计费与配额](BILLING.md)
 - [配置参考](CONFIGURATION.md)
+- [公开模型排行榜](ARENA_RANKINGS.md)
 - [性能优化经验与基准](PERFORMANCE.md)
 - [全格式审计](SUB2API_ALL_FORMATS_AUDIT.md)
 - [Responses 审计](SUB2API_RESPONSES_AUDIT.md)

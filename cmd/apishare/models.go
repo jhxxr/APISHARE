@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -38,8 +37,8 @@ func upstreamModelCacheKey(u *Upstream) modelCacheKey {
 	if selected, err := u.probeAPIKey(""); err == nil {
 		u = selected
 	}
-	p := u.customProxy
-	if p == nil && u.ProxyID != 0 {
+	var p *OutboundProxy
+	if u.ProxyID != 0 {
 		p, _ = dbGetOutboundProxy(u.ProxyID)
 	}
 	return upstreamModelCacheKeyForProxy(u, p)
@@ -98,9 +97,7 @@ func fetchCachedModelCatalog(up *Upstream, proxyConfig *OutboundProxy, efforts m
 		return nil, ctx.Err()
 	}
 	client, err := clientForProxyConfig(modelsFetchClient, proxyConfig)
-	if err == nil && up.ID < 0 {
-		client, err = publicUserHTTPClient(client, up.customProxy != nil)
-	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -108,6 +105,9 @@ func fetchCachedModelCatalog(up *Upstream, proxyConfig *OutboundProxy, efforts m
 }
 
 func probeConfiguredModels(ctx context.Context, up *Upstream) ([]string, error) {
+	if !validUpstreamType(up.Type) {
+		return nil, fmt.Errorf("upstream type is no longer supported")
+	}
 	selected, err := up.probeAPIKey("")
 	if err != nil {
 		return nil, err
@@ -195,7 +195,7 @@ func probeUpstreamModelListWithClient(ctx context.Context, upType, baseURL, apiK
 	}
 	upType, baseURL, apiKey = strings.TrimSpace(upType), strings.TrimSpace(baseURL), strings.TrimSpace(apiKey)
 	if !validUpstreamType(upType) {
-		return nil, fmt.Errorf("type must be openai, cliproxy, opencode-free, opencode, cline, anthropic, gemini, openrouter, systemone or cloudflare")
+		return nil, fmt.Errorf("type must be openai, cliproxy, opencode-free, opencode, cline, anthropic or gemini")
 	}
 	base, err := url.Parse(baseURL)
 	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" || base.User != nil || base.RawQuery != "" || base.Fragment != "" {
@@ -207,9 +207,7 @@ func probeUpstreamModelListWithClient(ctx context.Context, upType, baseURL, apiK
 	if upType == "cline" {
 		return probeClineModels(ctx, &Upstream{Type: upType, BaseURL: baseURL, APIKey: apiKey, HeaderOverrides: headers}, client)
 	}
-	if upType == "openrouter" || upType == "systemone" || upType == "cloudflare" {
-		return probeDecisionUpstreamModels(ctx, &Upstream{Type: upType, BaseURL: baseURL, APIKey: apiKey, HeaderOverrides: headers}, client)
-	}
+
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	path := "/v1/models"
@@ -389,8 +387,8 @@ func cachedUpstreamModels(ctx context.Context, u *Upstream) ([]string, error) {
 		return nil, err
 	}
 	u = selected
-	proxyConfig := u.customProxy
-	if proxyConfig == nil && u.ProxyID != 0 {
+	var proxyConfig *OutboundProxy
+	if u.ProxyID != 0 {
 		var err error
 		proxyConfig, err = dbGetOutboundProxy(u.ProxyID)
 		if err != nil {
@@ -494,7 +492,7 @@ func availableModels(ctx context.Context) ([]catalogModel, error) {
 	}
 enqueue:
 	for i, up := range ups {
-		if !up.Enabled || up.Weight <= 0 || len(defaultDecisionModelsForType(up.Type)) > 0 || (strings.TrimSpace(up.Models) != "" && !up.openCodeAuto() && !up.openCodePublic() && !up.openCodeFreeOnly()) {
+		if !up.Enabled || up.Weight <= 0 || (strings.TrimSpace(up.Models) != "" && !up.openCodeAuto() && !up.openCodePublic() && !up.openCodeFreeOnly()) {
 			continue
 		}
 		select {
@@ -532,10 +530,6 @@ enqueue:
 			for _, id := range strings.Split(list, ",") {
 				add(id)
 			}
-		} else if defaults := defaultDecisionModelsForType(u.Type); len(defaults) > 0 {
-			for _, dm := range defaults {
-				add(dm)
-			}
 		} else {
 			if fetchErrors[i] != nil {
 				failed = true
@@ -553,13 +547,7 @@ enqueue:
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	if rcfg := getAutoRouterConfig(); rcfg.Enabled && rcfg.Mode != "off" {
-		vm := strings.TrimSpace(rcfg.VirtualModel)
-		if vm != "" && !seen[vm] {
-			seen[vm] = true
-			data = append(data, catalogModel{ID: vm, Owner: "apishare"})
-		}
-	}
+
 	if len(data) == 0 && failed {
 		return nil, fmt.Errorf("unable to fetch models from configured upstreams")
 	}
@@ -595,16 +583,10 @@ func modelsHandler(c *gin.Context) {
 	ak := c.MustGet("apiKey").(ApiKey)
 	models, err := availableModels(c.Request.Context())
 	if err != nil {
-		extra := appendUserCatalogModels(ak, nil)
-		if len(extra) == 0 {
-			modelError(c, 502, "unable to load available models; check upstream connections")
-			return
-		}
-		models = extra
-	} else {
-		models = ak.filterModels(models)
-		models = appendUserCatalogModels(ak, models)
+		modelError(c, 502, "unable to load available models; check upstream connections")
+		return
 	}
+	models = ak.filterModels(models)
 	start, end, more := 0, len(models), false
 	if claude {
 		if after != "" || before != "" {
@@ -652,14 +634,6 @@ func modelHandler(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	ak := c.MustGet("apiKey").(ApiKey)
 	target := c.Param("model")
-	if isUserAutoRouterModel(ak, target) {
-		c.JSON(200, modelView(catalogModel{ID: target, Owner: "user-router"}, isClaudeModelRequest(c)))
-		return
-	}
-	if userServesModel(ak, target) {
-		c.JSON(200, modelView(catalogModel{ID: target, Owner: "user-byok"}, isClaudeModelRequest(c)))
-		return
-	}
 	if !ak.allowsModel(target) {
 		modelError(c, http.StatusNotFound, "model not found")
 		return
@@ -676,100 +650,4 @@ func modelHandler(c *gin.Context) {
 		}
 	}
 	modelError(c, 404, "model not found")
-}
-
-func probeDecisionUpstreamModels(ctx context.Context, up *Upstream, client *http.Client) ([]string, error) {
-	defaults := defaultDecisionModelsForType(up.Type)
-	if up.isOpenRouterDecisionUpstream("") && strings.EqualFold(up.Type, "systemone") {
-		defaults = []string{defaultOpenRouterDecisionsModel, "parallel/decisions-fast", "jev", "Julia-1"}
-	}
-	probeModel := "jev"
-	if len(defaults) > 0 {
-		probeModel = defaults[0]
-	}
-	if up.isOpenRouterDecisionUpstream("") {
-		probeModel = defaultOpenRouterDecisionsModel
-	}
-	// If Cloudflare URL already embeds a specific @cf/ model path, preserve it in the list.
-	if up.isCloudflareDecisionUpstream(probeModel) {
-		lower := strings.ToLower(strings.TrimRight(strings.TrimSpace(up.BaseURL), "/"))
-		if idx := strings.Index(lower, "/ai/run/"); idx >= 0 {
-			embedded := strings.TrimSpace(strings.TrimRight(strings.TrimSpace(up.BaseURL), "/")[idx+len("/ai/run/"):])
-			if embedded != "" {
-				probeModel = embedded
-			}
-		}
-	}
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-
-	tryProbe := func(candidateModel string) ([]byte, int, error) {
-		reqBody, err := buildDecisionClassifierPayload(candidateModel, up.isCloudflareDecisionUpstream(candidateModel), "hello", defaultClassifierInstructions, defaultAutoRouterTierCriteria())
-		if err != nil {
-			return nil, 0, err
-		}
-		endpoint := up.decisionEndpointURL(candidateModel)
-		if endpoint == "" {
-			return nil, 0, fmt.Errorf("invalid decision upstream URL")
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(reqBody))
-		if err != nil {
-			return nil, 0, fmt.Errorf("invalid decision probe request")
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Accept", "application/json")
-		if strings.TrimSpace(up.APIKey) != "" {
-			req.Header.Set("Authorization", "Bearer "+up.APIKey)
-		}
-		if err := up.applyHeaders(req, nil); err != nil {
-			return nil, 0, err
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil, 0, fmt.Errorf("decision probe timed out or was canceled")
-			}
-			return nil, 0, fmt.Errorf("could not connect to decision upstream API")
-		}
-		defer resp.Body.Close()
-		body, err := io.ReadAll(io.LimitReader(resp.Body, 256<<10))
-		if err != nil {
-			return nil, resp.StatusCode, fmt.Errorf("failed to read decision upstream response")
-		}
-		return body, resp.StatusCode, nil
-	}
-
-	body, statusCode, err := tryProbe(probeModel)
-	if err != nil {
-		return nil, err
-	}
-	// If a generic systemone endpoint rejected "jev" with 400/404, also try OpenRouter's default model (or vice versa)
-	if (statusCode == http.StatusBadRequest || statusCode == http.StatusNotFound) && strings.EqualFold(up.Type, "systemone") {
-		altModel := defaultOpenRouterDecisionsModel
-		if probeModel == defaultOpenRouterDecisionsModel {
-			altModel = "jev"
-		}
-		if altBody, altStatus, altErr := tryProbe(altModel); altErr == nil && altStatus >= 200 && altStatus < 300 {
-			body, statusCode, probeModel = altBody, altStatus, altModel
-		}
-	}
-	if statusCode < 200 || statusCode >= 300 {
-		return nil, fmt.Errorf("decision upstream returned HTTP %d: %s", statusCode, truncate(strings.TrimSpace(string(body)), 180))
-	}
-	if _, parseErr := parseDecisionClassifierResponse(body, 0); parseErr != nil {
-		return nil, fmt.Errorf("decision upstream returned unrecognized payload: %w", parseErr)
-	}
-	out := make([]string, 0, len(defaults)+1)
-	seen := make(map[string]bool, len(defaults)+1)
-	if probeModel != "" {
-		seen[probeModel] = true
-		out = append(out, probeModel)
-	}
-	for _, dm := range defaults {
-		if !seen[dm] {
-			seen[dm] = true
-			out = append(out, dm)
-		}
-	}
-	return out, nil
 }

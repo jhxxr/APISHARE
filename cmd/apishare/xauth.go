@@ -749,17 +749,14 @@ func registerXAuthPublicRoutes(r *gin.Engine, publicSub fs.FS) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "无法读取调用记录"})
 			return
 		}
-		// Redact internal upstream details from user-facing logs, while keeping user BYOK labels visible.
+		// Redact internal upstream details from user-facing logs.
 		for i := range result.Items {
 			result.Items[i].UpstreamID = 0
-			if !strings.HasPrefix(result.Items[i].UpstreamName, "User BYOK · ") {
-				result.Items[i].UpstreamName = ""
-			}
+			result.Items[i].UpstreamName = ""
 		}
 		c.JSON(http.StatusOK, result)
 	})
 
-	registerUserRouterRoutes(userAPI)
 	registerUserAgentPurgeRoutes(userAPI)
 }
 
@@ -832,7 +829,6 @@ func buildUserDashboard(ctx context.Context, now time.Time, rec *xauthUserRecord
 	} else {
 		catalog = ak.filterModels(catalog)
 	}
-	catalog = appendUserCatalogModels(*ak, catalog)
 	availableSet := make(map[string]bool, len(catalog))
 	availableModelsList := make([]string, 0, len(catalog))
 	for _, model := range catalog {
@@ -1238,4 +1234,11 @@ func registerXAuthAdminRoutes(auth *gin.RouterGroup) {
 			"removed_models": removedModelsTotal,
 		})
 	})
+}
+
+func userSubForKey(ak ApiKey) string {
+	if ak.XAuthUser == nil {
+		return ""
+	}
+	return strings.TrimSpace(ak.XAuthUser.Sub)
 }

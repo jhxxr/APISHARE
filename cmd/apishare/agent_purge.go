@@ -86,7 +86,8 @@ func (e *agentPurgeBudgetError) Error() string {
 // Account for the final template after provider shaping. The original canonical
 // request remains untouched for affinity, routing and retries.
 func boundAgentPurgeBody(body []byte, format clientFormat, model string, task *relayTask) ([]byte, error) {
-	limit := effectiveModelContextLimit(model, task.modelContextLimits)
+	limits := task.contextLimits(model)
+	limit := effectiveModelContextLimit(model, limits)
 	if limit <= 0 {
 		return body, nil
 	}
@@ -103,7 +104,7 @@ func boundAgentPurgeBody(body []byte, format clientFormat, model string, task *r
 	if err != nil {
 		return body, nil
 	}
-	if !clampNativeMaxTokensFields(raw, format, model, input, task.modelContextLimits) {
+	if !clampNativeMaxTokensFields(raw, format, model, input, limits) {
 		if cr.MaxTokens > 0 && input+cr.MaxTokens+256 > limit {
 			return nil, &agentPurgeBudgetError{Model: model, Input: input, Limit: limit}
 		}
@@ -256,7 +257,7 @@ func agentPurgeModelMatches(pairModel, model string) bool {
 	if strings.TrimSpace(pairModel) == strings.TrimSpace(model) {
 		return true
 	}
-	spec := parseRouterModelSpec(model)
+	spec := parseModelRequestSpec(model)
 	return spec.BaseModel != "" && strings.TrimSpace(pairModel) == strings.TrimSpace(spec.BaseModel)
 }
 
@@ -288,7 +289,7 @@ func agentPurgeAppliesToModel(task *relayTask) bool {
 		return false
 	}
 	for _, pair := range task.agentPurgeState.policy.Pairs {
-		if agentPurgeModelMatches(pair.Model, task.effectiveCandidateModel()) {
+		if agentPurgeModelMatches(pair.Model, task.modelRequest()) {
 			return true
 		}
 	}
@@ -296,7 +297,7 @@ func agentPurgeAppliesToModel(task *relayTask) bool {
 }
 
 func agentPurgeAllowsUpstream(state *agentPurgeRequestState, model string, up *Upstream) bool {
-	if state == nil || up == nil || up.ID <= 0 || up.isDecisionUpstream(up.mapModel(resolveUpstreamCandidateModel(up, model))) {
+	if state == nil || up == nil || up.ID <= 0 {
 		return false
 	}
 	for _, allowed := range state.policy.Pairs {
@@ -308,7 +309,7 @@ func agentPurgeAllowsUpstream(state *agentPurgeRequestState, model string, up *U
 }
 
 func shouldApplyAgentPurge(state *agentPurgeRequestState, userSub string, up *Upstream, task *relayTask) bool {
-	return agentPurgeEnabledForTask(state, userSub, task) && agentPurgeAllowsUpstream(state, task.effectiveCandidateModel(), up)
+	return agentPurgeEnabledForTask(state, userSub, task) && agentPurgeAllowsUpstream(state, task.modelRequest(), up)
 }
 
 // Seed the same exclusion map used by affinity, key pools and retries. Never
@@ -318,7 +319,7 @@ func restrictAgentPurgeUpstreams(task *relayTask, tried map[int64]bool) error {
 	if err != nil {
 		return err
 	}
-	model := task.effectiveCandidateModel()
+	model := task.modelRequest()
 	allowed := make(map[int64]bool)
 	for _, pair := range task.agentPurgeState.policy.Pairs {
 		if agentPurgeModelMatches(pair.Model, model) {
@@ -327,29 +328,16 @@ func restrictAgentPurgeUpstreams(task *relayTask, tried map[int64]bool) error {
 	}
 	for i := range snapshot.upstreams {
 		up := &snapshot.upstreams[i]
-		if !allowed[up.ID] || up.isDecisionUpstream(up.mapModel(resolveUpstreamCandidateModel(up, model))) {
+		if !allowed[up.ID] {
 			tried[up.ID] = true
 		}
 	}
 	return nil
 }
 
-func (task *relayTask) pickUpstream(target userRouteTarget, skey string, tried map[int64]bool, triedKeys map[string]bool) (*Upstream, error) {
-	if agentPurgeAppliesToModel(task) {
-		if !target.AllowSite {
-			return nil, errors.New("个性化提示词需要可用的站点模型权限与额度，请检查渠道偏好或关闭角色后重试")
-		}
-		if err := restrictAgentPurgeUpstreams(task, tried); err != nil {
-			return nil, err
-		}
-		target.PreferBYOK, target.AllowBYOK = false, false
-	}
-	return pickTargetUpstream(task.userSub, target, task.format, task.effectiveCandidateModel(), skey, tried, triedKeys, task.nativeOnly, task.canon)
-}
-
 func currentAgentPurgePair(pair agentPurgePair) (*Upstream, bool) {
 	up, err := dbGetUpstream(pair.UpstreamID)
-	if err != nil || up == nil || !up.Enabled || up.Weight <= 0 || !upstreamServesOverviewModel(up, pair.Model) || up.isDecisionUpstream(up.mapModel(pair.Model)) {
+	if err != nil || up == nil || !up.Enabled || up.Weight <= 0 || !upstreamServesOverviewModel(up, pair.Model) {
 		return nil, false
 	}
 	return up, true
@@ -363,7 +351,7 @@ func buildAgentPurgePairOptions() ([]agentPurgePairOption, error) {
 	out := make([]agentPurgePairOption, 0)
 	for _, model := range overview.Models {
 		for _, source := range model.Sources {
-			if source.UpstreamID <= 0 || source.Type == "openrouter" || source.Type == "systemone" || source.Type == "cloudflare" {
+			if source.UpstreamID <= 0 {
 				continue
 			}
 			out = append(out, agentPurgePairOption{
@@ -616,4 +604,22 @@ func validateAgentPurgePairs(pairs []agentPurgePair) error {
 		}
 	}
 	return nil
+}
+
+func migrateAgentPurgeSchema() error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS user_agent_purge_configs (
+        sub TEXT PRIMARY KEY,
+        config_json TEXT NOT NULL DEFAULT '{}',
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`)
+	return err
+}
+
+func (task *relayTask) pickUpstream(skey string, tried map[int64]bool, triedKeys map[string]bool) (*Upstream, error) {
+	if agentPurgeAppliesToModel(task) {
+		if err := restrictAgentPurgeUpstreams(task, tried); err != nil {
+			return nil, err
+		}
+	}
+	return pickSessionModelUpstream(task.format, task.modelRequest(), skey, tried, triedKeys, task.nativeOnly, task.canon)
 }
