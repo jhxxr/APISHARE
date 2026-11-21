@@ -33,7 +33,7 @@ type userAgentPurgeConfig struct {
 	Revision  int64            `json:"revision"`
 	Mode      string           `json:"mode"`
 	PersonaID string           `json:"persona_id"`
-	Pairs     []agentPurgePair `json:"pairs"`
+	Pairs     []agentPurgePair `json:"pairs,omitempty"` // Legacy preference; routing is controlled by the administrator.
 	Clients   []string         `json:"clients"`
 }
 
@@ -260,8 +260,8 @@ func agentPurgeModelMatches(pairModel, model string) bool {
 	return spec.BaseModel != "" && strings.TrimSpace(pairModel) == strings.TrimSpace(spec.BaseModel)
 }
 
-func shouldApplyAgentPurge(state *agentPurgeRequestState, userSub string, up *Upstream, task *relayTask) bool {
-	if state == nil || up == nil || task == nil || up.ID <= 0 || userSub == "" ||
+func agentPurgeEnabledForTask(state *agentPurgeRequestState, userSub string, task *relayTask) bool {
+	if state == nil || task == nil || userSub == "" ||
 		!state.policy.Enabled || len(state.policy.Pairs) == 0 ||
 		!state.user.Enabled || task.nativeOnly || task.client == nil {
 		return false
@@ -275,32 +275,76 @@ func shouldApplyAgentPurge(state *agentPurgeRequestState, userSub string, up *Up
 	if client.Conflict || (client.Ambiguous && client.ID != "claude_code") {
 		return false
 	}
-	selectedClient := false
 	for _, id := range state.user.Clients {
 		if (client.ID != "unknown" && id == client.ID) || (client.ID == "unknown" && client.SDKID != "" && id == "sdk:"+client.SDKID) {
-			selectedClient = true
-			break
-		}
-	}
-	if !selectedClient {
-		return false
-	}
-	model := task.effectiveCandidateModel()
-	if model == "" {
-		model = task.model
-	}
-	for _, allowed := range state.policy.Pairs {
-		if allowed.UpstreamID != up.ID || !agentPurgeModelMatches(allowed.Model, model) {
-			continue
-		}
-		for _, selected := range state.user.Pairs {
-			if selected.UpstreamID == allowed.UpstreamID &&
-				normalizeAgentPurgeModel(selected.Model) == normalizeAgentPurgeModel(allowed.Model) {
-				return true
-			}
+			return true
 		}
 	}
 	return false
+}
+
+func agentPurgeAppliesToModel(task *relayTask) bool {
+	if task == nil || !agentPurgeEnabledForTask(task.agentPurgeState, task.userSub, task) {
+		return false
+	}
+	for _, pair := range task.agentPurgeState.policy.Pairs {
+		if agentPurgeModelMatches(pair.Model, task.effectiveCandidateModel()) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentPurgeAllowsUpstream(state *agentPurgeRequestState, model string, up *Upstream) bool {
+	if state == nil || up == nil || up.ID <= 0 || up.isDecisionUpstream(up.mapModel(resolveUpstreamCandidateModel(up, model))) {
+		return false
+	}
+	for _, allowed := range state.policy.Pairs {
+		if allowed.UpstreamID == up.ID && agentPurgeModelMatches(allowed.Model, model) {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldApplyAgentPurge(state *agentPurgeRequestState, userSub string, up *Upstream, task *relayTask) bool {
+	return agentPurgeEnabledForTask(state, userSub, task) && agentPurgeAllowsUpstream(state, task.effectiveCandidateModel(), up)
+}
+
+// Seed the same exclusion map used by affinity, key pools and retries. Never
+// fall back to an unauthorized channel when the selected persona is active.
+func restrictAgentPurgeUpstreams(task *relayTask, tried map[int64]bool) error {
+	snapshot, err := getRoutingSnapshot()
+	if err != nil {
+		return err
+	}
+	model := task.effectiveCandidateModel()
+	allowed := make(map[int64]bool)
+	for _, pair := range task.agentPurgeState.policy.Pairs {
+		if agentPurgeModelMatches(pair.Model, model) {
+			allowed[pair.UpstreamID] = true
+		}
+	}
+	for i := range snapshot.upstreams {
+		up := &snapshot.upstreams[i]
+		if !allowed[up.ID] || up.isDecisionUpstream(up.mapModel(resolveUpstreamCandidateModel(up, model))) {
+			tried[up.ID] = true
+		}
+	}
+	return nil
+}
+
+func (task *relayTask) pickUpstream(target userRouteTarget, skey string, tried map[int64]bool, triedKeys map[string]bool) (*Upstream, error) {
+	if agentPurgeAppliesToModel(task) {
+		if !target.AllowSite {
+			return nil, errors.New("个性化提示词需要可用的站点模型权限与额度，请检查渠道偏好或关闭角色后重试")
+		}
+		if err := restrictAgentPurgeUpstreams(task, tried); err != nil {
+			return nil, err
+		}
+		target.PreferBYOK, target.AllowBYOK = false, false
+	}
+	return pickTargetUpstream(task.userSub, target, task.format, task.effectiveCandidateModel(), skey, tried, triedKeys, task.nativeOnly, task.canon)
 }
 
 func currentAgentPurgePair(pair agentPurgePair) (*Upstream, bool) {
@@ -355,7 +399,7 @@ func saveUserAgentPurgeConfig(sub string, cfg userAgentPurgeConfig) error {
 	if strings.TrimSpace(sub) == "" {
 		return errors.New("缺少用户身份")
 	}
-	cfg.Pairs = normalizeAgentPurgePairs(cfg.Pairs)
+	cfg.Pairs = nil // Discard legacy user channel selections on the next save.
 	cfg.Clients = normalizeAgentPurgeClients(cfg.Clients)
 	cfg.Mode = normalizeAgentPurgeMode(cfg.Mode)
 	cfg.PersonaID = agentpurge.NormalizePersonaID(cfg.PersonaID)
@@ -375,30 +419,26 @@ func buildUserAgentPurgeView(sub string, ak ApiKey) (gin.H, error) {
 	policy := loadAgentPurgePolicy()
 	cfg := loadUserAgentPurgeConfig(sub)
 	persona, personaAvailable := agentpurge.Lookup(cfg.PersonaID)
-	selectedPairs := make(map[string]bool)
-	for _, pair := range cfg.Pairs {
-		selectedPairs[agentPurgePairKey(pair.UpstreamID, pair.Model)] = true
-	}
-	options := make([]agentPurgePairOption, 0, len(policy.Pairs))
+	models := make([]string, 0, len(policy.Pairs))
+	seen := make(map[string]bool)
 	if policy.Enabled {
 		for _, pair := range policy.Pairs {
-			if !ak.allowsModel(pair.Model) {
+			if !ak.allowsModel(pair.Model) || seen[pair.Model] {
 				continue
 			}
-			up, ok := currentAgentPurgePair(pair)
+			_, ok := currentAgentPurgePair(pair)
 			if !ok {
 				continue
 			}
-			options = append(options, agentPurgePairOption{
-				Model: pair.Model, UpstreamID: pair.UpstreamID, UpstreamName: up.Name,
-				UpstreamType: up.Type, Enabled: selectedPairs[agentPurgePairKey(pair.UpstreamID, pair.Model)],
-			})
+			seen[pair.Model] = true
+			models = append(models, pair.Model)
 		}
 	}
+	sort.Strings(models)
 	return gin.H{
 		"enabled":           policy.Enabled,
 		"user_enabled":      cfg.Enabled && personaAvailable,
-		"pairs":             options,
+		"models":            models,
 		"clients":           agentPurgeClientOptions(),
 		"selected_clients":  cfg.Clients,
 		"persona_id":        cfg.PersonaID,
@@ -556,7 +596,7 @@ func registerUserAgentPurgeRoutes(userAPI *gin.RouterGroup) {
 			}
 		}
 		if err := saveUserAgentPurgeConfig(user.Sub, userAgentPurgeConfig{
-			Enabled: req.Enabled, Mode: req.Mode, PersonaID: personaID, Revision: policy.Revision, Pairs: pairs, Clients: clients,
+			Enabled: req.Enabled, Mode: req.Mode, PersonaID: personaID, Revision: policy.Revision, Clients: clients,
 		}); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存个性化提示词设置失败"})
 			return

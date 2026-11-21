@@ -78,6 +78,7 @@
 #logsTable .log-model > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #logsTable .provider-icon { flex: 0 0 auto; width: 20px; height: 20px; border-radius: 5px; font: 600 10px var(--font); }
 .log-endpoint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#logsTable td > .log-purge-status { color: var(--green); overflow-wrap: anywhere; }
 .log-token-count, .log-cost { color: #284b66; font-size: 11px; font-variant-numeric: tabular-nums; }
 #logsTable td > .log-cache { display: flex; align-items: center; gap: 4px; }
 .log-cache .icon { width: 11px; height: 11px; }

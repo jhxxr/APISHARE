@@ -521,7 +521,7 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 					attemptErr = err
 					break
 				}
-				up, err := pickTargetUpstream(userSub, target, format, candRawModel, skey, tried, triedKeys, task.nativeOnly, cr)
+				up, err := task.pickUpstream(target, skey, tried, triedKeys)
 				if err != nil {
 					if attemptErr != nil && upstreamAttempted {
 						attemptErr = fmt.Errorf("%w; failover unavailable: %v", attemptErr, err)

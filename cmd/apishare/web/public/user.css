@@ -45,6 +45,8 @@ body {
 .agent-purge-option span { display: grid; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
 .agent-purge-option strong { font-size: 13px; }
 .agent-purge-option small { color: var(--muted); font-size: 12px; }
+.agent-purge-models { list-style: none; margin: 0; }
+.agent-purge-model { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; overflow-wrap: anywhere; }
 .agent-purge-footnote { margin-top: 16px; }
 .agent-purge-notice { padding: 12px; background: var(--surface-soft); border-radius: 8px; margin-bottom: 14px; }
 .agent-purge-mode { max-width: 680px; margin-bottom: 14px; }

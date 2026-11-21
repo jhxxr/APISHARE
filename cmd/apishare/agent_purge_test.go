@@ -40,7 +40,7 @@ func TestAgentPurgeEligibility(t *testing.T) {
 			pairs := []agentPurgePair{{Model: "alias", UpstreamID: 7}}
 			state := &agentPurgeRequestState{
 				policy: agentPurgePolicy{Enabled: tc.policy, Pairs: pairs},
-				user:   userAgentPurgeConfig{Enabled: tc.enabled, Mode: "append", Pairs: pairs, Clients: []string{tc.client}},
+				user:   userAgentPurgeConfig{Enabled: tc.enabled, Mode: "append", Clients: []string{tc.client}},
 			}
 			task := &relayTask{model: tc.model, client: &requestClientState{identity: detectRequestClient(http.Header{"User-Agent": {tc.ua}})}}
 			if got := shouldApplyAgentPurge(state, "personal-user", &Upstream{ID: tc.upstream}, task); got != tc.want {
@@ -102,7 +102,7 @@ func TestAgentPurgeRelayAllProtocols(t *testing.T) {
 					pair := []agentPurgePair{{Model: "alias", UpstreamID: 7}}
 					task.agentPurgeState = &agentPurgeRequestState{
 						policy: agentPurgePolicy{Enabled: true, Pairs: pair},
-						user:   userAgentPurgeConfig{Enabled: true, Mode: "append", PersonaID: personaID, Pairs: pair, Clients: []string{"codex"}},
+						user:   userAgentPurgeConfig{Enabled: true, Mode: "append", PersonaID: personaID, Clients: []string{"codex"}},
 					}
 					original := string(task.body)
 					for range 2 { // The same task retried must not accumulate prompt text.
@@ -209,12 +209,12 @@ func TestAgentPurgeRoutesPermissionsAndPersistence(t *testing.T) {
 	if w := requestUser("PUT", body, true, true); w.Code != 403 {
 		t.Fatalf("forged pair or model accepted: %d %s", w.Code, w.Body.String())
 	}
-	body = strings.Replace(body, `"other"`, `"alias"`, 1)
+	body = `{"enabled":true,"mode":"strict","revision":1,"clients":["codex"]}`
 	if w := requestUser("PUT", body, true, true); w.Code != 200 {
 		t.Fatalf("save user = %d %s", w.Code, w.Body.String())
 	}
 	stored := loadUserAgentPurgeConfig("purge-user")
-	if !stored.Enabled || stored.Mode != "strict" || len(stored.Pairs) != 1 || len(stored.Clients) != 1 {
+	if !stored.Enabled || stored.Mode != "strict" || len(stored.Pairs) != 0 || len(stored.Clients) != 1 {
 		t.Fatalf("user preferences not persisted: %+v", stored)
 	}
 	selectedBody := strings.TrimSuffix(body, "}") + `,"persona_id":"eni-deepseek-flash"}`
@@ -351,13 +351,14 @@ func TestAgentPurgeFailoverAndEstimatedBilling(t *testing.T) {
 	router := newRouter()
 	for iteration := range 2 {
 		resetUpstreamHealthForTest()
+		first, second = nil, nil
 		if iteration == 1 {
 			pairs = append(pairs, agentPurgePair{Model: "alias", UpstreamID: ups[1].ID})
 		}
 		if err := saveAgentPurgePolicy(agentPurgePolicy{Enabled: true, Pairs: pairs}); err != nil {
 			t.Fatal(err)
 		}
-		if err := saveUserAgentPurgeConfig("purge-retry-user", userAgentPurgeConfig{Enabled: true, Mode: "append", Pairs: pairs, Clients: []string{"codex"}}); err != nil {
+		if err := saveUserAgentPurgeConfig("purge-retry-user", userAgentPurgeConfig{Enabled: true, Mode: "append", Clients: []string{"codex"}}); err != nil {
 			t.Fatal(err)
 		}
 		body := `{"model":"alias","messages":[{"role":"system","content":"original"},{"role":"user","content":"hello"}]}`
@@ -366,21 +367,31 @@ func TestAgentPurgeFailoverAndEstimatedBilling(t *testing.T) {
 		req.Header.Set("User-Agent", "codex_cli_rs/1.2.3")
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, req)
-		if response.Code != 200 {
+		wantStatus, wantUpstream := http.StatusBadGateway, ups[0].ID
+		if iteration == 1 {
+			wantStatus, wantUpstream = http.StatusOK, ups[1].ID
+		}
+		if response.Code != wantStatus {
 			t.Fatalf("production failover = %d %s", response.Code, response.Body.String())
 		}
 		if bytes.Count(first, []byte("系统提示词 · 起步模板")) != 1 || bytes.Contains(second, []byte("系统提示词 · 起步模板")) != (iteration == 1) {
 			t.Fatalf("rewrite crossed failover boundaries: first=%s second=%s", first, second)
 		}
 		logs, err := dbListLogs(10, 0)
-		if err != nil || len(logs) != iteration+1 || logs[0].UpstreamID != ups[1].ID || logs[0].Billing == nil {
+		if err != nil || len(logs) != iteration+1 || logs[0].UpstreamID != wantUpstream || logs[0].Billing == nil {
 			t.Fatalf("incorrect final receipt: %+v %v", logs, err)
 		}
-		if (logs[0].Billing.AgentPurge != nil) != (iteration == 1) {
-			t.Fatal("receipt attributes a prior attempt's rewrite to final upstream")
+		if logs[0].Billing.AgentPurge == nil || logs[0].Status != wantStatus {
+			t.Fatal("receipt does not match the rewritten final attempt and its outcome")
 		}
-		if iteration == 1 && logs[0].PromptTokens <= logs[1].PromptTokens {
-			t.Fatal("fallback token estimate excluded the injected persona")
+		if iteration == 0 && len(second) != 0 {
+			t.Fatal("retry reached an unauthorized fallback")
+		}
+		if iteration == 1 {
+			original, _ := parseClientRequest(FormatOpenAIChat, []byte(body), "")
+			if logs[0].PromptTokens <= estimatePromptTokens(&relayTask{model: "alias", canon: original}) {
+				t.Fatal("fallback token estimate excluded the injected persona")
+			}
 		}
 	}
 }

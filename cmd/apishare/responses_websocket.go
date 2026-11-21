@@ -405,7 +405,7 @@ func (s *responsesWSSession) run(ctx context.Context, downstream *websocket.Conn
 		}
 		if upstream == nil {
 			var err error
-			upstream, err = s.dial(ctx, model)
+			upstream, err = s.dial(ctx, model, &turn.task)
 			if err != nil {
 				if s.up != nil {
 					turn.info.UpstreamID, turn.info.UpstreamName, turn.info.UpstreamModel = s.up.ID, s.up.Name, s.up.mapModel(model)
@@ -507,9 +507,14 @@ func writeResponsesWSError(ctx context.Context, conn *websocket.Conn, request *r
 	return realtimeWrite(ctx, conn, websocket.MessageText, body)
 }
 
-func (s *responsesWSSession) dial(ctx context.Context, model string) (*websocket.Conn, error) {
+func (s *responsesWSSession) dial(ctx context.Context, model string, task *relayTask) (*websocket.Conn, error) {
 	tried := make(map[int64]bool)
 	triedKeys := make(map[string]bool)
+	if agentPurgeAppliesToModel(task) {
+		if err := restrictAgentPurgeUpstreams(task, tried); err != nil {
+			return nil, err
+		}
+	}
 	key := scopedSessionKey(s.keyID, sessionKeyFromCanon("/v1/responses", s.c.Request.Header, &canonReq{Model: model, SessionID: s.sessionID}))
 	var lastErr error
 	for attempt := 0; attempt <= getSettings().Retry; attempt++ {
@@ -605,6 +610,12 @@ func (s *responsesWSSession) admit(model string, request *responsesWSRequest) (*
 	if status, detail := audioPermission(*key, model); status != 0 {
 		return nil, status, detail
 	}
+	task := relayTask{client: requestClientFor(s.c), traceID: randHex(16), format: FormatOpenAIResponse,
+		endpoint: "/v1/responses", model: model, apiKeyID: key.ID, stream: true, userSub: userSubForKey(*key)}
+	task.agentPurgeState = loadAgentPurgeRequestState(task.userSub)
+	if s.up != nil && agentPurgeAppliesToModel(&task) && !shouldApplyAgentPurge(task.agentPurgeState, task.userSub, s.up, &task) {
+		return nil, http.StatusServiceUnavailable, "persona channel authorization changed; reconnect to use an administrator-authorized upstream"
+	}
 	if s.up != nil && s.model != "" {
 		current, err := cachedRoutingUpstream(s.up.ID)
 		if err == nil && s.up.selectedKeyID != "" {
@@ -646,11 +657,8 @@ func (s *responsesWSSession) admit(model string, request *responsesWSRequest) (*
 		key: *key, streamID: request.StreamID, eventID: request.EventID, limit: limit,
 		warmup: request.Generate != nil && !*request.Generate,
 		info:   relayInfo{startedAt: now},
-		task: relayTask{client: requestClientFor(s.c), traceID: randHex(16), format: FormatOpenAIResponse,
-			endpoint: "/v1/responses", model: model, apiKeyID: key.ID, stream: true},
+		task:   task,
 	}
-	turn.task.userSub = userSubForKey(*key)
-	turn.task.agentPurgeState = loadAgentPurgeRequestState(turn.task.userSub)
 	requestClientFor(s.c).model = model
 	s.pending = append(s.pending, turn)
 	return turn, 0, ""
