@@ -10,7 +10,7 @@ require (
 	github.com/parquet-go/parquet-go v0.32.0
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/refraction-networking/utls v1.8.2
-	github.com/router-for-me/CLIProxyAPI/v8 v8.0.80
+	github.com/router-for-me/CLIProxyAPI/v8 v8.1.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/sergeymakinen/go-ico v1.0.0
 	golang.org/x/crypto v0.57.0
@@ -40,6 +40,7 @@ require (
 	github.com/go-playground/validator/v10 v10.30.1 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
+	github.com/gofrs/flock v0.13.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
