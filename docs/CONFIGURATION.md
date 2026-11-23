@@ -20,7 +20,7 @@
 | `UPSTREAM_FIRST_OUTPUT_TIMEOUT_SEC` | `300` | 从每次上游请求发出起计，等待流式请求首个语义输出的最长时间（秒）；上游保活/初始化事件不算模型输出，超时后最多切换一次备用上游，0 为关闭 |
 | `STREAM_KEEPALIVE_INTERVAL_SEC` | `10` | Messages 流式请求向客户端发送保活事件的间隔（秒，0 为关闭，最大 300）；不影响上游空闲超时，其他协议和非流式请求不注入保活 |
 | `REALTIME_MAX_DURATION_SEC` | `3600` | Realtime WebSocket 单连接最长存活时间（秒，1～86400）；空闲读取另受 `UPSTREAM_IDLE_TIMEOUT_SEC` 限制 |
-| `RESPONSES_BRAVE_SEARCH_API_KEY` | 空 | 配置后，为只匹配到非原生渠道的 Responses HTTP 单一搜索工具请求调用 Brave Search。最后一条用户文本将发给 Brave；混合工具和 WebSocket 不适用。 |
+| `RESPONSES_BRAVE_SEARCH_API_KEY` | 空 | 后台「网页搜索回退」选择「使用环境变量（Brave）」时读取此密钥，兼容旧配置。也可在后台直接配置 Brave、Tavily 或 Exa。详见[客户端接入指南](CLIENTS.md#codex-网页搜索)。 |
 | `RESPONSES_WS_MAX_DURATION_SEC` | `3300` | Responses WebSocket 单连接最长存活时间（秒，1～86400）；到期发送 `1001` 关闭帧，由客户端重连 |
 | `RESPONSES_WS_PING_INTERVAL_SEC` | `30` | Responses WebSocket 双向协议 ping 间隔（秒，1～300）；每次等待 pong 最长 10 秒 |
 | `RESPONSES_WS_MAX_CONNECTIONS_PER_KEY` | `16` | 每个 Key 的 Responses WS 连接数上限（1～1024），独立于推理并发；每连接最多 64 个待完成请求 |

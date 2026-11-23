@@ -1327,7 +1327,58 @@ async function resetSiteIcon() {
     toast("已恢复默认网站图标");
   } catch (error) { reportError(error, "恢复默认图标失败"); }
 }
+let webSearchSettings = null;
+
+function renderWebSearchSettings() {
+  const provider = $("setWebSearchProvider").value;
+  const custom = !["environment", "disabled"].includes(provider);
+  const saved = webSearchSettings?.provider === provider && webSearchSettings.key_saved;
+  const key = $("setWebSearchKey");
+  key.value = "";
+  key.disabled = !custom;
+  key.required = custom && !saved;
+  key.placeholder = saved ? "已保存 · 留空保持不变" : "请输入所选供应商的 API Key";
+  $("webSearchKeyHint").textContent = saved ? "留空保留当前密钥，填写新值将替换。" : "切换供应商需要填写对应的密钥。";
+  $("webSearchKeyRow").classList.toggle("hidden", !custom);
+  const envStatus = $("webSearchEnvStatus");
+  envStatus.classList.toggle("hidden", provider !== "environment");
+  envStatus.textContent = webSearchSettings?.environment_key_set ? "已检测到 Brave 环境变量密钥。" : "未配置 Brave 环境变量，网页搜索回退未启用。";
+}
+
+async function loadWebSearchSettings() {
+  const fields = $("webSearchSettingsFields"), status = $("webSearchSettingsStatus");
+  fields.disabled = true;
+  webSearchSettings = null;
+  status.textContent = "正在加载网页搜索设置…";
+  try {
+    webSearchSettings = await api("api/settings/web-search");
+    $("setWebSearchProvider").value = webSearchSettings.provider;
+    renderWebSearchSettings();
+    status.textContent = "";
+    fields.disabled = false;
+  } catch (error) { status.textContent = "网页搜索设置加载失败：" + error.message; }
+}
+
+async function saveWebSearchSettings(event) {
+  event.preventDefault();
+  if (!webSearchSettings) return false;
+  const button = event.currentTarget.querySelector('[type="submit"]');
+  const provider = $("setWebSearchProvider").value, api_key = $("setWebSearchKey").value.trim();
+  const fields = $("webSearchSettingsFields");
+  fields.disabled = true;
+  setBusy(button, true, "正在保存…");
+  try {
+    webSearchSettings = await api("api/settings/web-search", { method: "PUT", body: JSON.stringify({ provider, api_key }) });
+    $("setWebSearchProvider").value = webSearchSettings.provider;
+    renderWebSearchSettings();
+    toast("网页搜索设置已保存");
+  } catch (error) { reportError(error, "保存网页搜索设置失败"); }
+  finally { fields.disabled = false; setBusy(button, false); }
+  return false;
+}
+
 async function loadSettings() {
+  const searchSettings = loadWebSearchSettings();
   try {
     if (!proxiesCache.length && typeof loadProxies === "function") await loadProxies(true);
     const settings = await api("api/settings");
@@ -1360,6 +1411,7 @@ async function loadSettings() {
     applySiteBranding(settings);
     settingsReady = true; stampRefresh();
   } catch (error) { settingsReady = false; reportError(error, "设置加载失败"); }
+  await searchSettings;
 }
 
 async function loadAgentPurgePolicy() {

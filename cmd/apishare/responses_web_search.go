@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -14,9 +13,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const braveSearchEndpoint = "https://api.search.brave.com/res/v1/web/search"
+const (
+	braveSearchEndpoint  = "https://api.search.brave.com/res/v1/web/search"
+	tavilySearchEndpoint = "https://api.tavily.com/search"
+	exaSearchEndpoint    = "https://api.exa.ai/search"
+)
 
-var braveSearchClient = &http.Client{
+var webSearchHTTPClient = &http.Client{
 	Timeout: 10 * time.Second,
 	// Never carry the provider credential to a redirected host.
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -130,44 +133,79 @@ func parseResponsesSearchFallback(body []byte) *responsesSearchRequest {
 	return &responsesSearchRequest{query: query, tool: tool, choice: choice}
 }
 
-type braveSearchResult struct {
+type webSearchResult struct {
 	URL         string `json:"url"`
 	Title       string `json:"title"`
 	Description string `json:"description"`
 }
 
-func searchBrave(ctx context.Context, key, query string) ([]braveSearchResult, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, braveSearchEndpoint, nil)
-	if err != nil {
-		return nil, err
+func searchWeb(ctx context.Context, s webSearchSettings, query string) ([]webSearchResult, error) {
+	method, endpoint, header, credential := http.MethodPost, "", "", s.APIKey
+	var payload string
+	switch s.Provider {
+	case "brave":
+		method, endpoint, header = http.MethodGet, braveSearchEndpoint, "X-Subscription-Token"
+		endpoint += "?" + url.Values{"q": {query}, "count": {"5"}, "text_decorations": {"false"}}.Encode()
+	case "tavily":
+		endpoint, header, credential = tavilySearchEndpoint, "Authorization", "Bearer "+s.APIKey
+		payload = jsonText(map[string]any{"query": query, "max_results": 5, "search_depth": "basic"})
+	case "exa":
+		endpoint, header = exaSearchEndpoint, "X-API-Key"
+		payload = jsonText(map[string]any{"query": query, "numResults": 5, "contents": map[string]any{"highlights": true}})
+	default:
+		return nil, fmt.Errorf("unsupported web search provider")
 	}
-	req.URL.RawQuery = url.Values{"q": {query}, "count": {"5"}, "text_decorations": {"false"}}.Encode()
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("X-Subscription-Token", key)
-	resp, err := braveSearchClient.Do(req)
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, strings.NewReader(payload))
 	if err != nil {
-		return nil, fmt.Errorf("Brave Search request failed") // Do not expose query, URL or credentials.
+		return nil, fmt.Errorf("could not create %s search request", s.Provider)
+	}
+	if method == http.MethodPost {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set(header, credential)
+	resp, err := webSearchHTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%s search request failed", s.Provider) // No query or credentials in errors.
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Brave Search returned HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("%s search returned HTTP %d", s.Provider, resp.StatusCode)
 	}
 	body, err := readProtocolBody(resp.Body, 1<<20)
 	if err != nil {
-		return nil, fmt.Errorf("could not read Brave Search response")
+		return nil, fmt.Errorf("could not read %s search response", s.Provider)
 	}
 	var data struct {
 		Type string `json:"type"`
 		Web  struct {
-			Results []braveSearchResult `json:"results"`
+			Results []webSearchResult `json:"results"`
 		} `json:"web"`
+		Results []struct {
+			webSearchResult
+			Content    string   `json:"content"`
+			Highlights []string `json:"highlights"`
+		} `json:"results"`
 	}
-	if json.Unmarshal(body, &data) != nil || data.Type != "search" {
-		return nil, fmt.Errorf("invalid Brave Search response")
+	if json.Unmarshal(body, &data) != nil || (s.Provider == "brave" && data.Type != "search") || (s.Provider != "brave" && data.Results == nil) {
+		return nil, fmt.Errorf("invalid %s search response", s.Provider)
 	}
-	results := make([]braveSearchResult, 0, 5)
+	raw := data.Web.Results
+	if s.Provider != "brave" {
+		raw = make([]webSearchResult, 0, len(data.Results))
+		for _, result := range data.Results {
+			r := result.webSearchResult
+			if s.Provider == "exa" {
+				r.Description = strings.Join(result.Highlights, " ")
+			} else {
+				r.Description = result.Content
+			}
+			raw = append(raw, r)
+		}
+	}
+	results := make([]webSearchResult, 0, 5)
 	seen := map[string]bool{}
-	for _, result := range data.Web.Results {
+	for _, result := range raw {
 		u, err := url.Parse(result.URL)
 		if err != nil || u.Hostname() == "" || u.User != nil || (u.Scheme != "https" && u.Scheme != "http") || len(result.URL) > 2048 || seen[result.URL] {
 			continue
@@ -186,11 +224,11 @@ func searchBrave(ctx context.Context, key, query string) ([]braveSearchResult, e
 	return results, nil
 }
 
-func relayResponsesSearchFallback(c *gin.Context, task *relayTask, key string, req *responsesSearchRequest) (info relayInfo, wrote bool, err error) {
+func relayResponsesSearchFallback(c *gin.Context, task *relayTask, settings webSearchSettings, req *responsesSearchRequest) (info relayInfo, wrote bool, err error) {
 	start := time.Now()
-	info = relayInfo{UpstreamName: "gateway:brave-search", startedAt: start}
+	info = relayInfo{UpstreamName: "gateway:" + settings.Provider + "-search", startedAt: start}
 	defer func() { info.DurationMS = time.Since(start).Milliseconds() }()
-	results, err := searchBrave(c.Request.Context(), key, req.query)
+	results, err := searchWeb(c.Request.Context(), settings, req.query)
 	info.LatencyMS = info.elapsedMS()
 	if err != nil || c.Request.Context().Err() != nil {
 		if err == nil {
@@ -236,7 +274,7 @@ func relayResponsesSearchFallback(c *gin.Context, task *relayTask, key string, r
 	}
 	info.Status = http.StatusOK
 	info.mergeUsage(upstreamUsage{Source: FormatOpenAIResponse, InKnown: true, OutKnown: true})
-	c.Header("X-APISHARE-Web-Search", "brave")
+	c.Header("X-APISHARE-Web-Search", settings.Provider)
 	if task.stream {
 		info.markFirstToken()
 		err = relayNativeJSONStream(c, FormatOpenAIResponse, body, false)
@@ -246,13 +284,17 @@ func relayResponsesSearchFallback(c *gin.Context, task *relayTask, key string, r
 	return info, true, nil
 }
 
-func (task *relayTask) responsesSearchFallback() (string, *responsesSearchRequest) {
+func (task *relayTask) responsesSearchFallback() (webSearchSettings, *responsesSearchRequest) {
 	if task.format != FormatOpenAIResponse || task.nativeOnly || agentPurgeAppliesToModel(task) {
-		return "", nil
+		return webSearchSettings{}, nil
 	}
-	key := strings.TrimSpace(os.Getenv("RESPONSES_BRAVE_SEARCH_API_KEY"))
-	if key == "" {
-		return "", nil
+	settings, err := readWebSearchSettings()
+	if err != nil {
+		return webSearchSettings{}, nil
 	}
-	return key, parseResponsesSearchFallback(task.body)
+	settings = settings.effective()
+	if settings.APIKey == "" {
+		return webSearchSettings{}, nil
+	}
+	return settings, parseResponsesSearchFallback(task.body)
 }

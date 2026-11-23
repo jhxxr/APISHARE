@@ -34,7 +34,9 @@ codex
 
 需要真实网页搜索时，将对应模型绑定到同时支持 `/v1/responses` 和 `web_search` 的渠道，并在后台选 `OpenAI Responses`（`openai_protocol: "responses"`）。不要将 Chat-only 渠道强制设为 Responses。
 
-如果模型只匹配到非原生渠道，管理员可设置 `RESPONSES_BRAVE_SEARCH_API_KEY`，为 Responses HTTP 的**单一搜索工具请求**启用真实搜索回退。网关把最后一条用户文本作为查询发送给 Brave Search，直接返回搜索摘要、来源和引用（JSON 或 SSE），并附 `X-APISHARE-Web-Search: brave`。不调用模型总结结果，也不按模型 Token 计费；Brave 仍按其套餐计费。启用前请确认用户查询允许发给第三方。
+如果模型只匹配到非原生渠道，可在后台「工作空间设置 → 网页搜索回退」选择 Brave Search、Tavily 或 Exa，填入对应的 API Key 并保存。也可选择「使用环境变量（Brave）」沿用 `RESPONSES_BRAVE_SEARCH_API_KEY`；选择「关闭回退」则忽略环境变量。只保存当前供应商的密钥，保留同一供应商时可留空不改密钥。
+
+回退只处理 Responses HTTP 的**单一搜索工具请求**。网关把最后一条用户文本作为查询发送给所选供应商，直接返回搜索摘要、来源和引用（JSON 或 SSE）；响应头 `X-APISHARE-Web-Search` 会标明供应商。不调用模型总结结果，也不按模型 Token 计费；供应商仍可按其套餐计费。启用前请确认用户查询允许发给第三方。
 
 混合工具、带搜索历史或续接 ID、缓存搜索、域名过滤和位置设置不走回退；已发送到原生渠道的请求也不会回退。此功能不支持 WebSocket 或独立的 `/v1/alpha/search`。没有搜索渠道且不需要网页搜索时，可在 Codex 中设置 `web_search = "disabled"`。
 

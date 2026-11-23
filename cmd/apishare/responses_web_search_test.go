@@ -48,9 +48,9 @@ func TestResponsesHostedWebSearchRouting(t *testing.T) {
 			}
 			t.Setenv("RESPONSES_BRAVE_SEARCH_API_KEY", apiKey)
 			searchCalls := 0
-			originalTransport := braveSearchClient.Transport
-			t.Cleanup(func() { braveSearchClient.Transport = originalTransport })
-			braveSearchClient.Transport = jobRoundTripper(func(r *http.Request) (*http.Response, error) {
+			originalTransport := webSearchHTTPClient.Transport
+			t.Cleanup(func() { webSearchHTTPClient.Transport = originalTransport })
+			webSearchHTTPClient.Transport = jobRoundTripper(func(r *http.Request) (*http.Response, error) {
 				searchCalls++
 				if r.URL.Scheme != "https" || r.URL.Host != "api.search.brave.com" || r.URL.Query().Get("q") != "Go documentation" || r.Header.Get("X-Subscription-Token") != apiKey || r.Header.Get("Authorization") != "" {
 					t.Error("search did not use the configured provider credential and latest query")
