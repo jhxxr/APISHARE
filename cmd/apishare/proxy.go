@@ -319,6 +319,13 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			}
 		}
 
+		// Only fall back after exhausting local protocol candidates. Never send
+		// the query to a third party after a native provider has been contacted.
+		if !upstreamAttempted && errors.Is(attemptErr, errResponsesWebSearch) && c.Request.Context().Err() == nil {
+			if key, search := task.responsesSearchFallback(); search != nil {
+				info, wrote, attemptErr = relayResponsesSearchFallback(c, task, key, search)
+			}
+		}
 		finalizeCall(c, ak, task, info, wrote, attemptErr, -1)
 	}
 }

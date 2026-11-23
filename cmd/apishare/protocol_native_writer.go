@@ -177,9 +177,15 @@ func nativeJSONEvents(format clientFormat, body []byte, wantUsage bool) ([]nativ
 				seed["arguments"] = ""
 			case "custom_tool_call":
 				seed["input"] = ""
+			case "web_search_call":
+				delete(seed, "action")
 			}
 			responseEvent("response.output_item.added", map[string]any{"output_index": index, "item": seed})
-			if str(item["type"]) == "message" {
+			if item["type"] == "web_search_call" && item["status"] == "completed" {
+				for _, state := range []string{"in_progress", "searching", "completed"} {
+					responseEvent("response.web_search_call."+state, map[string]any{"item_id": item["id"], "output_index": index})
+				}
+			} else if item["type"] == "message" {
 				for partIndex, rawPart := range array(item["content"]) {
 					part := object(rawPart)
 					partSeed := copyProtocolObject(part)
@@ -196,6 +202,9 @@ func nativeJSONEvents(format clientFormat, body []byte, wantUsage bool) ([]nativ
 					switch str(part["type"]) {
 					case "output_text":
 						partEvent("response.output_text.delta", map[string]any{"delta": part["text"]})
+						for annotationIndex, annotation := range array(part["annotations"]) {
+							partEvent("response.output_text.annotation.added", map[string]any{"annotation_index": annotationIndex, "annotation": annotation})
+						}
 						partEvent("response.output_text.done", map[string]any{"text": part["text"]})
 					case "refusal":
 						partEvent("response.refusal.delta", map[string]any{"delta": part["refusal"]})

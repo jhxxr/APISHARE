@@ -105,7 +105,7 @@ APISHARE 的常规 Codex 工具调用可以通过 Responses 转入 Chat、Anthro
 | 59 | Chat-only 上游的远程压缩和 compaction_trigger | 明确不模拟供应商加密压缩。需要原生 Responses 上游，或另行实现并验证本地长会话摘要策略；不能只改 endpoint 或制造 compaction 项。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/5648) |
 | 60 | 加密 agent_message、reasoning、previous_response_id 或 conversation | 原生保留；跨格式明确拒绝不能表示的状态。恢复只能依赖兼容提供商和原始完整历史，不能将密文当明文或把不同账号状态任意混用。[相关线索](https://github.com/Wei-Shaw/sub2api/issues/7506) |
 | 61 | 强制 thoughtSignature 的 Gemini 工具多轮 | 待扩展签名回放缓存。原生 Gemini 保留签名；Responses 转 Gemini 不能承诺此类模型闭环，需要按 Key/上游/模型/调用绑定保存和恢复原始签名。[官方要求](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures) |
-| 62 | web_search、file_search、image_generation 和服务端 tool_search | 原生按供应商能力支持；转换路径明确拒绝。需要独立服务端工具执行桥与真实结果事件，不能只注入函数名。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/5155) |
+| 62 | web_search、file_search、image_generation 和服务端 tool_search | 原生按供应商能力支持；HTTP 单一网页搜索工具请求可配置 Brave 实际执行并返回来源。混合工具及其他 hosted 工具不做跨格式转换。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/5155) |
 | 63 | JSON Schema 结构化回答、文件检索、音视频结果 | 当前不做通用跨供应商等价转换，保留原生能力。结构化回答应专门适配和验证，不能静默删 response_format/text.format。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/5518) |
 | 64 | prompt cache 控制、细分 token 与分档计费 | 主要缓存读写、推理和工具提示分桶已接入协议、计价、日志和额度，支持明确的 1 小时缓存创建；保留价格快照并原子扣费。缓存控制语义、长上下文分档及服务端工具等费用仍待扩展。[计费更新](SUB2API_BILLING_AUDIT.md)、[口径说明](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) |
 | 65 | 空 completion 被当成静默拒绝 | 待定义检测策略。只输出推理、输出额度耗尽、真实 0 用量均可能有合法结束语义；不能把所有空回答统一切换上游。[问题线索](https://github.com/Wei-Shaw/sub2api/issues/2556) |

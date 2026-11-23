@@ -13,7 +13,7 @@ API Share 同时提供 OpenAI Chat Completions、OpenAI Responses、Anthropic Me
 ```toml
 model = "deepseek-v4-flash"
 model_provider = "apishare"
-web_search = "disabled"   # 普通 Chat 上游不支持服务端搜索，必须显式禁用
+web_search = "disabled"   # 普通 Chat 上游不支持 Responses 服务端搜索
 
 [model_providers.apishare]
 name = "API Share"
@@ -29,6 +29,14 @@ requires_openai_auth = false
 export APISHARE_API_KEY="sk-your-apishare-key"
 codex
 ```
+
+### Codex 网页搜索
+
+需要真实网页搜索时，将对应模型绑定到同时支持 `/v1/responses` 和 `web_search` 的渠道，并在后台选 `OpenAI Responses`（`openai_protocol: "responses"`）。不要将 Chat-only 渠道强制设为 Responses。
+
+如果模型只匹配到非原生渠道，管理员可设置 `RESPONSES_BRAVE_SEARCH_API_KEY`，为 Responses HTTP 的**单一搜索工具请求**启用真实搜索回退。网关把最后一条用户文本作为查询发送给 Brave Search，直接返回搜索摘要、来源和引用（JSON 或 SSE），并附 `X-APISHARE-Web-Search: brave`。不调用模型总结结果，也不按模型 Token 计费；Brave 仍按其套餐计费。启用前请确认用户查询允许发给第三方。
+
+混合工具、带搜索历史或续接 ID、缓存搜索、域名过滤和位置设置不走回退；已发送到原生渠道的请求也不会回退。此功能不支持 WebSocket 或独立的 `/v1/alpha/search`。没有搜索渠道且不需要网页搜索时，可在 Codex 中设置 `web_search = "disabled"`。
 
 ### Responses WebSocket
 

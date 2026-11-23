@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -50,6 +51,17 @@ func copyProtocolObject(m map[string]any) map[string]any {
 	return out
 }
 
+var errResponsesWebSearch = errors.New("Responses hosted web_search needs a search-capable /v1/responses upstream or a configured gateway search provider for search-only requests")
+
+func isResponsesWebSearch(typ string) bool {
+	switch typ {
+	case "web_search", "web_search_2025_08_26", "web_search_preview", "web_search_preview_2025_03_11":
+		return true
+	default:
+		return false
+	}
+}
+
 // lowerResponsesTools works on decoded JSON only. The original request bytes
 // remain available for a native Responses upstream, even on conversion failure.
 func lowerResponsesTools(cr *canonReq, m map[string]any) error {
@@ -87,6 +99,9 @@ func lowerResponsesTools(cr *canonReq, m map[string]any) error {
 				return unsupported("server-executed Responses tool_search")
 			}
 			name = "tool_search"
+		}
+		if isResponsesWebSearch(typ) {
+			return errResponsesWebSearch
 		}
 		if typ != "function" && typ != "custom" && typ != "tool_search" {
 			return unsupported("Responses tool type " + typ)
