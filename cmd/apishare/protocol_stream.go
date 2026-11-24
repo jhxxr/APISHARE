@@ -101,10 +101,10 @@ func (d *protocolDecoder) decode(payload string) ([]streamDelta, upstreamUsage, 
 	}
 	j, decodeErr := decodeProtocolObject([]byte(payload))
 	if decodeErr != nil {
-		return nil, upstreamUsage{}, fmt.Errorf("invalid upstream SSE JSON")
+		return nil, upstreamUsage{}, withFailurePayload(fmt.Errorf("invalid upstream SSE JSON"), payload)
 	}
 	if j["error"] != nil || str(j["type"]) == "error" || str(j["type"]) == "response.failed" {
-		return nil, upstreamUsage{}, fmt.Errorf("upstream stream returned an error")
+		return nil, upstreamUsage{}, withFailurePayload(fmt.Errorf("upstream stream returned an error"), payload)
 	}
 	out := []streamDelta{}
 	u := upstreamUsage{}
@@ -438,7 +438,7 @@ func (d *protocolDecoder) decode(payload string) ([]streamDelta, upstreamUsage, 
 				r = j
 			}
 			if r["error"] != nil || str(r["status"]) == "failed" {
-				return nil, u, fmt.Errorf("upstream response failed")
+				return nil, u, withFailurePayload(fmt.Errorf("upstream response failed"), payload)
 			}
 			for index, raw := range array(r["output"]) {
 				if err := responseItem(index, object(raw)); err != nil {

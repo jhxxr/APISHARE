@@ -963,6 +963,7 @@ func registerAdminRoutes(r *gin.Engine) {
 	auth.GET("/logs", func(c *gin.Context) {
 		serveLogQuery(c)
 	})
+	registerFailureLogAdminRoutes(auth)
 
 	// ---------- Stats ----------
 	auth.GET("/stats", func(c *gin.Context) {

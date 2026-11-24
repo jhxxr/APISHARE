@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="static/console.css">
   <link rel="stylesheet" href="static/upstreams.css">
   <link rel="stylesheet" href="static/logs.css">
+  <link rel="stylesheet" href="static/failures.css">
   <link rel="stylesheet" href="static/dashboard.css">
   <link rel="stylesheet" href="static/pricing.css">
   <link rel="stylesheet" href="static/cliproxy.css">
@@ -26,6 +27,7 @@
     <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="9" r="5"/><path d="m12 12 9 9m-3-3 3-3m-6 0 3-3"/></symbol>
     <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 10 5-10 5L2 8l10-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/></symbol>
     <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></symbol>
+    <symbol id="i-bug" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="12" rx="5"/><path d="M9 7V5a3 3 0 0 1 6 0v2M3 11h4m10 0h4M3 16h4m10 0h4M4 7l3 2m13-2-3 2M4 20l3-3m13 3-3-3"/></symbol>
     <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 20s-7.2-4.6-9.4-8.6A5.6 5.6 0 0 1 12 5a5.6 5.6 0 0 1 9.4 6.4C19.2 15.4 12 20 12 20Z"/></symbol>
     <symbol id="i-dollar" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 6v12M15 9.2c0-1.2-1.3-2.2-3-2.2s-3 .8-3 2 1.3 1.8 3 2.1 3 .9 3 2.1-1.3 2-3 2-3-1-3-2.2"/></symbol>
     <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 9a6 6 0 1 0-12 0c0 6-2 7-2 7h16s-2-1-2-7"/><path d="M10 20h4"/></symbol>
@@ -78,6 +80,7 @@
       <nav class="tabs" aria-label="后台功能">
         <button data-tab="dashboard" class="tab active" aria-current="page"><svg class="icon"><use href="#i-grid"/></svg><span>仪表盘</span></button>
         <button data-tab="logs" class="tab"><svg class="icon"><use href="#i-activity"/></svg><span>调用日志</span></button>
+        <button data-tab="failures" class="tab"><svg class="icon"><use href="#i-bug"/></svg><span>失败诊断</span><span id="navFailureCount" class="nav-count">—</span></button>
         <button data-tab="keys" class="tab"><svg class="icon"><use href="#i-key"/></svg><span>API 密钥</span><span id="navKeyCount" class="nav-count">—</span></button>
         <button data-tab="models" class="tab"><svg class="icon"><use href="#i-spark"/></svg><span>模型总览</span><span id="navModelCount" class="nav-count">—</span></button>
         <div class="nav-divider"></div><p class="nav-label">服务管理</p>
@@ -332,6 +335,26 @@
           <div class="log-quick-filters"><div role="group" aria-label="快捷筛选"><button data-log-feature="failed" aria-pressed="false" onclick="toggleLogFeature('failed')"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg> 最终失败</button><button data-log-feature="slow" aria-pressed="false" onclick="toggleLogFeature('slow')" title="总耗时至少 5 秒"><svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg> 慢请求</button><button data-log-feature="cache" aria-pressed="false" onclick="toggleLogFeature('cache')"><svg class="icon" aria-hidden="true"><use href="#i-layers"/></svg> 提示缓存命中</button><button data-log-feature="reasoning" aria-pressed="false" onclick="toggleLogFeature('reasoning')"><svg class="icon" aria-hidden="true"><use href="#i-spark"/></svg> 有推理用量</button></div><span id="logTotal" role="status">正在读取记录…</span></div>
           <div class="log-table-shell"><div class="table-wrap"><table class="tbl" id="logsTable"><thead><tr><th scope="col" data-log-column="time">时间</th><th scope="col" data-log-column="model">模型</th><th scope="col" data-log-column="upstream">上游</th><th scope="col" data-log-column="key">密钥</th><th scope="col" data-log-column="ip">请求 IP</th><th scope="col" data-log-column="client">客户端</th><th scope="col" data-log-column="tokens">Tokens</th><th scope="col" data-log-column="performance">性能</th><th scope="col" data-log-column="cost">费用</th><th scope="col" data-log-column="status">状态</th></tr></thead><tbody></tbody></table></div><div class="log-summary-line" id="logQuerySummary"></div><div class="pager"><span id="logRange" class="muted"></span><div><label class="log-page-size"><span class="sr-only">每页记录数</span><select id="logPageSize" aria-label="每页记录数" onchange="loadLogs(1)"><option value="50">50 条 / 页</option><option value="100">100 条 / 页</option><option value="200">200 条 / 页</option></select></label><button id="logPrev" class="icon-btn previous" onclick="loadLogs(logsPage - 1)" aria-label="上一页"><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></button><span id="logPage">1</span><button id="logNext" class="icon-btn" onclick="loadLogs(logsPage + 1)" aria-label="下一页"><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></button></div></div></div>
           <div class="log-page-note"><span>北京时间 UTC+8 · 点击时间、模型、性能或状态查看请求详情</span><span id="logUpdated">记录来自保留的调用明细</span></div>
+        </section>
+
+        <section id="tab-failures" class="panel hidden">
+          <div class="page-heading"><div><h1>失败诊断</h1><p>保存失败请求的完整上下文，便于对照上游返回定位问题。</p></div><div class="log-heading-actions"><button id="failureLogSettingsButton" class="btn ghost" onclick="toggleFailureSettings()" aria-controls="failureLogSettingsPanel" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="#i-sliders"/></svg> 保存设置</button><button id="failureLogRefreshButton" class="btn ghost" onclick="loadFailureLogs()"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg> 刷新</button></div></div>
+          <div id="failureLogSettingsPanel" class="failure-settings hidden" aria-labelledby="failureSettingsTitle">
+            <div class="failure-settings-head"><div><h2 id="failureSettingsTitle">保存设置</h2><p class="muted">修改后立即生效，不需要重启服务。</p></div></div>
+            <div class="failure-settings-grid">
+              <label class="field"><span>保存失败请求</span><select id="failureLogEnabled" onchange="saveFailureSettings()"><option value="true">开启</option><option value="false">关闭（不再记录新条目）</option></select></label>
+              <label class="field"><span>最多保存容量（MB）</span><input id="failureLogMaxMB" type="number" min="1" max="16384" step="1" onchange="saveFailureSettings()"></label>
+              <label class="field"><span>单条记录上限（KiB）</span><input id="failureLogEntryKiB" type="number" min="1" max="1024" step="1" onchange="saveFailureSettings()"></label>
+              <label class="field"><span>保存内容</span><select id="failureLogFullContent" onchange="saveFailureSettings()"><option value="false">脱敏（不保存正文与敏感请求头）</option><option value="true">完整原文（含请求体与 Authorization）</option></select></label>
+            </div>
+            <p id="failureLogSettingsNote" class="failure-settings-note"></p>
+            <p id="failureLogSettingsError" class="form-error hidden" role="alert"></p>
+          </div>
+          <p id="failureLogSummary" class="failure-summary muted" role="status"></p>
+          <div class="failure-layout">
+            <div class="failure-list-shell"><div id="failureLogList" class="failure-list" role="list"></div><div class="pager"><span id="failureLogRange" class="muted"></span><div><label class="log-page-size"><span class="sr-only">每页记录数</span><select id="failureLogPageSize" aria-label="每页记录数" onchange="loadFailureLogs(1)"><option value="50">50 条 / 页</option><option value="100">100 条 / 页</option><option value="200">200 条 / 页</option></select></label><button id="failureLogPrev" class="icon-btn previous" onclick="loadFailureLogs(failuresPage - 1)" aria-label="上一页"><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></button><span id="failureLogPage">1</span><button id="failureLogNext" class="icon-btn" onclick="loadFailureLogs(failuresPage + 1)" aria-label="下一页"><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></button></div></div></div>
+            <div id="failureLogDetail" class="failure-detail"><div class="failure-detail-empty">从左侧选择一条失败记录查看完整细节</div></div>
+          </div>
         </section>
 
         <section id="tab-pricing" class="panel hidden">
@@ -680,6 +703,7 @@
   <script src="static/upstreams.js"></script>
   <script src="static/clients.js"></script>
   <script src="static/logs.js"></script>
+  <script src="static/failures.js"></script>
   <script src="static/pricing.js"></script>
   <script src="static/app.js"></script>
   <script src="static/upstream-keys.js"></script>

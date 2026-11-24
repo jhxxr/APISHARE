@@ -202,11 +202,11 @@ func collectNativeResponsesSSE(reader io.Reader, info *relayInfo) ([]byte, error
 	err := readSSEFrames(wire, func(payload string) (bool, error) {
 		event, err := decodeProtocolObject([]byte(payload))
 		if err != nil {
-			return false, err
+			return false, withFailurePayload(err, payload)
 		}
 		done, err := nativeSSETerminalObject(FormatOpenAIResponse, event)
 		if err != nil {
-			return false, err
+			return false, withFailurePayload(err, payload)
 		}
 		// Buffered for a non-streaming client: nothing is delivered incrementally,
 		// so no first-token time is recorded and TPS uses the full duration.

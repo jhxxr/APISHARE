@@ -51,24 +51,27 @@ func isRetryableStatus(code int) bool {
 }
 
 type relayInfo struct {
-	UpstreamID       int64
-	UpstreamName     string
-	UpstreamModel    string
-	Status           int
-	PromptTok        int
-	CompletionTok    int
-	InKnown          bool
-	OutKnown         bool
-	Usage            upstreamUsage
-	OutputText       strings.Builder
-	LatencyMS        int64 // 上游响应头到达耗时
-	FirstTokenMS     int64 // 首字延迟：请求开始到首个输出增量的耗时
-	DurationMS       int64 // 总耗时：请求开始到转发结束的耗时
-	startedAt        time.Time
-	firstTokenSet    bool
-	firstOutputGuard *firstOutputDeadlineBody
-	agentPurge       *agentPurgeReceipt
-	agentPurgeBody   []byte
+	UpstreamID        int64
+	UpstreamName      string
+	UpstreamModel     string
+	failureReply      failureReply
+	failureHTTPStatus int
+	failureSecrets    []string
+	Status            int
+	PromptTok         int
+	CompletionTok     int
+	InKnown           bool
+	OutKnown          bool
+	Usage             upstreamUsage
+	OutputText        strings.Builder
+	LatencyMS         int64 // 上游响应头到达耗时
+	FirstTokenMS      int64 // 首字延迟：请求开始到首个输出增量的耗时
+	DurationMS        int64 // 总耗时：请求开始到转发结束的耗时
+	startedAt         time.Time
+	firstTokenSet     bool
+	firstOutputGuard  *firstOutputDeadlineBody
+	agentPurge        *agentPurgeReceipt
+	agentPurgeBody    []byte
 }
 
 // markFirstToken 记录首个输出增量的到达时刻，只生效一次。
@@ -130,6 +133,8 @@ func (i *relayInfo) protocolUsage() upstreamUsage {
 type relayTask struct {
 	client                    *requestClientState
 	traceID                   string
+	failureBody               []byte
+	failureStartedAt          time.Time
 	format                    clientFormat
 	endpoint                  string    // 原生透传时的上游路径
 	body                      []byte    // 客户端原始请求体（原生透传用）
@@ -218,6 +223,7 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			return
 		}
 
+		originalBody := body
 		// OpenAI chat 流式注入 include_usage，尽量拿到真实用量计费
 		wantUsageChunk := false
 		if format == FormatOpenAIChat && cr.Stream {
@@ -247,6 +253,7 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			stream: cr.Stream, nativeOnly: nativeOnly, apiKeyID: ak.ID,
 			userSub: userSub, agentPurgeState: agentPurgeState, wantUsageChunk: wantUsageChunk,
 		}
+		task.initFailureLog(c, originalBody)
 		// Routing affinity is also scoped by gateway key: identical opening
 		// messages from different users must not share an upstream, its key,
 		// or its proxy egress.
@@ -324,8 +331,8 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 				break
 			}
 			if attemptErr != nil {
-				log.Printf("[failover] key=%s model=%s upstream=%s attempt=%d err=%v",
-					ak.Name, cr.Model, up.Name, i+1, attemptErr)
+				log.Printf("[failover] key=%s model=%s upstream=%s attempt=%d kind=%s upstream_status=%d",
+					ak.Name, cr.Model, up.Name, i+1, relayFailureKind(info, attemptErr), info.Status)
 			}
 			if attemptWasFirstOutputFallback {
 				break
@@ -366,26 +373,30 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 		task.client = requestClientFor(c)
 	}
 	task.markClientRecorded()
+	recordFailure := func(status int, originalErr error) {
+		recordRelayFailure(c, task, info, status, originalErr, ak.Key)
+		insertFailureLog(ak, info, task, status, relayFailureSummary(info, relayFailureKind(info, originalErr)))
+	}
 	if !wrote {
 		if (c.Request != nil && c.Request.Context().Err() != nil) || errors.Is(lastErr, errDownstreamWrite) {
-			insertFailureLog(ak, info, task, http.StatusBadGateway, "client disconnected")
+			recordFailure(http.StatusBadGateway, context.Canceled)
 			return
 		}
 		var conversion *protocolConversionError
 		if errors.As(lastErr, &conversion) {
 			writeRelayError(c, task.format, http.StatusBadRequest, conversion.Error())
-			insertFailureLog(ak, info, task, http.StatusBadRequest, conversion.Error())
+			recordFailure(http.StatusBadRequest, lastErr)
 			return
 		}
 		if errors.Is(lastErr, errAgentPurgeModelDenied) {
 			writeRelayError(c, task.format, http.StatusForbidden, lastErr.Error())
-			insertFailureLog(ak, info, task, http.StatusForbidden, lastErr.Error())
+			recordFailure(http.StatusForbidden, lastErr)
 			return
 		}
 		var toolLimit *upstreamToolLimitError
 		if errors.As(lastErr, &toolLimit) {
 			writeRelayError(c, task.format, http.StatusBadRequest, toolLimit.Error())
-			insertFailureLog(ak, info, task, http.StatusBadRequest, toolLimit.Error())
+			recordFailure(http.StatusBadRequest, lastErr)
 			return
 		}
 		var rateLimit *openCodeRateLimitError
@@ -393,7 +404,7 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 			c.Header("Retry-After", rateLimit.retryAfter())
 			c.Header("X-APISHARE-RateLimit-Source", "upstream")
 			writeRelayError(c, task.format, rateLimit.statusCode(), rateLimit.Error())
-			insertFailureLog(ak, info, task, rateLimit.statusCode(), rateLimit.Error())
+			recordFailure(rateLimit.statusCode(), lastErr)
 			return
 		}
 		// 所有上游都失败且未给客户端写出任何内容
@@ -402,7 +413,7 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 			msg += ": " + lastErr.Error()
 		}
 		writeRelayError(c, task.format, http.StatusBadGateway, msg)
-		insertFailureLog(ak, info, task, http.StatusBadGateway, msg)
+		recordFailure(http.StatusBadGateway, lastErr)
 		return
 	}
 
@@ -446,7 +457,8 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 		if lastErr != nil {
 			// An interrupted stream is a failed call even after its HTTP 200 headers.
 			logStatus = http.StatusBadGateway
-			logError = "stream interrupted: " + lastErr.Error()
+			logError = "stream interrupted: " + relayFailureKind(info, lastErr)
+			recordRelayFailure(c, task, info, logStatus, lastErr, ak.Key)
 		}
 		entry := &CallLog{
 			Client:  task.clientIdentity(),
@@ -463,18 +475,14 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 			log.Printf("[billing] key_id=%d model=%s: receipt and debit rolled back: %v", ak.ID, task.model, err)
 		}
 		if lastErr != nil {
-			log.Printf("[relay] key=%s model=%s upstream=%s finished with error: %v",
-				ak.Name, task.model, info.UpstreamName, lastErr)
+			log.Printf("[relay] key=%s model=%s upstream=%s finished with error: %s",
+				ak.Name, task.model, info.UpstreamName, relayFailureKind(info, lastErr))
 		}
 		return
 	}
 
 	// 非重试类上游错误（如 400），响应已透传，这里只记录
-	errMsg := fmt.Sprintf("upstream status %d", info.Status)
-	if info.OutputText.Len() > 0 {
-		errMsg += ": " + truncate(info.OutputText.String(), 300)
-	}
-	insertFailureLog(ak, info, task, info.Status, errMsg)
+	recordFailure(info.Status, lastErr)
 }
 
 func insertFailureLog(ak ApiKey, info relayInfo, task *relayTask, status int, errMsg string) {
@@ -780,6 +788,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	resp.Body = newMessagesKeepaliveBody(resp.Body, req.Context(), keepalive)
 	defer resp.Body.Close()
 	info.Status = resp.StatusCode
+	info.failureHTTPStatus = resp.StatusCode
 	if up.selectedKeyID != "" && isRetryableStatus(info.Status) {
 		retryAfter = retryAfterHeader(resp.Header)
 	}
@@ -799,12 +808,24 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 			}
 		}
 	}
+	if failureLogs != nil && task.failureBody != nil {
+		defer func() {
+			if err != nil || info.Status < 200 || info.Status >= 300 {
+				observedReq := req
+				if resp.Request != nil {
+					observedReq = resp.Request
+				}
+				info.failureSecrets = upstreamFailureSecrets(up, observedReq)
+			}
+		}()
+	}
 	if up.ProxyID != 0 && info.Status == http.StatusProxyAuthRequired {
 		return info, false, fmt.Errorf("代理认证失败，请检查代理用户名和密码")
 	}
 
 	if info.Status < 200 || info.Status > 299 {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
+		b, reply := readFailureReply(resp.Body, 16<<10, cancel)
+		info.failureReply = reply
 		if fingerprint && freeShaped && openCodeFreeIPBlocked(info.Status, b) && !up.CooldownDisabled {
 			rateLimit = recordOpenCodeFreeExitBlock(up, openCodeRetryAfter(resp.Header.Get("Retry-After"), time.Now()))
 		}
@@ -888,6 +909,9 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		}
 		if !task.nativeOnly || task.format == FormatOpenAIResponse {
 			if err := nativeProtocolResponseError(task.format, b); err != nil {
+				if failureLogs != nil {
+					info.failureReply = capFailureReply(b, false)
+				}
 				return info, false, err
 			}
 		}
@@ -919,6 +943,9 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		b, err = readProtocolBody(resp.Body, 64<<20)
 		if err == nil {
 			result, err = parseProtocolResponse(wireFormat, b)
+			if err != nil && failureLogs != nil {
+				info.failureReply = capFailureReply(b, false)
+			}
 		}
 	}
 	if err != nil {
@@ -1010,6 +1037,9 @@ func relaySSENative(c *gin.Context, resp *http.Response, format clientFormat, in
 					done, eventErr = nativeSSETerminalObject(format, event)
 				}
 				terminal = terminal || done
+				if eventErr != nil {
+					eventErr = withFailurePayload(eventErr, payload)
+				}
 			}
 			// An error before output must leave both headers and body untouched.
 			if eventErr != nil && !committed {

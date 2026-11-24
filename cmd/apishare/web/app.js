@@ -40,7 +40,7 @@ function editorOpenAIProtocol() {
   if (isOpenCodeType($("editType").value)) return $("editOpenCodeProtocol").value || "auto";
   return { "openai-chat": "chat", "openai-responses": "responses" }[$("editType").value] || "auto";
 }
-const tabNames = { dashboard: "仪表盘", keys: "API 密钥", upstreams: "上游服务", models: "模型总览", proxies: "代理配置", logs: "调用日志", announcements: "公告管理", pricing: "模型定价", settings: "工作空间设置", deployment: "部署配置" };
+const tabNames = { dashboard: "仪表盘", keys: "API 密钥", upstreams: "上游服务", models: "模型总览", proxies: "代理配置", logs: "调用日志", failures: "失败诊断", announcements: "公告管理", pricing: "模型定价", settings: "工作空间设置", deployment: "部署配置" };
 const siteTitle = () => document.documentElement.dataset.siteTitle || "API Share";
 const tabIcons = { dashboard: "grid", keys: "key", upstreams: "layers", models: "spark", proxies: "link", logs: "activity", announcements: "megaphone", pricing: "wallet", settings: "sliders", deployment: "shield" };
 document.body.classList.toggle("sidebar-collapsed", localStorage.getItem("apishare_sidebar_collapsed") === "true");
@@ -59,6 +59,7 @@ const validTab = (name) => Object.hasOwn(tabNames, name) || /^upstreams\/[1-9]\d
 let token = localStorage.getItem(TOKEN_KEY) || "";
 let activeTab = "dashboard";
 let logsPage = 1;
+let failuresPage = 1;
 let keysCache = [], upsCache = [], logsCache = [];
 const weightDrafts = new Map(), weightSaving = new Set();
 let actionResolve = null, actionInputType = null;
@@ -287,6 +288,7 @@ async function loadCurrentTab() {
   if (activeTab === "models") return loadModelOverview();
   if (activeTab === "proxies") return loadProxies();
   if (activeTab === "logs") return loadLogs(logsPage);
+  if (activeTab === "failures") return loadFailureLogs(failuresPage);
   if (activeTab === "announcements") return loadAnnouncements();
   if (activeTab === "pricing") return loadPricing();
   if (activeTab === "settings") return loadSettings();
@@ -1564,6 +1566,7 @@ initModelEditor();
 initModelTest();
 initAnnouncements();
 initLogs();
+initFailures();
 initPricing();
 $("agentPurgePolicySearch")?.addEventListener("input", renderAgentPurgePolicyPairs);
 $("agentPurgePolicyPairs")?.addEventListener("change", (event) => {

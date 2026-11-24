@@ -31,6 +31,7 @@ func envOr(k, def string) string {
 func main() {
 	port := envOr("PORT", "8080")
 	dbPath := envOr("API_DB", "apishare.db")
+	failureLogDBPath = dbPath
 
 	if err := openDB(dbPath); err != nil {
 		fmt.Println("failed to open database:", err)
@@ -38,6 +39,11 @@ func main() {
 	}
 	if err := loadSettingsCache(); err != nil {
 		fmt.Println("failed to load settings:", err)
+	}
+	// Diagnostics are configured from the console; apply the stored settings now
+	// that the settings cache is available.
+	if err := applyFailureLogSettings(readFailureLogSettings()); err != nil {
+		fmt.Println("failed to initialize failure log cache:", err)
 	}
 
 	loadAutoPricingCache()
@@ -142,7 +148,7 @@ func corsV1() gin.HandlerFunc {
 		h.Set("Access-Control-Allow-Origin", "*")
 		h.Set("Access-Control-Allow-Headers",
 			"Authorization, Content-Type, OpenAI-Beta, x-api-key, x-goog-api-key, anthropic-version, anthropic-beta, X-Session-Id, X-Conversation-Id, HTTP-Referer, X-OpenRouter-Title, X-Title")
-		h.Set("Access-Control-Expose-Headers", "Location, X-Request-Id, Retry-After, X-APISHARE-RateLimit-Source")
+		h.Set("Access-Control-Expose-Headers", "Location, X-Request-Id, Retry-After, X-APISHARE-RateLimit-Source, "+failureLogRequestHeader)
 		h.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		if c.Request.Method == http.MethodOptions {
 			if requested := c.GetHeader("Access-Control-Request-Headers"); requested != "" {

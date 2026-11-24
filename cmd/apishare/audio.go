@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"mime"
@@ -150,24 +151,26 @@ func audioHTTPHandler(c *gin.Context) {
 		format = FormatRealtime
 	}
 	task := &relayTask{client: requestClientFor(c), format: format, endpoint: c.Request.URL.Path, model: request.model, apiKeyID: ak.ID}
+	task.initFailureLog(c, body)
 	tried := map[int64]bool{}
 	triedKeys := map[string]bool{}
 	skey := scopedSessionKey(ak.ID, sessionKeyFromCanon(task.endpoint, c.Request.Header, &canonReq{Model: request.model}))
 	var info relayInfo
+	var lastErr error
 	for attempt := 0; attempt <= getSettings().Retry; attempt++ {
 		up, err := pickSessionUpstream(FormatOpenAIChat, request.model, skey, tried, triedKeys, true, nil)
 		if err != nil {
 			break
 		}
-		info = relayInfo{UpstreamID: up.ID, UpstreamName: up.Name, UpstreamModel: up.mapModel(request.model)}
-		mappedBody, contentType, err := request.mappedBody(info.UpstreamModel)
+		upstreamModel := up.mapModel(request.model)
+		mappedBody, contentType, err := request.mappedBody(upstreamModel)
 		if err != nil {
 			continue
 		}
 		endpoint := upstreamURL(up.BaseURL, task.endpoint)
 		queryModel := ""
 		if c.Request.URL.Query().Has("model") {
-			queryModel = info.UpstreamModel
+			queryModel = upstreamModel
 		}
 		if query := audioQuery(c.Request.URL.RawQuery, queryModel); query != "" {
 			endpoint += "?" + query
@@ -191,11 +194,17 @@ func audioHTTPHandler(c *gin.Context) {
 			continue
 		}
 		start := time.Now()
-		info.startedAt = start
-		resp, err := client.Do(req)
+		info = relayInfo{UpstreamID: up.ID, UpstreamName: up.Name, UpstreamModel: upstreamModel, startedAt: start}
+		requestCtx, cancel := context.WithCancel(req.Context())
+		resp, err := client.Do(req.WithContext(requestCtx))
+		lastErr = err
 		info.LatencyMS = time.Since(start).Milliseconds()
 		if err != nil {
+			cancel()
+			info.DurationMS = info.elapsedMS()
 			if c.Request.Context().Err() != nil {
+				recordRelayFailure(c, task, info, http.StatusBadGateway, c.Request.Context().Err(), ak.Key)
+				insertFailureLog(ak, info, task, http.StatusBadGateway, "client disconnected")
 				return
 			}
 			up.markRelayFailure(0, time.Time{})
@@ -205,21 +214,39 @@ func audioHTTPHandler(c *gin.Context) {
 			resp.Body = newActivityDeadlineBody(resp.Body, relayNetwork.BodyIdleTimeout)
 		}
 		info.Status = resp.StatusCode
-		if isRetryableStatus(resp.StatusCode) || (up.ProxyID != 0 && resp.StatusCode == http.StatusProxyAuthRequired) {
+		info.failureHTTPStatus = resp.StatusCode
+		retryable := isRetryableStatus(resp.StatusCode) || (up.ProxyID != 0 && resp.StatusCode == http.StatusProxyAuthRequired)
+		redirect := resp.StatusCode >= 300 && resp.StatusCode < 400
+		if retryable || redirect {
+			if failureLogs != nil && resp.StatusCode != http.StatusProxyAuthRequired {
+				_, info.failureReply = readFailureReply(resp.Body, 0, cancel)
+				info.failureSecrets = upstreamFailureSecrets(up, req)
+			}
 			resp.Body.Close()
-			up.markRelayFailure(resp.StatusCode, retryAfterHeader(resp.Header))
-			continue
-		}
-		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-			resp.Body.Close()
+			cancel()
+			info.DurationMS = info.elapsedMS()
+			if retryable {
+				up.markRelayFailure(resp.StatusCode, retryAfterHeader(resp.Header))
+			}
 			continue
 		}
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			up.markRelaySuccess(start)
 		}
+		var capture *failureReplyReader
+		if failureLogs != nil && (info.Status < 200 || info.Status >= 300) {
+			capture = &failureReplyReader{ReadCloser: resp.Body, limit: failureCaptureLimit()}
+			resp.Body = capture
+		}
 		err = copyAudioResponse(c, resp, &info)
+		if capture != nil {
+			info.failureReply = capture.reply
+			info.failureReply.truncated = info.failureReply.truncated || err != nil
+			info.failureSecrets = upstreamFailureSecrets(up, req)
+		}
 		info.DurationMS = time.Since(start).Milliseconds()
 		resp.Body.Close()
+		cancel()
 		if err != nil && !c.Writer.Written() {
 			errJSON(c, http.StatusBadGateway, "audio upstream response interrupted")
 		}
@@ -230,15 +257,19 @@ func audioHTTPHandler(c *gin.Context) {
 			if err != nil {
 				status, message = 502, "WebRTC signaling response interrupted"
 			}
+			if err != nil || status < 200 || status >= 300 {
+				recordRelayFailure(c, task, info, status, err, ak.Key)
+			}
 			task.markClientRecorded()
-			dbInsertLog(&CallLog{Client: task.clientIdentity(), KeyID: ak.ID, KeyName: ak.Name, UpstreamID: up.ID, UpstreamName: up.Name, Model: task.model, Endpoint: string(format), Status: status, LatencyMS: info.LatencyMS, DurationMS: info.DurationMS, Error: message})
+			dbInsertLog(&CallLog{Client: task.clientIdentity(), TraceID: task.traceID, KeyID: ak.ID, KeyName: ak.Name, UpstreamID: up.ID, UpstreamName: up.Name, Model: task.model, Endpoint: string(format), Status: status, LatencyMS: info.LatencyMS, DurationMS: info.DurationMS, Error: message})
 		} else {
 			finalizeCall(c, ak, task, info, true, err, 0)
 		}
 		return
 	}
 	errJSON(c, http.StatusBadGateway, "no available audio upstream or upstream request failed")
-	insertFailureLog(ak, info, task, 502, "audio upstream request failed")
+	recordRelayFailure(c, task, info, http.StatusBadGateway, lastErr, ak.Key)
+	insertFailureLog(ak, info, task, http.StatusBadGateway, "audio upstream request failed")
 }
 
 func copyAudioResponse(c *gin.Context, resp *http.Response, info *relayInfo) error {
