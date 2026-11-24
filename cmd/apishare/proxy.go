@@ -31,6 +31,12 @@ type protocolConversionError struct{ cause error }
 func (e *protocolConversionError) Error() string { return e.cause.Error() }
 func (e *protocolConversionError) Unwrap() error { return e.cause }
 
+// errAgentPurgeModelDenied means the caller enabled a personal persona while the
+// administrator has not authorized any channel for the requested model. Such a
+// request must fail with a clear permission error instead of falling back to an
+// unauthorized channel or surfacing as a generic upstream failure.
+var errAgentPurgeModelDenied = errors.New("model is not authorized for personalized prompts")
+
 var relayNetwork = loadRelayNetworkConfig()
 var upstreamHTTPClient = newRelayHTTPClient(relayNetwork)
 
@@ -204,6 +210,13 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 		requestClientFor(c).model = cr.Model
 		userSub := userSubForKey(ak)
 		agentPurgeState := loadAgentPurgeRequestState(userSub)
+		// Without this guard an unauthorized model is filtered out of routing and
+		// only reports "all upstream attempts failed" (502) for every retry.
+		if agentPurgeEnabledForSub(agentPurgeState, userSub) && !agentPurgeModelAuthorized(agentPurgeState, cr.Model) {
+			writeFormatError(c, format, http.StatusForbidden,
+				"model "+cr.Model+" is not authorized for personalized prompts; ask an administrator to authorize it or disable personalized prompts")
+			return
+		}
 
 		// OpenAI chat 流式注入 include_usage，尽量拿到真实用量计费
 		wantUsageChunk := false
@@ -362,6 +375,11 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 		if errors.As(lastErr, &conversion) {
 			writeRelayError(c, task.format, http.StatusBadRequest, conversion.Error())
 			insertFailureLog(ak, info, task, http.StatusBadRequest, conversion.Error())
+			return
+		}
+		if errors.Is(lastErr, errAgentPurgeModelDenied) {
+			writeRelayError(c, task.format, http.StatusForbidden, lastErr.Error())
+			insertFailureLog(ak, info, task, http.StatusForbidden, lastErr.Error())
 			return
 		}
 		var toolLimit *upstreamToolLimitError
@@ -566,6 +584,12 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		if err != nil {
 			return info, false, &protocolConversionError{err}
 		}
+	}
+	if agentPurgeEnabledForSub(task.agentPurgeState, task.userSub) && !shouldApplyAgentPurge(task.agentPurgeState, task.userSub, up, task) {
+		// Never send a persona-enabled request to a channel the administrator did
+		// not authorize; reject it locally instead of leaking the plain request.
+		info.Status = http.StatusForbidden
+		return info, false, fmt.Errorf("%w: upstream %s is not authorized", errAgentPurgeModelDenied, up.Name)
 	}
 	if shouldApplyAgentPurge(task.agentPurgeState, task.userSub, up, task) {
 		if rewritten, changed := agentpurge.RewriteWithPersona(reqBody, string(wireFormat), task.agentPurgeState.user.Mode, task.agentPurgeState.user.PersonaID); changed {

@@ -218,8 +218,28 @@ func agentPurgeAppliesToModel(task *relayTask) bool {
 	if task == nil || !agentPurgeEnabledForTask(task.agentPurgeState, task.userSub, task) {
 		return false
 	}
-	for _, pair := range task.agentPurgeState.policy.Pairs {
-		if agentPurgeModelMatches(pair.Model, task.modelRequest()) {
+	return agentPurgeModelAuthorized(task.agentPurgeState, task.modelRequest())
+}
+
+// agentPurgeEnabledForSub reports whether the user actually activated a persona,
+// independent of the requested model. Requests for models outside the
+// administrator's authorization must then be rejected instead of routed.
+func agentPurgeEnabledForSub(state *agentPurgeRequestState, userSub string) bool {
+	if state == nil || userSub == "" || !state.policy.Enabled || !state.user.Enabled {
+		return false
+	}
+	_, available := agentpurge.Lookup(state.user.PersonaID)
+	return available
+}
+
+// agentPurgeModelAuthorized reports whether the administrator authorized at
+// least one upstream for this model.
+func agentPurgeModelAuthorized(state *agentPurgeRequestState, model string) bool {
+	if state == nil {
+		return false
+	}
+	for _, pair := range state.policy.Pairs {
+		if agentPurgeModelMatches(pair.Model, model) {
 			return true
 		}
 	}
