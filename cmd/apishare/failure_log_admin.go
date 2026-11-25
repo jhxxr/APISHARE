@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -21,14 +22,16 @@ func registerFailureLogAdminRoutes(auth *gin.RouterGroup) {
 		if limit <= 0 || limit > 200 {
 			limit = 50
 		}
-		store := activeFailureLogs()
+		// Reading keeps working after recording is disabled, so browse the
+		// directory even when there is no live write target.
+		store := failureLogStoreForReading()
 		items, total := store.list(offset, limit)
 		settings := readFailureLogSettings()
 		c.Header("Cache-Control", "no-store")
 		c.JSON(http.StatusOK, gin.H{
 			"items": items, "total": total,
 			"enabled":  settings.Enabled && store != nil,
-			"settings": gin.H{"max_mb": settings.MaxMB, "entry_kib": settings.EntryKiB, "full_content": settings.FullContent},
+			"settings": failureLogSettingsView(settings, store != nil),
 		})
 	})
 
@@ -87,8 +90,8 @@ func registerFailureLogAdminRoutes(auth *gin.RouterGroup) {
 	})
 
 	auth.GET("/failure-logs/:name", func(c *gin.Context) {
-		store := activeFailureLogs()
-		entry, err := store.entry(c.Param("name"))
+		name := c.Param("name")
+		entry, err := failureLogStoreForReading().entry(name)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				c.JSON(http.StatusNotFound, gin.H{"error": "该失败记录不存在或已被清理"})
@@ -98,11 +101,14 @@ func registerFailureLogAdminRoutes(auth *gin.RouterGroup) {
 			return
 		}
 		c.Header("Cache-Control", "no-store")
-		c.JSON(http.StatusOK, entry)
+		c.JSON(http.StatusOK, failureLogDetailView{
+			Name: name, Time: entry.Time, RequestID: entry.RequestID, Duration: entry.Duration,
+			Status: entry.Status, Request: entry.Request, Upstream: entry.Upstream, Truncated: entry.Truncated,
+		})
 	})
 
 	auth.DELETE("/failure-logs/:name", func(c *gin.Context) {
-		if err := activeFailureLogs().remove(c.Param("name")); err != nil {
+		if err := failureLogStoreForReading().remove(c.Param("name")); err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "该失败记录不存在或已被清理"})
 			return
 		}
@@ -110,9 +116,22 @@ func registerFailureLogAdminRoutes(auth *gin.RouterGroup) {
 	})
 
 	auth.DELETE("/failure-logs", func(c *gin.Context) {
-		removed := activeFailureLogs().clear()
+		removed := failureLogStoreForReading().clear()
 		c.JSON(http.StatusOK, gin.H{"ok": true, "removed": removed})
 	})
+}
+
+// failureLogDetailView is the stored entry plus the file name the console needs
+// to address it (delete, refresh). The name is not part of the record body.
+type failureLogDetailView struct {
+	Name      string          `json:"name"`
+	Time      time.Time       `json:"time"`
+	RequestID string          `json:"request_id"`
+	Duration  int64           `json:"duration_ms"`
+	Status    int             `json:"gateway_status"`
+	Request   failureRequest  `json:"request"`
+	Upstream  failureResponse `json:"upstream"`
+	Truncated bool            `json:"truncated,omitempty"`
 }
 
 // failureLogSettingsView keeps one shape for every settings response so the

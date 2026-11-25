@@ -22,9 +22,9 @@ func testFailureLogs(t *testing.T, entryBytes int) *failureLogStore {
 	if err != nil {
 		t.Fatal(err)
 	}
-	old := failureLogs
-	failureLogs = s
-	t.Cleanup(func() { failureLogs = old })
+	old := activeFailureLogs()
+	setFailureLogs(s)
+	t.Cleanup(func() { setFailureLogs(old) })
 	return s
 }
 
@@ -313,4 +313,71 @@ func TestFailureLogFullContentKeepsRawBody(t *testing.T) {
 	if redacted["authorization"] == "Bearer sk-leak" {
 		t.Fatalf("redacted mode leaked authorization")
 	}
+}
+
+func TestFailureLogRecordsRemainReadableWhenDisabled(t *testing.T) {
+	dir := t.TempDir()
+	previous := failureLogDBPath
+	failureLogDBPath = filepath.Join(dir, "gateway.db")
+	t.Cleanup(func() { failureLogDBPath = previous })
+
+	s, err := openFailureLogStore(failureLogDir(), 1<<20, 64<<10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := failureLogEntry{Time: time.Now().UTC(), RequestID: strings.Repeat("ab", 16), Status: 500,
+		Request:  failureRequest{Method: "POST", Route: "/v1/messages", Model: "m"},
+		Upstream: failureResponse{Kind: "upstream_http_error", Summary: "boom"}}
+	if err := s.write(entry); err != nil {
+		t.Fatal(err)
+	}
+
+	// Disabling recording must not hide what was already saved.
+	if err := applyFailureLogSettings(failureLogSettings{Enabled: false, MaxMB: 32, EntryKiB: 64}); err != nil {
+		t.Fatal(err)
+	}
+	if activeFailureLogs() != nil {
+		t.Fatal("disabled store still present")
+	}
+	reader := failureLogStoreForReading()
+	if reader == nil {
+		t.Fatal("no store for reading after disabling")
+	}
+	items, total := reader.list(0, 10)
+	if total != 1 || len(items) != 1 || items[0].Model != "m" {
+		t.Fatalf("records not readable while disabled: %d/%d %+v", len(items), total, items)
+	}
+	if _, err := reader.entry(items[0].Name); err != nil {
+		t.Fatalf("detail unreadable while disabled: %v", err)
+	}
+	if err := reader.remove(items[0].Name); err != nil {
+		t.Fatalf("delete failed while disabled: %v", err)
+	}
+}
+
+func TestFailureLogConcurrentSettingsSwap(t *testing.T) {
+	dir := t.TempDir()
+	previous := failureLogDBPath
+	failureLogDBPath = filepath.Join(dir, "gateway.db")
+	t.Cleanup(func() { failureLogDBPath = previous })
+
+	// Readers and a settings writer run together: this is the race that used to
+	// panic when the handle was swapped to nil mid-read.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 200; i++ {
+			settings := failureLogSettings{Enabled: i%2 == 0, MaxMB: 2, EntryKiB: 16}
+			if err := applyFailureLogSettings(settings); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+	}()
+	for i := 0; i < 200; i++ {
+		_ = failureLogsEnabled()
+		_ = failureCaptureLimit()
+		_ = activeFailureLogs()
+	}
+	<-done
 }

@@ -808,7 +808,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 			}
 		}
 	}
-	if failureLogs != nil && task.failureBody != nil {
+	if failureLogsEnabled() && task.failureBody != nil {
 		defer func() {
 			if err != nil || info.Status < 200 || info.Status >= 300 {
 				observedReq := req
@@ -909,7 +909,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		}
 		if !task.nativeOnly || task.format == FormatOpenAIResponse {
 			if err := nativeProtocolResponseError(task.format, b); err != nil {
-				if failureLogs != nil {
+				if failureLogsEnabled() {
 					info.failureReply = capFailureReply(b, false)
 				}
 				return info, false, err
@@ -943,7 +943,7 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		b, err = readProtocolBody(resp.Body, 64<<20)
 		if err == nil {
 			result, err = parseProtocolResponse(wireFormat, b)
-			if err != nil && failureLogs != nil {
+			if err != nil && failureLogsEnabled() {
 				info.failureReply = capFailureReply(b, false)
 			}
 		}

@@ -218,7 +218,7 @@ func audioHTTPHandler(c *gin.Context) {
 		retryable := isRetryableStatus(resp.StatusCode) || (up.ProxyID != 0 && resp.StatusCode == http.StatusProxyAuthRequired)
 		redirect := resp.StatusCode >= 300 && resp.StatusCode < 400
 		if retryable || redirect {
-			if failureLogs != nil && resp.StatusCode != http.StatusProxyAuthRequired {
+			if failureLogsEnabled() && resp.StatusCode != http.StatusProxyAuthRequired {
 				_, info.failureReply = readFailureReply(resp.Body, 0, cancel)
 				info.failureSecrets = upstreamFailureSecrets(up, req)
 			}
@@ -234,7 +234,7 @@ func audioHTTPHandler(c *gin.Context) {
 			up.markRelaySuccess(start)
 		}
 		var capture *failureReplyReader
-		if failureLogs != nil && (info.Status < 200 || info.Status >= 300) {
+		if failureLogsEnabled() && (info.Status < 200 || info.Status >= 300) {
 			capture = &failureReplyReader{ReadCloser: resp.Body, limit: failureCaptureLimit()}
 			resp.Body = capture
 		}

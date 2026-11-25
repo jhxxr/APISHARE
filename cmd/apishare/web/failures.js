@@ -171,7 +171,7 @@ function renderFailureLogDetail(entry) {
   parts.push(`<div class="failure-detail-head">
     <div><span class="failure-kind">${esc(upstream.failure_kind || upstream.error_type || "unknown")}</span><h2>${esc(request.model || "（未识别模型）")}</h2>
     <p class="failure-muted">${esc(request.method || "")} ${esc(request.route || "")} · ${esc(failureLogTime(entry.time))}</p></div>
-    <button type="button" class="btn ghost" onclick="deleteFailureLog('${esc(entry.name)}')" aria-label="删除这条失败记录"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg> 删除</button>
+    <button type="button" class="btn ghost" onclick="deleteFailureLog('${esc(entry.name || failureLogSelected)}')" aria-label="删除这条失败记录"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg> 删除</button>
   </div>`);
   parts.push(`<div class="failure-facts">
     <div><span>请求编号</span><strong class="failure-mono">${esc(entry.request_id || "—")}</strong></div>
@@ -193,6 +193,7 @@ function renderFailureLogDetail(entry) {
 }
 
 async function deleteFailureLog(name) {
+  name = name || failureLogSelected;
   if (!name) return;
   if (!await askAction({ title: "删除这条失败记录？", description: "删除后无法恢复。", confirm: "删除", danger: true })) return;
   try {

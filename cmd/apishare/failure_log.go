@@ -21,8 +21,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-var failureLogs *failureLogStore // Set at startup and swapped when settings change.
-
 // Failure diagnostics are configured from the admin console, never from the
 // environment, so operators can change retention and redaction without a restart.
 const failureLogSettingsKey = "failure_logs"
@@ -78,16 +76,34 @@ func saveFailureLogSettings(settings failureLogSettings) error {
 	return settingsSet(failureLogSettingsKey, string(encoded))
 }
 
+var failureLogs *failureLogStore // Written only under failureLogsMu.
+var failureLogsMu sync.RWMutex   // Guards failureLogs against settings swaps.
+
 // activeFailureLogs returns the live store. The handle is replaced when the
 // settings change, so never cache it for the lifetime of a request.
-func activeFailureLogs() *failureLogStore { return failureLogs }
+func activeFailureLogs() *failureLogStore {
+	failureLogsMu.RLock()
+	defer failureLogsMu.RUnlock()
+	return failureLogs
+}
+
+// setFailureLogs swaps the store under the same lock that guards readers.
+func setFailureLogs(s *failureLogStore) {
+	failureLogsMu.Lock()
+	defer failureLogsMu.Unlock()
+	failureLogs = s
+}
+
+func failureLogsEnabled() bool { return activeFailureLogs() != nil }
 
 // applyFailureLogSettings rebuilds the store so a retention change takes effect
-// immediately. Disabling only stops new records; existing files stay readable.
+// immediately. Disabling only stops new records: the live handle is cleared so
+// the relay stops writing, but the existing files stay readable through the
+// read-only path (see failureLogStoreForReading).
 func applyFailureLogSettings(settings failureLogSettings) error {
 	settings = settings.normalized()
 	if !settings.Enabled {
-		failureLogs = nil
+		setFailureLogs(nil)
 		return nil
 	}
 	s, err := openFailureLogStore(failureLogDir(), int64(settings.MaxMB)<<20, settings.EntryKiB<<10)
@@ -95,8 +111,24 @@ func applyFailureLogSettings(settings failureLogSettings) error {
 		return err
 	}
 	s.fullContent = settings.FullContent
-	failureLogs = s
+	setFailureLogs(s)
 	return nil
+}
+
+// failureLogStoreForReading resolves the store for read/delete APIs. When
+// recording is disabled there is no live handle, so a store is opened over the
+// existing directory without ever being published as the write target. Records
+// stay browsable and deletable until retention removes them.
+func failureLogStoreForReading() *failureLogStore {
+	if s := activeFailureLogs(); s != nil {
+		return s
+	}
+	settings := readFailureLogSettings()
+	s, err := openFailureLogStore(failureLogDir(), int64(settings.MaxMB)<<20, settings.EntryKiB<<10)
+	if err != nil {
+		return nil
+	}
+	return s
 }
 
 // failureLogDBPath is captured at startup so diagnostics live next to the
@@ -403,7 +435,7 @@ func failurePrefix(s string, n int) string {
 // Keep the unmodified client body only for the life of the relay. Parsing and
 // redaction are deferred until failure, not performed on every successful call.
 func (t *relayTask) initFailureLog(c *gin.Context, body []byte) {
-	if failureLogs != nil {
+	if failureLogsEnabled() {
 		t.failureBody = body
 		t.failureStartedAt = time.Now()
 		t.traceID = randHex(16)
@@ -412,7 +444,7 @@ func (t *relayTask) initFailureLog(c *gin.Context, body []byte) {
 }
 
 func recordRelayFailure(c *gin.Context, task *relayTask, info relayInfo, status int, err error, key string) {
-	s := failureLogs
+	s := activeFailureLogs()
 	if s == nil || task.failureBody == nil {
 		return
 	}
@@ -529,7 +561,7 @@ const failureSummaryLimit = 400
 // second full idle timeout (or indefinitely when idle timeouts are disabled).
 func readFailureReply(r io.Reader, relayLimit int, cancel context.CancelFunc) ([]byte, failureReply) {
 	b, err := io.ReadAll(io.LimitReader(r, int64(relayLimit)))
-	if failureLogs == nil {
+	if !failureLogsEnabled() {
 		return b, failureReply{}
 	}
 	if err != nil || len(b) < relayLimit {
@@ -552,7 +584,16 @@ func readFailureReply(r io.Reader, relayLimit int, cancel context.CancelFunc) ([
 
 // Allow small entries to sanitize a complete JSON error before clipping the
 // serialized record. The extra diagnostic reads remain bounded.
-func failureCaptureLimit() int { return max(64<<10, failureLogs.entryBytes) }
+func failureCaptureLimit() int { return max(64<<10, failureLogEntryBytes()) }
+
+// failureLogEntryBytes reads the per-entry limit from the live store, falling
+// back to the default when recording is disabled mid-flight.
+func failureLogEntryBytes() int {
+	if s := activeFailureLogs(); s != nil {
+		return s.entryBytes
+	}
+	return failureLogDefaultEntryKiB << 10
+}
 
 type failureReply struct {
 	data      []byte
@@ -589,7 +630,7 @@ func (p *upstreamFailurePayload) Error() string { return p.cause.Error() }
 func (p *upstreamFailurePayload) Unwrap() error { return p.cause }
 
 func withFailurePayload(err error, payload string) error {
-	if failureLogs == nil {
+	if !failureLogsEnabled() {
 		return err
 	}
 	limit := min(len(payload), failureCaptureLimit())
