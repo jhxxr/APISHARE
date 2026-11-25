@@ -28,7 +28,11 @@ const failureLogSettingsKey = "failure_logs"
 const (
 	failureLogDefaultMaxMB    = 32
 	failureLogDefaultEntryKiB = 64
-	failureLogMaxMB           = 16384
+	// Full-content capture keeps whole payloads, so it needs more room to be
+	// useful: at 64 KiB a normal prompt alone fills the file.
+	failureLogFullContentEntryKiB = 256
+	failureLogMaxMB               = 16384
+	failureLogMaxEntryKiB         = 1024
 )
 
 type failureLogSettings struct {
@@ -50,10 +54,18 @@ func (s failureLogSettings) normalized() failureLogSettings {
 	if s.MaxMB <= 0 || s.MaxMB > failureLogMaxMB {
 		s.MaxMB = failureLogDefaultMaxMB
 	}
-	if s.EntryKiB < 1 || s.EntryKiB > 1024 {
-		s.EntryKiB = failureLogDefaultEntryKiB
+	if s.EntryKiB < 1 || s.EntryKiB > failureLogMaxEntryKiB {
+		s.EntryKiB = s.defaultEntryKiB()
 	}
 	return s
+}
+
+// defaultEntryKiB is the per-record budget implied by the capture mode.
+func (s failureLogSettings) defaultEntryKiB() int {
+	if s.FullContent {
+		return failureLogFullContentEntryKiB
+	}
+	return failureLogDefaultEntryKiB
 }
 
 func readFailureLogSettings() failureLogSettings {
@@ -354,7 +366,13 @@ type failureLogEntry struct {
 	Request   failureRequest  `json:"request"`
 	Upstream  failureResponse `json:"upstream"`
 	Truncated bool            `json:"truncated,omitempty"`
+	// TruncatedReason explains why details were shortened, so the console can
+	// say "configured limit" instead of silently showing a partial record.
+	TruncatedReason string `json:"truncated_reason,omitempty"`
 }
+
+// failureTruncatedEntryLimit marks records shrunk to fit EntryKiB.
+const failureTruncatedEntryLimit = "entry_limit"
 
 type failureRequest struct {
 	Method    string            `json:"method"`
@@ -366,6 +384,8 @@ type failureRequest struct {
 	Raw       string            `json:"raw_body,omitempty"` // Set only when full content capture is on.
 	Redacted  bool              `json:"redacted,omitempty"`
 	Truncated bool              `json:"truncated,omitempty"`
+	// RawTruncated records that raw_body itself was cut to fit the entry limit.
+	RawTruncated bool `json:"raw_body_truncated,omitempty"`
 }
 
 type failureResponse struct {
@@ -381,6 +401,14 @@ type failureResponse struct {
 	Redacted  bool   `json:"body_redacted,omitempty"`
 }
 
+// marshal fits the record into one stored file.
+//
+// Bodies are the only compressible part, so they share the budget instead of
+// competing: the request body (what the caller sent) gets requestBodyShare and
+// the upstream reply gets the rest. Both are shortened by binary search over
+// the real JSON size, because escaping inflates the encoded bytes. Metadata is
+// never dropped silently: the last resort keeps the failure visible with only
+// its envelope, so a large payload can no longer make a failure vanish.
 func (e failureLogEntry) marshal(limit int) ([]byte, error) {
 	encode := func() ([]byte, bool) {
 		b, err := json.Marshal(e)
@@ -389,37 +417,324 @@ func (e failureLogEntry) marshal(limit int) ([]byte, error) {
 	if b, ok := encode(); ok {
 		return b, nil
 	}
+
+	// Everything except the bodies is fixed overhead; measure it once with the
+	// bodies emptied so the split below works on the real remaining budget.
+	requestBody, requestRaw := e.Request.Body, e.Request.Raw
+	upstreamBody := e.Upstream.Body
+	e.Request.Body, e.Request.Raw, e.Upstream.Body = nil, "", ""
 	e.Truncated = true
-	body := e.Upstream.Body
-	e.Upstream.Body = ""
-	e.Upstream.Truncated = e.Upstream.Truncated || body != ""
-	// Keep both envelopes even at the smallest configured limit.
-	if _, ok := encode(); !ok {
-		e.Request.Body, e.Request.Headers = nil, nil
-		e.Request.Truncated = true
-	}
-	best, ok := encode()
+	// Reserve the marker up front: it is written with the record, so leaving it
+	// out of the fixed cost would make the final encode overflow by its length.
+	e.TruncatedReason = failureTruncatedEntryLimit
+	fixed, ok := encode()
 	if !ok {
+		// Metadata alone does not fit: shrink the free-text fields, then give up
+		// on descriptions rather than on the record itself.
 		e.Request.Model = failurePrefix(e.Request.Model, 24)
 		e.Upstream.Model = failurePrefix(e.Upstream.Model, 24)
 		e.Upstream.Channel = failurePrefix(e.Upstream.Channel, 24)
-		best, ok = encode()
-		if !ok {
-			return nil, fmt.Errorf("failure log metadata exceeds entry limit")
+		e.Upstream.Summary = failurePrefix(e.Upstream.Summary, failureSummaryLimit)
+		if fixed, ok = encode(); !ok {
+			e.Request.Headers = nil
+			e.Request.Method = failurePrefix(e.Request.Method, 8)
+			e.Request.Route = failurePrefix(e.Request.Route, 48)
+			e.Upstream.Summary = failurePrefix(e.Upstream.Summary, 120)
+			e.Upstream.Kind = failurePrefix(e.Upstream.Kind, 32)
+			e.Upstream.ErrorType = failurePrefix(e.Upstream.ErrorType, 32)
+			e.Request.Model = failurePrefix(e.Request.Model, 12)
+			e.Upstream.Model = failurePrefix(e.Upstream.Model, 12)
+			e.Upstream.Channel = failurePrefix(e.Upstream.Channel, 12)
+			if fixed, ok = encode(); !ok {
+				return nil, fmt.Errorf("failure log metadata exceeds entry limit")
+			}
 		}
 	}
-	// Account for actual JSON-escaped size rather than guessing from input bytes.
-	for lo, hi := 1, len(body); lo <= hi; {
+
+	budget := limit - len(fixed)
+	if budget <= 0 {
+		// Not even a shortened body fits; keep the metadata-only record but
+		// report every body as dropped instead of leaving stale flags.
+		e.Upstream.Truncated = upstreamBody != ""
+		e.Request.RawTruncated = requestRaw != ""
+		e.Request.Truncated = requestBody != nil
+		if b, ok := encode(); ok {
+			return b, nil
+		}
+		return fixed, nil
+	}
+	requestBudget := shareFailureBudget(budget)
+	// Headers were measured inside the fixed part; drop them when the bodies
+	// need the room, since they are the least useful detail after a big body.
+	if requestBudget <= 0 && e.Request.Headers != nil {
+		e.Request.Headers = nil
+		if b, ok := encode(); ok && len(b) < len(fixed) {
+			fixed, budget = b, limit-len(b)
+			requestBudget = shareFailureBudget(budget)
+		}
+	}
+
+	best := fixed
+	grew := false
+	if requestRaw != "" {
+		// Raw bodies are one opaque blob: binary search the longest prefix that
+		// fits the request share, then record whether anything was cut.
+		e.Request.RawTruncated = true
+		lo, hi := 0, len(requestRaw)
+		fit := 0
+		for lo <= hi {
+			mid := (lo + hi) / 2
+			e.Request.Raw = failurePrefix(requestRaw, mid)
+			e.Request.RawTruncated = len(e.Request.Raw) < len(requestRaw)
+			if b, ok := encode(); ok {
+				best, grew, fit = b, true, mid
+				lo = mid + 1
+			} else {
+				hi = mid - 1
+			}
+		}
+		e.Request.Raw = failurePrefix(requestRaw, fit)
+		e.Request.RawTruncated = len(e.Request.Raw) < len(requestRaw)
+	} else if requestBody != nil {
+		// Keep the scaled body on the entry so the final encode emits it; the
+		// fitted bytes are only a snapshot of one intermediate attempt. The
+		// budget is the whole limit: fitJSONValue encodes the complete record, so
+		// the request share alone would let it overrun the file size.
+		var kept map[string]any
+		if fitted, ok := fitJSONValue(requestBody, func(v map[string]any) ([]byte, bool) {
+			kept = v
+			e.Request.Body = v
+			return encode()
+		}, budget); ok {
+			best, grew = fitted, true
+			e.Request.Body = kept
+		}
+	}
+	if upstreamBody != "" {
+		// Assume truncation until proven otherwise, so the fallback snapshot
+		// never claims a full body it does not hold.
+		e.Upstream.Truncated = true
+		lo, hi := 0, len(upstreamBody)
+		fit := 0
+		for lo <= hi {
+			mid := (lo + hi) / 2
+			e.Upstream.Body = failurePrefix(upstreamBody, mid)
+			// Set the flag before encoding so the kept snapshot carries it; a
+			// later assignment would only patch the final attempt.
+			e.Upstream.Truncated = len(e.Upstream.Body) < len(upstreamBody)
+			if b, ok := encode(); ok {
+				best, grew, fit = b, true, mid
+				lo = mid + 1
+			} else {
+				hi = mid - 1
+			}
+		}
+		e.Upstream.Body = failurePrefix(upstreamBody, fit)
+		e.Upstream.Truncated = len(e.Upstream.Body) < len(upstreamBody)
+	}
+	if !grew && (requestRaw != "" || requestBody != nil || upstreamBody != "") {
+		e.Request.Body, e.Request.Raw, e.Upstream.Body = nil, "", ""
+	}
+	// Flags follow the bytes that actually survived, so the stored record never
+	// claims a body it dropped.
+	e.Request.RawTruncated = len(e.Request.Raw) < len(requestRaw)
+	e.Request.Truncated = requestBody != nil && e.Request.Body == nil
+	e.Upstream.Truncated = len(e.Upstream.Body) < len(upstreamBody)
+	// The flags consume a few bytes that were not part of the split, so trim the
+	// bodies until the annotated record fits instead of dropping to an older,
+	// unflagged snapshot.
+	for i := 0; i < 64; i++ {
+		b, ok := encode()
+		if ok {
+			return b, nil
+		}
+		if !trimFailureBodies(&e) {
+			break
+		}
+	}
+	if b, ok := encode(); ok {
+		return b, nil
+	}
+	return best, nil
+}
+
+// trimFailureBodies shaves the largest remaining body and reports whether
+// anything could still be removed. The request side is trimmed last: it is the
+// only place the caller's payload is recorded, so dropping it is a last resort.
+func trimFailureBodies(e *failureLogEntry) bool {
+	switch {
+	case len(e.Upstream.Body) > 0:
+		e.Upstream.Body = failurePrefix(e.Upstream.Body, len(e.Upstream.Body)*15/16)
+		return true
+	case len(e.Request.Raw) > 0:
+		e.Request.Raw = failurePrefix(e.Request.Raw, len(e.Request.Raw)*15/16)
+		return true
+	case e.Request.Body != nil:
+		if b, ok := shrinkJSONStrings(e.Request.Body, 15); ok {
+			e.Request.Body = b
+			return true
+		}
+		e.Request.Body = nil
+		return true
+	case e.Request.Headers != nil:
+		e.Request.Headers = nil
+		return true
+	}
+	return false
+}
+
+// failureShrinkMinChars is the shortest field worth shortening; below this the
+// text is an identifier or enum that must stay readable.
+const failureShrinkMinChars = 64
+
+// shrinkJSONStrings cuts every string leaf in body to num/16 of its length and
+// reports whether anything was actually shortened. It keeps the request's
+// structure intact instead of discarding the whole payload at the limit.
+func shrinkJSONStrings(body map[string]any, num int) (map[string]any, bool) {
+	shrunk := false
+	scaled := scaleJSONFraction(body, num, &shrunk)
+	if result, ok := scaled.(map[string]any); ok && shrunk {
+		return result, true
+	}
+	return body, false
+}
+
+// scaleJSONFraction recursively shortens string leaves by num/16.
+func scaleJSONFraction(value any, num int, shrunk *bool) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		clone := make(map[string]any, len(typed))
+		for k, v := range typed {
+			clone[k] = scaleJSONFraction(v, num, shrunk)
+		}
+		return clone
+	case []any:
+		clone := make([]any, len(typed))
+		for i, v := range typed {
+			clone[i] = scaleJSONFraction(v, num, shrunk)
+		}
+		return clone
+	case string:
+		// Short leaves are field values (model name, role, flags). Shrinking
+		// them to nothing destroys meaning for almost no space, so only
+		// substantial text is reduced.
+		if len(typed) < failureShrinkMinChars {
+			return typed
+		}
+		*shrunk = true
+		return failurePrefix(typed, len(typed)*num/16)
+	default:
+		return value
+	}
+}
+
+// requestBodyShare keeps most of the budget for the caller's own payload: the
+// upstream status is already visible in the call log, while the request body is
+// only recorded here.
+const requestBodyShare = 6 // out of 10
+
+// shareFailureBudget returns the request body's share of the free space. The
+// upstream reply is encoded after the request, so it takes whatever is left.
+func shareFailureBudget(budget int) int {
+	if budget <= 0 {
+		return 0
+	}
+	return budget * requestBodyShare / 10
+}
+
+// fitJSONValue returns the encoded record with the largest prefix of value that
+// fits. Payloads are nested (messages[].content, tool results, attachments), so
+// a flat scan over top-level keys would keep nothing; instead every string leaf
+// is scaled by one shared factor, which preserves the request's shape and keeps
+// the beginning of each field. That is what a truncated record should look like:
+// same structure, earlier content.
+func fitJSONValue(value map[string]any, encode func(map[string]any) ([]byte, bool), budget int) ([]byte, bool) {
+	if budget <= 0 {
+		return nil, false
+	}
+	original := deepCopyJSON(value)
+	var best []byte
+	fits := false
+	lo, hi := 0, 1000 // per-mille of every string leaf kept
+	for lo <= hi {
 		mid := (lo + hi) / 2
-		e.Upstream.Body = failurePrefix(body, mid)
-		if b, fits := encode(); fits {
-			best = b
+		scaled, _ := scaleJSON(value, original, mid).(map[string]any)
+		if scaled == nil {
+			break
+		}
+		if b, ok := encode(scaled); ok {
+			best, fits = b, true
 			lo = mid + 1
 		} else {
 			hi = mid - 1
 		}
 	}
-	return best, nil
+	return best, fits
+}
+
+// deepCopyJSON clones a decoded body so scaling never mutates the caller's copy.
+func deepCopyJSON(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		clone := make(map[string]any, len(typed))
+		for k, v := range typed {
+			clone[k] = deepCopyJSON(v)
+		}
+		return clone
+	case []any:
+		clone := make([]any, len(typed))
+		for i, v := range typed {
+			clone[i] = deepCopyJSON(v)
+		}
+		return clone
+	default:
+		return typed
+	}
+}
+
+// scaleJSON returns a copy of value where every string leaf keeps the first
+// permille of its original length. Numbers, booleans and nulls stay intact so
+// the record still shows parameter values.
+func scaleJSON(value any, original any, permille int) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		source, ok := original.(map[string]any)
+		if !ok {
+			return value
+		}
+		clone := make(map[string]any, len(typed))
+		for k, v := range typed {
+			clone[k] = scaleJSON(v, source[k], permille)
+		}
+		return clone
+	case []any:
+		source, ok := original.([]any)
+		if !ok {
+			return value
+		}
+		clone := make([]any, len(typed))
+		for i, v := range typed {
+			if i < len(source) {
+				clone[i] = scaleJSON(v, source[i], permille)
+			} else {
+				clone[i] = v
+			}
+		}
+		return clone
+	case string:
+		source, ok := original.(string)
+		if !ok || permille >= 1000 {
+			return typed
+		}
+		// Keep identifiers and enums (model names, roles, tool types): shortening
+		// them to nothing saves a few bytes and loses what the record is about.
+		if len(source) < failureShrinkMinChars {
+			return typed
+		}
+		return failurePrefix(source, len(source)*permille/1000)
+	default:
+		return value
+	}
 }
 
 func failurePrefix(s string, n int) string {

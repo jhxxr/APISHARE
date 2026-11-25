@@ -61,7 +61,7 @@ func registerFailureLogAdminRoutes(auth *gin.RouterGroup) {
 			settings.MaxMB = *incoming.MaxMB
 		}
 		if incoming.EntryKiB != nil {
-			if *incoming.EntryKiB < 1 || *incoming.EntryKiB > 1024 {
+			if *incoming.EntryKiB < 1 || *incoming.EntryKiB > failureLogMaxEntryKiB {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "单条记录上限需在 1 到 1024 KiB 之间"})
 				return
 			}
@@ -70,8 +70,14 @@ func registerFailureLogAdminRoutes(auth *gin.RouterGroup) {
 		if incoming.Enabled != nil {
 			settings.Enabled = *incoming.Enabled
 		}
-		if incoming.FullContent != nil {
+		if incoming.FullContent != nil && *incoming.FullContent != settings.FullContent {
 			settings.FullContent = *incoming.FullContent
+			// Switching modes carries the matching entry budget along, unless the
+			// admin pinned a size in this same request. Full content needs the
+			// larger default to hold a real payload; redaction works in 64 KiB.
+			if incoming.EntryKiB == nil {
+				settings.EntryKiB = settings.defaultEntryKiB()
+			}
 		}
 		failureLogSettingsMu.Lock()
 		defer failureLogSettingsMu.Unlock()
@@ -103,7 +109,8 @@ func registerFailureLogAdminRoutes(auth *gin.RouterGroup) {
 		c.Header("Cache-Control", "no-store")
 		c.JSON(http.StatusOK, failureLogDetailView{
 			Name: name, Time: entry.Time, RequestID: entry.RequestID, Duration: entry.Duration,
-			Status: entry.Status, Request: entry.Request, Upstream: entry.Upstream, Truncated: entry.Truncated,
+			Status: entry.Status, Request: entry.Request, Upstream: entry.Upstream,
+			Truncated: entry.Truncated, TruncatedReason: entry.TruncatedReason,
 		})
 	})
 
@@ -132,6 +139,8 @@ type failureLogDetailView struct {
 	Request   failureRequest  `json:"request"`
 	Upstream  failureResponse `json:"upstream"`
 	Truncated bool            `json:"truncated,omitempty"`
+	// TruncatedReason lets the console explain why details were shortened.
+	TruncatedReason string `json:"truncated_reason,omitempty"`
 }
 
 // failureLogSettingsView keeps one shape for every settings response so the

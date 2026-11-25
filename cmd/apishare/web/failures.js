@@ -182,8 +182,11 @@ function renderFailureLogDetail(entry) {
     <div><span>上游模型</span><strong>${esc(upstream.model || "—")}</strong></div>
   </div>`);
   if (upstream.summary) parts.push(`<section class="failure-section"><h3>失败摘要</h3><p class="failure-summary-text">${esc(upstream.summary)}</p></section>`);
-  parts.push(`<section class="failure-section"><h3>请求体${request.truncated ? ' <span class="failure-badge">已截断</span>' : ""}</h3>
-    ${entry.truncated ? '<p class="failure-warning">该记录因超过单条上限而被截断。</p>' : ""}
+  const requestCut = request.truncated || request.raw_body_truncated;
+  const cutoffNote = entry.truncated_reason === "entry_limit" || entry.truncated
+    ? '<p class="failure-warning">该记录因超过单条记录上限而被压缩，正文保留开头部分。</p>' : "";
+  parts.push(`<section class="failure-section"><h3>请求体${requestCut ? ' <span class="failure-badge">已截断</span>' : ""}</h3>
+    ${cutoffNote}
     ${bodyText ? `<pre class="failure-pre">${esc(bodyText)}</pre>` : '<p class="failure-muted">脱敏模式下未保存请求正文。需要原始内容请在“保存设置”中切换为完整原文。</p>'}</section>`);
   parts.push(`<section class="failure-section"><h3>上游返回${upstream.truncated ? ' <span class="failure-badge">已截断</span>' : ""}</h3>
     ${upstreamText ? `<pre class="failure-pre">${esc(upstreamText)}</pre>` : '<p class="failure-muted">没有上游响应正文</p>'}</section>`);

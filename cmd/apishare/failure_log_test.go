@@ -381,3 +381,125 @@ func TestFailureLogConcurrentSettingsSwap(t *testing.T) {
 	}
 	<-done
 }
+
+func TestFailureLogLargeRawPayloadKeepsRecord(t *testing.T) {
+	// A prompt far larger than the per-entry limit used to make marshal fail,
+	// which dropped the whole record — the exact case worth diagnosing.
+	payload := strings.Repeat("prompt-", 20000)
+	entry := failureLogEntry{
+		Time: time.Now().UTC(), RequestID: strings.Repeat("cd", 16), Status: 502,
+		Request:  failureRequest{Method: "POST", Route: "/v1/messages", Model: "claude", Raw: payload, Bytes: len(payload)},
+		Upstream: failureResponse{Kind: "upstream_http_error", Summary: "upstream returned 502", Body: strings.Repeat("upstream-", 8000)},
+	}
+	for _, limit := range []int{16 << 10, 64 << 10, 256 << 10} {
+		b, err := entry.marshal(limit)
+		if err != nil {
+			t.Fatalf("limit %d dropped the record: %v", limit, err)
+		}
+		if len(b) > limit {
+			t.Fatalf("limit %d produced %d bytes", limit, len(b))
+		}
+		var got failureLogEntry
+		if err := json.Unmarshal(b, &got); err != nil {
+			t.Fatal(err)
+		}
+		// Small limits shrink the record; the largest one may hold everything,
+		// in which case the marker must stay absent.
+		fits := len(payload)+len(entry.Upstream.Body) < limit
+		if fits {
+			if got.TruncatedReason != "" {
+				t.Fatalf("limit %d marked a record that fits: %q", limit, got.TruncatedReason)
+			}
+		} else if got.TruncatedReason != failureTruncatedEntryLimit || !got.Truncated {
+			t.Fatalf("limit %d missing truncation marker: %+v", limit, got.TruncatedReason)
+		}
+		// Request side survives: it is only recorded here, so it gets priority.
+		// It is shrunk only when the limit cannot hold it whole.
+		if got.Request.Raw == "" {
+			t.Fatalf("limit %d lost request body", limit)
+		}
+		if got.Request.RawTruncated != (len(got.Request.Raw) < len(payload)) {
+			t.Fatalf("limit %d wrong request truncation flag: %d of %d bytes, truncated=%v",
+				limit, len(got.Request.Raw), len(payload), got.Request.RawTruncated)
+		}
+		if !strings.HasPrefix(payload, got.Request.Raw) {
+			t.Fatalf("limit %d kept a non-prefix slice", limit)
+		}
+		// The request share takes priority, so a tight limit may leave no room
+		// for the reply; that must be reported rather than silently empty.
+		if got.Upstream.Truncated != (len(got.Upstream.Body) < len(entry.Upstream.Body)) {
+			t.Fatalf("limit %d wrong upstream truncation flag: %d bytes, truncated=%v",
+				limit, len(got.Upstream.Body), got.Upstream.Truncated)
+		}
+	}
+}
+
+func TestFailureLogEntryBudgetPrefersRequest(t *testing.T) {
+	// Both sides are oversized; the request must keep the larger share.
+	entry := failureLogEntry{
+		Time: time.Now().UTC(), RequestID: strings.Repeat("ef", 16), Status: 500,
+		Request:  failureRequest{Method: "POST", Model: "m", Raw: strings.Repeat("R", 100000)},
+		Upstream: failureResponse{Kind: "upstream_http_error", Summary: "s", Body: strings.Repeat("U", 100000)},
+	}
+	b, err := entry.marshal(64 << 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got failureLogEntry
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Request.Raw) <= len(got.Upstream.Body) {
+		t.Fatalf("request share not larger: request=%d upstream=%d", len(got.Request.Raw), len(got.Upstream.Body))
+	}
+}
+
+func TestFailureLogFullContentRaisesEntryDefault(t *testing.T) {
+	redacted := failureLogSettings{Enabled: true, MaxMB: 32}
+	full := failureLogSettings{Enabled: true, MaxMB: 32, FullContent: true}
+	if got := redacted.normalized().EntryKiB; got != failureLogDefaultEntryKiB {
+		t.Fatalf("redacted default = %d", got)
+	}
+	if got := full.normalized().EntryKiB; got != failureLogFullContentEntryKiB {
+		t.Fatalf("full content default = %d", got)
+	}
+	if got := failureLogFullContentEntryKiB; got <= failureLogDefaultEntryKiB {
+		t.Fatalf("full content default should exceed redaction default")
+	}
+}
+
+func TestFailureLogKeepsNestedBodyPrefix(t *testing.T) {
+	// Chat payloads nest their text under messages[].content; a flat top-level
+	// scan used to keep nothing and store an empty body.
+	content := strings.Repeat("ABCDEFGH", 10000)
+	entry := failureLogEntry{
+		Time: time.Now().UTC(), RequestID: strings.Repeat("12", 16), Status: 502,
+		Request: failureRequest{Method: "POST", Route: "/v1/messages", Model: "m",
+			Body: map[string]any{"model": "m", "max_tokens": float64(8),
+				"messages": []any{map[string]any{"role": "user", "content": content}}}},
+		Upstream: failureResponse{Kind: "upstream_http_error", Summary: "s"},
+	}
+	b, err := entry.marshal(16 << 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got failureLogEntry
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	messages, _ := got.Request.Body["messages"].([]any)
+	if len(messages) == 0 {
+		t.Fatalf("nested body dropped entirely: %+v", got.Request.Body)
+	}
+	saved, _ := messages[0].(map[string]any)["content"].(string)
+	if saved == "" {
+		t.Fatal("nested content kept no prefix")
+	}
+	if !strings.HasPrefix(content, saved) {
+		t.Fatalf("kept a non-prefix slice of content")
+	}
+	// Shape is preserved: sibling fields survive alongside the shortened text.
+	if got.Request.Body["max_tokens"] != float64(8) || got.Request.Body["model"] != "m" {
+		t.Fatalf("sibling fields lost: %+v", got.Request.Body)
+	}
+}
