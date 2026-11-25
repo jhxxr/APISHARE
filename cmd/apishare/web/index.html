@@ -342,10 +342,10 @@
           <div id="failureLogSettingsPanel" class="failure-settings hidden" aria-labelledby="failureSettingsTitle">
             <div class="failure-settings-head"><div><h2 id="failureSettingsTitle">保存设置</h2><p class="muted">修改后立即生效，不需要重启服务。</p></div></div>
             <div class="failure-settings-grid">
-              <label class="field"><span>保存失败请求</span><select id="failureLogEnabled" onchange="saveFailureSettings()"><option value="true">开启</option><option value="false">关闭（不再记录新条目）</option></select></label>
-              <label class="field"><span>最多保存容量（MB）</span><input id="failureLogMaxMB" type="number" min="1" max="16384" step="1" onchange="saveFailureSettings()"></label>
-              <label class="field"><span>单条记录上限（KiB）</span><input id="failureLogEntryKiB" type="number" min="1" max="1024" step="1" onchange="saveFailureSettings()"><small>切换保存内容模式时自动套用默认值（脱敏 64／完整原文 256），可手动改。</small></label>
-              <label class="field"><span>保存内容</span><select id="failureLogFullContent" onchange="saveFailureSettings()"><option value="false">脱敏（不保存正文与敏感请求头）</option><option value="true">完整原文（含请求体与 Authorization）</option></select></label>
+              <label class="field"><span>保存失败请求</span><select id="failureLogEnabled" onchange="saveFailureSettings('enabled')"><option value="true">开启</option><option value="false">关闭（不再记录新条目）</option></select></label>
+              <label class="field"><span>最多保存容量（MB）</span><input id="failureLogMaxMB" type="number" min="1" max="16384" step="1" onchange="saveFailureSettings('max_mb')"></label>
+              <label class="field"><span>单条记录上限（KiB）</span><input id="failureLogEntryKiB" type="number" min="1" max="1024" step="1" onchange="saveFailureSettings('entry_kib')"><small>切换保存内容时自动调整为脱敏 64 KiB／完整原文 256 KiB；之后可手动修改。</small></label>
+              <label class="field"><span>保存内容</span><select id="failureLogFullContent" onchange="saveFailureSettings('full_content')"><option value="false">脱敏（不保存正文与敏感请求头）</option><option value="true">完整原文（含请求体与 Authorization）</option></select></label>
             </div>
             <p id="failureLogSettingsNote" class="failure-settings-note"></p>
             <p id="failureLogSettingsError" class="form-error hidden" role="alert"></p>

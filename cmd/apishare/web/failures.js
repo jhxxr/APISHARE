@@ -32,21 +32,23 @@ function toggleFailureSettings() {
   $("failureLogSettingsButton").setAttribute("aria-expanded", String(open));
 }
 
-async function saveFailureSettings() {
+async function saveFailureSettings(changedField = "") {
   const error = $("failureLogSettingsError");
   error.classList.add("hidden");
   const body = {
     enabled: $("failureLogEnabled").value === "true",
     max_mb: Number($("failureLogMaxMB").value),
-    entry_kib: Number($("failureLogEntryKiB").value),
     full_content: $("failureLogFullContent").value === "true",
   };
+  // Let the server apply the mode-specific default. Sending the current value
+  // here would make it look explicitly pinned and prevent the default change.
+  if (changedField !== "full_content") body.entry_kib = Number($("failureLogEntryKiB").value);
   if (!Number.isInteger(body.max_mb) || body.max_mb < 1 || body.max_mb > 16384) {
     error.textContent = "最多保存容量需在 1 到 16384 MB 之间";
     error.classList.remove("hidden");
     return;
   }
-  if (!Number.isInteger(body.entry_kib) || body.entry_kib < 1 || body.entry_kib > 1024) {
+  if (body.entry_kib !== undefined && (!Number.isInteger(body.entry_kib) || body.entry_kib < 1 || body.entry_kib > 1024)) {
     error.textContent = "单条记录上限需在 1 到 1024 KiB 之间";
     error.classList.remove("hidden");
     return;
