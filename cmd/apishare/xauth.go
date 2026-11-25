@@ -758,6 +758,7 @@ func registerXAuthPublicRoutes(r *gin.Engine, publicSub fs.FS) {
 	})
 
 	registerUserAgentPurgeRoutes(userAPI)
+	registerUserRequestRedactionRoutes(userAPI)
 }
 
 type userDailyPoint struct {

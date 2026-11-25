@@ -388,6 +388,28 @@
             <div id="agentPurgePolicyPairs" class="agent-purge-policy-pairs" aria-live="polite"><p class="muted">正在加载当前可用模型与上游…</p></div>
             <div class="agent-purge-policy-actions"><small id="agentPurgePolicyStatus" class="muted" role="status">取消授权后，后续请求停止改写；用户仍需自行开启。筛选不会清除隐藏的选择。</small><button id="saveAgentPurgePolicy" type="button" class="btn ghost" disabled>保存提示词授权</button></div>
           </section>
+          <section class="card-block settings-card request-redaction-admin" aria-labelledby="requestRedactionTitle">
+            <div class="section-heading"><span class="section-icon"><svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg></span><div><h2 id="requestRedactionTitle">请求脱敏</h2><p>仅对普通 API Key 的全局策略生效。XAuth 用户改用个人控制台开关，独立于此处配置。</p></div></div>
+            <p id="requestRedactionStatus" class="muted" role="status">正在加载脱敏策略…</p>
+            <div class="form-grid request-redaction-grid">
+              <label class="field"><span>工作模式</span><select id="requestRedactionMode"><option value="off">关闭</option><option value="observe">仅观察（原文仍会发送）</option><option value="enforce">执行脱敏</option></select></label>
+              <label class="field"><span>覆盖等级</span><select id="requestRedactionCoverage"><option value="text">文本（未检查内容会标记）</option><option value="strict">严格（无法检查时拒绝）</option></select></label>
+            </div>
+            <div class="request-redaction-block"><strong>普通 API Key 范围</strong><p>留空表示全部普通密钥；XAuth 绑定密钥不受此策略控制。</p><div id="requestRedactionKeys" class="request-redaction-keys"></div></div>
+            <label class="field"><span>模型范围</span><textarea id="requestRedactionModels" rows="2" placeholder="留空表示全部模型；每行一个模型 ID"></textarea><small>按客户端请求的模型 ID 匹配，不使用上游映射名称。</small></label>
+            <div class="request-redaction-block"><strong>内置类型</strong><div id="requestRedactionCategories" class="request-redaction-categories"></div></div>
+            <div id="requestRedactionReplacements" class="form-grid request-redaction-grid"></div>
+            <details class="request-redaction-advanced"><summary>自定义规则</summary><label class="field"><span>规则 JSON</span><textarea id="requestRedactionRules" class="code-input" rows="5" spellcheck="false" aria-describedby="requestRedactionRulesHint"></textarea><small id="requestRedactionRulesHint">格式：[{"id":"employee-id","pattern":"EMP-[0-9]{6}","replacement":"[EMPLOYEE_ID]"}]。最多 50 条；正则由服务端校验。</small></label></details>
+            <details class="request-redaction-advanced"><summary>渠道追加规则</summary><label class="field"><span>渠道规则 JSON</span><textarea id="requestRedactionOverlays" class="code-input" rows="4" spellcheck="false"></textarea><small>渠道规则只增加检查，不会关闭全局规则。</small></label></details>
+            <div class="request-redaction-test">
+              <div class="section-heading"><span class="section-icon"><svg class="icon" aria-hidden="true"><use href="#i-activity"/></svg></span><div><h3>试运行</h3><p>只在本机规则引擎中处理样例，不请求模型、搜索或其他外部服务。</p></div></div>
+              <label class="field"><span>协议</span><select id="requestRedactionFormat"><option value="openai-chat">OpenAI Chat</option><option value="openai-responses">OpenAI Responses</option><option value="anthropic">Anthropic Messages</option><option value="gemini">Gemini</option></select></label>
+              <label class="field"><span>输入样例</span><textarea id="requestRedactionSample" rows="5" spellcheck="false"></textarea></label>
+              <div class="form-actions"><button id="requestRedactionDryRun" type="button" class="btn ghost">试运行草稿</button></div>
+              <pre id="requestRedactionResult" class="request-redaction-result" aria-live="polite">试运行结果将显示在这里。</pre>
+            </div>
+            <div class="request-redaction-actions"><small>策略修订 <span id="requestRedactionRevision">—</span> · 个人设置独立保存。</small><button id="saveRequestRedaction" type="button" class="btn" disabled><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg> 保存并生效</button></div>
+          </section>
           <form id="webSearchSettingsForm" class="card-block settings-card" aria-labelledby="webSearchSettingsTitle" onsubmit="return saveWebSearchSettings(event)">
             <div class="section-heading"><span class="section-icon"><svg class="icon" aria-hidden="true"><use href="#i-spark"/></svg></span><div><h2 id="webSearchSettingsTitle">网页搜索回退</h2><p>没有可用的原生渠道时，为只声明网页搜索工具的 Responses HTTP 请求返回真实搜索结果。混合工具和 WebSocket 不适用。</p></div></div>
             <fieldset id="webSearchSettingsFields" disabled>
@@ -705,6 +727,7 @@
   <script src="static/logs.js"></script>
   <script src="static/failures.js"></script>
   <script src="static/pricing.js"></script>
+  <script src="static/request-redaction.js"></script>
   <script src="static/app.js"></script>
   <script src="static/upstream-keys.js"></script>
 </body>

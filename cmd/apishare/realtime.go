@@ -127,7 +127,20 @@ func realtimeWebSocket(c *gin.Context) {
 		errJSON(c, status, msg)
 		return
 	}
-	task := &relayTask{client: requestClientFor(c), format: FormatRealtime, endpoint: "/v1/realtime", model: model, apiKeyID: ak.ID, stream: true}
+	redaction, err := resolveRequestRedaction(ak, model)
+	if err != nil {
+		errJSON(c, 503, "request redaction settings are unavailable")
+		return
+	}
+	if redaction.Config.Mode == "enforce" && redaction.Config.Coverage == "strict" {
+		errJSON(c, 400, "strict request redaction does not support Realtime")
+		return
+	}
+	receipt := redaction.makeReceipt()
+	if redaction.Config.Mode != "off" {
+		receipt.Status, receipt.Unchecked = "unchecked", []string{"unsupported_realtime"}
+	}
+	task := &relayTask{client: requestClientFor(c), format: FormatRealtime, endpoint: "/v1/realtime", model: model, apiKeyID: ak.ID, stream: true, requestRedaction: redaction, requestRedactionReceipt: receipt}
 	tried := map[int64]bool{}
 	triedKeys := map[string]bool{}
 	skey := scopedSessionKey(ak.ID, sessionKeyFromCanon(task.endpoint, c.Request.Header, &canonReq{Model: fmt.Sprint(ak.ID) + ":" + model}))
@@ -140,7 +153,7 @@ func realtimeWebSocket(c *gin.Context) {
 		if err != nil {
 			break
 		}
-		info = relayInfo{UpstreamID: up.ID, UpstreamName: up.Name, UpstreamModel: up.mapModel(model)}
+		info = relayInfo{UpstreamID: up.ID, UpstreamName: up.Name, UpstreamModel: up.mapModel(model), requestRedaction: &receipt}
 		client, err := audioClient(up)
 		if err != nil {
 			if up.selectedKeyID != "" {
@@ -151,6 +164,10 @@ func realtimeWebSocket(c *gin.Context) {
 		headers, err := audioHeaders(c, up, "")
 		if err != nil {
 			continue
+		}
+		if err := checkRedactionHeaders(redaction, up, c.Request.Header, headers); err != nil {
+			handleRequestRedactionError(c, FormatRealtime, err)
+			return
 		}
 		endpoint := upstreamURL(up.BaseURL, task.endpoint) + "?" + audioQuery(c.Request.URL.RawQuery, info.UpstreamModel)
 		dialCtx, cancel := context.WithTimeout(c.Request.Context(), relayNetwork.DialTimeout)
@@ -282,7 +299,7 @@ func bridgeRealtime(ctx context.Context, c *gin.Context, ak ApiKey, task *relayT
 						return
 					}
 					seen[id] = true
-					turn := relayInfo{UpstreamID: info.UpstreamID, UpstreamName: info.UpstreamName, UpstreamModel: info.UpstreamModel, Status: 200, LatencyMS: info.LatencyMS, DurationMS: time.Since(turnStart).Milliseconds()}
+					turn := relayInfo{UpstreamID: info.UpstreamID, UpstreamName: info.UpstreamName, UpstreamModel: info.UpstreamModel, Status: 200, LatencyMS: info.LatencyMS, DurationMS: time.Since(turnStart).Milliseconds(), requestRedaction: info.requestRedaction}
 					turnStart = time.Now()
 					turn.mergeUsage(usage)
 					// Bill terminal provider usage before delivering it, even when the

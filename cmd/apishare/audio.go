@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"apishare/internal/requestredact"
 	"github.com/gin-gonic/gin"
 )
 
@@ -150,8 +151,28 @@ func audioHTTPHandler(c *gin.Context) {
 	if request.signaling {
 		format = FormatRealtime
 	}
-	task := &relayTask{client: requestClientFor(c), format: format, endpoint: c.Request.URL.Path, model: request.model, apiKeyID: ak.ID}
-	task.initFailureLog(c, body)
+	redaction, err := resolveRequestRedaction(ak, request.model)
+	if err != nil {
+		handleRequestRedactionError(c, format, &requestredact.Error{Kind: "unavailable"})
+		return
+	}
+	if redaction.Config.Mode == requestredact.ModeEnforce && redaction.Config.Coverage == requestredact.CoverageStrict {
+		handleRequestRedactionError(c, format, &requestredact.Error{Kind: "unsupported"})
+		return
+	}
+	receipt := redaction.makeReceipt()
+	if redaction.Config.Mode != requestredact.ModeOff {
+		receipt.Unchecked = []string{"unsupported_audio_or_realtime"}
+		receipt.Status = "unchecked"
+	}
+	task := &relayTask{client: requestClientFor(c), format: format, endpoint: c.Request.URL.Path, model: request.model, apiKeyID: ak.ID, requestRedaction: redaction, requestRedactionReceipt: receipt}
+	// These endpoints are explicitly not inspected in text coverage. Never
+	// persist an unchecked audio/SDP payload as a redacted diagnostic.
+	failureBody := body
+	if redaction.Config.Mode == requestredact.ModeEnforce {
+		failureBody = nil
+	}
+	task.initFailureLog(c, failureBody)
 	tried := map[int64]bool{}
 	triedKeys := map[string]bool{}
 	skey := scopedSessionKey(ak.ID, sessionKeyFromCanon(task.endpoint, c.Request.Header, &canonReq{Model: request.model}))
@@ -186,6 +207,10 @@ func audioHTTPHandler(c *gin.Context) {
 		// Rebuilding a multipart body requires its new boundary, even with a
 		// wildcard header passthrough rule in the upstream configuration.
 		req.Header.Set("Content-Type", contentType)
+		if err := checkRedactionHeaders(redaction, up, c.Request.Header, req.Header); err != nil {
+			handleRequestRedactionError(c, format, err)
+			return
+		}
 		client, err := audioClient(up)
 		if err != nil {
 			if up.selectedKeyID != "" {
@@ -194,7 +219,7 @@ func audioHTTPHandler(c *gin.Context) {
 			continue
 		}
 		start := time.Now()
-		info = relayInfo{UpstreamID: up.ID, UpstreamName: up.Name, UpstreamModel: upstreamModel, startedAt: start}
+		info = relayInfo{UpstreamID: up.ID, UpstreamName: up.Name, UpstreamModel: upstreamModel, startedAt: start, requestRedaction: &receipt}
 		requestCtx, cancel := context.WithCancel(req.Context())
 		resp, err := client.Do(req.WithContext(requestCtx))
 		lastErr = err
@@ -260,8 +285,12 @@ func audioHTTPHandler(c *gin.Context) {
 			if err != nil || status < 200 || status >= 300 {
 				recordRelayFailure(c, task, info, status, err, ak.Key)
 			}
+			var billing *billingDetails
+			if redaction.Config.Mode != requestredact.ModeOff {
+				billing = &billingDetails{Source: format, RequestRedaction: &receipt}
+			}
 			task.markClientRecorded()
-			dbInsertLog(&CallLog{Client: task.clientIdentity(), TraceID: task.traceID, KeyID: ak.ID, KeyName: ak.Name, UpstreamID: up.ID, UpstreamName: up.Name, Model: task.model, Endpoint: string(format), Status: status, LatencyMS: info.LatencyMS, DurationMS: info.DurationMS, Error: message})
+			dbInsertLog(&CallLog{Client: task.clientIdentity(), TraceID: task.traceID, KeyID: ak.ID, KeyName: ak.Name, UpstreamID: up.ID, UpstreamName: up.Name, Model: task.model, Endpoint: string(format), Status: status, LatencyMS: info.LatencyMS, DurationMS: info.DurationMS, Error: message, Billing: billing})
 		} else {
 			finalizeCall(c, ak, task, info, true, err, 0)
 		}

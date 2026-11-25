@@ -14,6 +14,7 @@ import (
 
 	"apishare/internal/agentpurge"
 	"apishare/internal/cliproxy"
+	"apishare/internal/requestredact"
 	"github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
 )
@@ -66,31 +67,33 @@ type responsesWSEvent struct {
 }
 
 type responsesWSTurn struct {
-	key        ApiKey
-	task       relayTask
-	info       relayInfo
-	streamID   string
-	eventID    string
-	responseID string
-	warmup     bool
-	limit      *keyLimit
-	failedAt   time.Time
-	failStatus int
-	failDetail string
+	key         ApiKey
+	task        relayTask
+	info        relayInfo
+	streamID    string
+	eventID     string
+	responseID  string
+	warmup      bool
+	limit       *keyLimit
+	failedAt    time.Time
+	failStatus  int
+	failDetail  string
+	localReject bool
 }
 
 type responsesWSSession struct {
-	c              *gin.Context
-	keyID          int64
-	credential     string
-	model          string
-	sessionID      string
-	coreTrace      string
-	up             *Upstream
-	pending        []*responsesWSTurn
-	byResponse     map[string]*responsesWSTurn
-	seen           map[string]bool
-	downstreamGone bool
+	c               *gin.Context
+	keyID           int64
+	credential      string
+	model           string
+	sessionID       string
+	coreTrace       string
+	up              *Upstream
+	pending         []*responsesWSTurn
+	byResponse      map[string]*responsesWSTurn
+	seen            map[string]bool
+	downstreamGone  bool
+	redactionPolicy string
 }
 
 func nativeResponsesWS(up *Upstream) bool {
@@ -403,10 +406,28 @@ func (s *responsesWSSession) run(ctx context.Context, downstream *websocket.Conn
 			}
 			continue
 		}
+		body, redactionErr := s.redactTurn(turn, message.body, "ingress")
+		if redactionErr != nil {
+			turn.localReject = true
+			status, code := requestRedactionErrorStatus(redactionErr)
+			_ = s.finish(turn, nil, status, "request rejected by redaction policy")
+			if err := writeResponsesWSError(ctx, downstream, &request, status, code, "request rejected by redaction policy; reconnect if settings changed"); err != nil {
+				return
+			}
+			continue
+		}
 		if upstream == nil {
 			var err error
 			upstream, err = s.dial(ctx, model, &turn.task)
 			if err != nil {
+				var redactErr *requestredact.Error
+				if errors.As(err, &redactErr) {
+					turn.localReject = true
+					status, code := requestRedactionErrorStatus(err)
+					_ = s.finish(turn, nil, status, "request rejected by redaction header policy")
+					_ = writeResponsesWSError(ctx, downstream, &request, status, code, "request rejected by redaction header policy")
+					continue
+				}
 				if s.up != nil {
 					turn.info.UpstreamID, turn.info.UpstreamName, turn.info.UpstreamModel = s.up.ID, s.up.Name, s.up.mapModel(model)
 				}
@@ -425,7 +446,6 @@ func (s *responsesWSSession) run(ctx context.Context, downstream *websocket.Conn
 			// produces an independent receipt for every terminal response ID.
 			turn.task.traceID = s.coreTrace
 		}
-		body := message.body
 		if request.Model != turn.info.UpstreamModel {
 			body = replaceModelInBody(body, turn.info.UpstreamModel)
 		}
@@ -435,6 +455,17 @@ func (s *responsesWSSession) run(ctx context.Context, downstream *websocket.Conn
 				turn.info.agentPurge = newAgentPurgeReceipt(turn.task.agentPurgeState.user.PersonaID, turn.task.agentPurgeState.user.Mode)
 			}
 		}
+		body, redactionErr = s.redactTurn(turn, body, "outbound")
+		if redactionErr != nil {
+			turn.localReject = true
+			status, code := requestRedactionErrorStatus(redactionErr)
+			_ = s.finish(turn, nil, status, "request rejected by redaction policy")
+			if err := writeResponsesWSError(ctx, downstream, &request, status, code, "request rejected by redaction policy"); err != nil {
+				return
+			}
+			continue
+		}
+		s.redactionPolicy = redactionPolicyIdentity(turn.task.requestRedaction)
 		if err := realtimeWrite(ctx, upstream, websocket.MessageText, body); err != nil {
 			closeCode = websocket.StatusInternalError
 			return
@@ -536,6 +567,9 @@ func (s *responsesWSSession) dial(ctx context.Context, model string, task *relay
 			lastErr = err
 			continue
 		}
+		if err := checkRedactionHeaders(task.requestRedaction, up, s.c.Request.Header, headers); err != nil {
+			return nil, err
+		}
 		dialCtx, cancel := context.WithTimeout(ctx, relayNetwork.DialTimeout)
 		start := time.Now()
 		conn, response, err := websocket.Dial(dialCtx, upstreamURL(up.BaseURL, "/v1/responses"), &websocket.DialOptions{HTTPClient: client, HTTPHeader: headers})
@@ -613,6 +647,14 @@ func (s *responsesWSSession) admit(model string, request *responsesWSRequest) (*
 	task := relayTask{client: requestClientFor(s.c), traceID: randHex(16), format: FormatOpenAIResponse,
 		endpoint: "/v1/responses", model: model, apiKeyID: key.ID, stream: true, userSub: userSubForKey(*key)}
 	task.agentPurgeState = loadAgentPurgeRequestState(task.userSub)
+	task.requestRedaction, err = resolveRequestRedaction(*key, model)
+	if err != nil {
+		return nil, 503, "request redaction settings are unavailable"
+	}
+	if s.redactionPolicy != "" && s.redactionPolicy != redactionPolicyIdentity(task.requestRedaction) {
+		return nil, 400, "request redaction settings changed; reconnect with a new context"
+	}
+	task.requestRedactionReceipt = task.requestRedaction.makeReceipt()
 	if s.up != nil && agentPurgeAppliesToModel(&task) && !shouldApplyAgentPurge(task.agentPurgeState, task.userSub, s.up, &task) {
 		return nil, http.StatusServiceUnavailable, "persona channel authorization changed; reconnect to use an administrator-authorized upstream"
 	}
@@ -662,6 +704,37 @@ func (s *responsesWSSession) admit(model string, request *responsesWSRequest) (*
 	requestClientFor(s.c).model = model
 	s.pending = append(s.pending, turn)
 	return turn, 0, ""
+}
+
+func redactionPolicyIdentity(snapshot *requestRedactionSnapshot) string {
+	if snapshot == nil {
+		return ""
+	}
+	value, _ := json.Marshal(struct {
+		Source   string
+		Revision int64
+		Config   requestredact.Config
+		Headers  requestRedactionHeaders
+	}{snapshot.Source, snapshot.Revision, snapshot.Config, snapshot.Headers})
+	return string(value)
+}
+
+func (s *responsesWSSession) redactTurn(turn *responsesWSTurn, body []byte, stage string) ([]byte, error) {
+	snapshot := turn.task.requestRedaction
+	if snapshot == nil || snapshot.Config.Mode == requestredact.ModeOff {
+		return body, nil
+	}
+	upstreamID := int64(0)
+	if stage == "outbound" && s.up != nil {
+		upstreamID = s.up.ID
+	}
+	result, receipt, err := snapshot.processStage(FormatOpenAIResponse, body, upstreamID, stage)
+	turn.info.requestRedaction = &receipt
+	if stage == "ingress" {
+		snapshot.Receipt = receipt
+		turn.task.requestRedactionReceipt = receipt
+	}
+	return result.Body, err
 }
 
 func (s *responsesWSSession) reject(model string, status int, detail string) {
@@ -870,7 +943,7 @@ func (s *responsesWSSession) finish(turn *responsesWSTurn, rawUsage json.RawMess
 	if s.downstreamGone && status == http.StatusOK {
 		status, detail = 499, "client disconnected after upstream accepted the request"
 	}
-	if s.up != nil && s.up.selectedKeyID != "" {
+	if s.up != nil && s.up.selectedKeyID != "" && !turn.localReject {
 		if isRetryableStatus(status) {
 			s.up.markRelayFailure(status, time.Time{})
 		} else if status >= 200 && status < 300 {
@@ -884,8 +957,8 @@ func (s *responsesWSSession) finish(turn *responsesWSTurn, rawUsage json.RawMess
 		PromptTokens: counts.inputTotal(), CompletionTokens: counts.outputTotal(),
 		FirstTokenMS: turn.info.FirstTokenMS, DurationMS: turn.info.DurationMS, LatencyMS: turn.info.LatencyMS,
 	}
-	if turn.info.agentPurge != nil {
-		entry.Billing = &billingDetails{Source: FormatOpenAIResponse, AgentPurge: turn.info.agentPurge}
+	if turn.info.agentPurge != nil || turn.info.requestRedaction != nil {
+		entry.Billing = &billingDetails{Source: FormatOpenAIResponse, AgentPurge: turn.info.agentPurge, RequestRedaction: turn.info.requestRedaction}
 	}
 	if usageObject == nil {
 		// Incremental WS inputs do not contain the full transcript. Unknown
@@ -901,6 +974,6 @@ func (s *responsesWSSession) finish(turn *responsesWSTurn, rawUsage json.RawMess
 	}
 	entry.CostUSD = cost.Total
 	entry.Billing = &billingDetails{Source: usage.Source, Reported: usage, Usage: counts, Cost: cost,
-		Price: price, PriceSource: source, PricingModel: pricingModel, UpstreamModel: turn.info.UpstreamModel, QuotaPool: pool, AgentPurge: turn.info.agentPurge}
+		Price: price, PriceSource: source, PricingModel: pricingModel, UpstreamModel: turn.info.UpstreamModel, QuotaPool: pool, AgentPurge: turn.info.agentPurge, RequestRedaction: turn.info.requestRedaction}
 	return dbRecordBilledCall(entry, independent)
 }

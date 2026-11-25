@@ -228,7 +228,27 @@ func relayResponsesSearchFallback(c *gin.Context, task *relayTask, settings webS
 	start := time.Now()
 	info = relayInfo{UpstreamName: "gateway:" + settings.Provider + "-search", startedAt: start}
 	defer func() { info.DurationMS = time.Since(start).Milliseconds() }()
-	results, err := searchWeb(c.Request.Context(), settings, req.query)
+	if task.requestRedaction != nil {
+		receipt := task.requestRedactionReceipt
+		info.requestRedaction = &receipt
+	}
+	query := req.query
+	if task.requestRedaction != nil && task.requestRedaction.Config.Mode != "off" {
+		payload, _ := json.Marshal(map[string]any{"input": query})
+		processed, receipt, checkErr := task.requestRedaction.processStage(FormatOpenAIResponse, payload, 0, "search")
+		info.requestRedaction = &receipt
+		if checkErr != nil {
+			return info, false, checkErr
+		}
+		var checked struct {
+			Input string `json:"input"`
+		}
+		if err := json.Unmarshal(processed.Body, &checked); err != nil {
+			return info, false, err
+		}
+		query = checked.Input
+	}
+	results, err := searchWeb(c.Request.Context(), settings, query)
 	info.LatencyMS = info.elapsedMS()
 	if err != nil || c.Request.Context().Err() != nil {
 		if err == nil {
@@ -264,7 +284,7 @@ func relayResponsesSearchFallback(c *gin.Context, task *relayTask, settings webS
 		"error": nil, "incomplete_details": nil, "usage": usage, "store": false,
 		"tool_choice": req.choice, "tools": []any{req.tool}, "parallel_tool_calls": false,
 		"output": []any{
-			map[string]any{"id": "ws_" + randHex(16), "type": "web_search_call", "status": "completed", "action": map[string]any{"type": "search", "query": req.query, "sources": sources}},
+			map[string]any{"id": "ws_" + randHex(16), "type": "web_search_call", "status": "completed", "action": map[string]any{"type": "search", "query": query, "sources": sources}},
 			map[string]any{"id": "msg_" + randHex(16), "type": "message", "role": "assistant", "status": "completed", "content": []any{map[string]any{"type": "output_text", "text": answer.String(), "annotations": citations, "logprobs": []any{}}}},
 		},
 	}

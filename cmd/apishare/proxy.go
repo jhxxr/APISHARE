@@ -17,6 +17,7 @@ import (
 	"apishare/internal/agentpurge"
 	"apishare/internal/cliproxy"
 	"apishare/internal/opencodecompat"
+	"apishare/internal/requestredact"
 	"github.com/gin-gonic/gin"
 )
 
@@ -70,7 +71,9 @@ type relayInfo struct {
 	firstTokenSet     bool
 	firstOutputGuard  *firstOutputDeadlineBody
 	agentPurge        *agentPurgeReceipt
-	agentPurgeBody    []byte
+	finalBody         []byte
+	finalFormat       clientFormat
+	requestRedaction  *requestRedactionReceipt
 }
 
 // markFirstToken 记录首个输出增量的到达时刻，只生效一次。
@@ -144,6 +147,8 @@ type relayTask struct {
 	apiKeyID                  int64
 	userSub                   string // Authenticated personal-console identity, empty for ordinary API keys.
 	agentPurgeState           *agentPurgeRequestState
+	requestRedaction          *requestRedactionSnapshot
+	requestRedactionReceipt   requestRedactionReceipt
 	wantUsageChunk            bool   // openai chat 流式：客户端是否要求 include_usage
 	openCodeSession           string // Reused across retries and protocol conversions.
 	openCodeRequest           string
@@ -214,6 +219,53 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 		requestClientFor(c).model = cr.Model
 		userSub := userSubForKey(ak)
 		agentPurgeState := loadAgentPurgeRequestState(userSub)
+		redaction, redactionErr := resolveRequestRedaction(ak, requestedModel)
+		if redactionErr != nil {
+			handleRequestRedactionError(c, format, &requestredact.Error{Kind: "unavailable"})
+			return
+		}
+		redactionReceipt := requestRedactionReceipt{Status: "disabled"}
+		if redaction != nil {
+			redactionReceipt = redaction.makeReceipt()
+			if redaction.Config.Mode != requestredact.ModeOff {
+				compactEndpoint := c.Request.URL.Path == "/v1/responses/compact" || c.Request.URL.Path == "/v1/embeddings"
+				if compactEndpoint && redaction.Config.Mode == requestredact.ModeEnforce && redaction.Config.Coverage == requestredact.CoverageStrict {
+					rejectErr := &requestredact.Error{Kind: "unsupported"}
+					recordRequestRedactionRejection(c, ak, format, cr.Model, redaction, rejectErr)
+					handleRequestRedactionError(c, format, rejectErr)
+					return
+				}
+				processed, receipt, processErr := redaction.processStage(format, body, 0, "ingress")
+				if processErr != nil {
+					recordRequestRedactionRejection(c, ak, format, cr.Model, redaction, processErr)
+					handleRequestRedactionError(c, format, processErr)
+					return
+				}
+				redactionReceipt = receipt
+				if compactEndpoint {
+					redactionReceipt.Unchecked = appendUnique(redactionReceipt.Unchecked, "unsupported_operation")
+				}
+				if processed.Changed {
+					body = processed.Body
+					cr, perr = parseClientRequest(format, body, pathModel)
+					if perr != nil || cr.Model == "" || !ak.allowsModel(cr.Model) || ak.quotaExhausted(cr.Model) {
+						writeFormatError(c, format, http.StatusBadRequest, "redacted request could not be safely validated")
+						return
+					}
+					if spec.BaseModel != "" {
+						cr.Model = spec.BaseModel
+					}
+					if format == FormatGemini {
+						_, method, _ := parseGeminiAction(c.Param("action"))
+						cr.Stream = method == "streamGenerateContent"
+					}
+				}
+				if len(redactionReceipt.Unchecked) > 0 && redactionReceipt.Status == "checked" {
+					redactionReceipt.Status = "unchecked"
+				}
+			}
+			redaction.Receipt = redactionReceipt
+		}
 
 		originalBody := body
 		// OpenAI chat 流式注入 include_usage，尽量拿到真实用量计费
@@ -243,7 +295,8 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			client: requestClientFor(c), format: format, endpoint: endpoint,
 			body: body, canon: cr, model: cr.Model, requestedModel: requestedModel,
 			stream: cr.Stream, nativeOnly: nativeOnly, apiKeyID: ak.ID,
-			userSub: userSub, agentPurgeState: agentPurgeState, wantUsageChunk: wantUsageChunk,
+			userSub: userSub, agentPurgeState: agentPurgeState, requestRedaction: redaction,
+			requestRedactionReceipt: redactionReceipt, wantUsageChunk: wantUsageChunk,
 		}
 		task.initFailureLog(c, originalBody)
 		// Routing affinity is also scoped by gateway key: identical opening
@@ -277,6 +330,10 @@ func relayHandler(format clientFormat, nativeOnly bool) gin.HandlerFunc {
 			attemptWasFirstOutputFallback := firstOutputFallbackPending
 			previousInfo, previousErr := info, attemptErr
 			info, wrote, attemptErr = doRelay(c, up, task)
+			var redactErr *requestredact.Error
+			if errors.As(attemptErr, &redactErr) {
+				break
+			}
 			var conversion *protocolConversionError
 			if errors.As(attemptErr, &conversion) {
 				tried[up.ID] = true
@@ -385,6 +442,13 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 			recordFailure(http.StatusForbidden, lastErr)
 			return
 		}
+		var redactionErr *requestredact.Error
+		if errors.As(lastErr, &redactionErr) {
+			status, _ := requestRedactionErrorStatus(redactionErr)
+			handleRequestRedactionError(c, task.format, redactionErr)
+			recordFailure(status, lastErr)
+			return
+		}
 		var toolLimit *upstreamToolLimitError
 		if errors.As(lastErr, &toolLimit) {
 			writeRelayError(c, task.format, http.StatusBadRequest, toolLimit.Error())
@@ -415,8 +479,8 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 		if !info.InKnown {
 			prompt = inputTokensEst
 			if prompt < 0 {
-				if info.agentPurge != nil {
-					if forwarded, err := parseClientRequest(info.Usage.Source, info.agentPurgeBody, info.UpstreamModel); err == nil {
+				if len(info.finalBody) > 0 {
+					if forwarded, err := parseClientRequest(info.finalFormat, info.finalBody, info.UpstreamModel); err == nil {
 						copyTask := *task
 						copyTask.canon = forwarded
 						prompt = estimatePromptTokens(&copyTask)
@@ -461,7 +525,7 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 			PromptTokens: counts.inputTotal(), CompletionTokens: counts.outputTotal(),
 			CostUSD: cost.Total, Status: logStatus, LatencyMS: info.LatencyMS, Error: logError,
 			FirstTokenMS: info.FirstTokenMS, DurationMS: info.DurationMS,
-			Billing: &billingDetails{Source: usage.Source, Reported: reported, Usage: counts, Cost: cost, Price: price, PriceSource: priceSource, PricingModel: pricingModel, UpstreamModel: info.UpstreamModel, QuotaPool: quotaPool, AgentPurge: info.agentPurge},
+			Billing: &billingDetails{Source: usage.Source, Reported: reported, Usage: counts, Cost: cost, Price: price, PriceSource: priceSource, PricingModel: pricingModel, UpstreamModel: info.UpstreamModel, QuotaPool: quotaPool, AgentPurge: info.agentPurge, RequestRedaction: info.requestRedaction},
 		}
 		if err := dbRecordBilledCall(entry, independent); err != nil {
 			log.Printf("[billing] key_id=%d model=%s: receipt and debit rolled back: %v", ak.ID, task.model, err)
@@ -480,8 +544,8 @@ func finalizeCall(c *gin.Context, ak ApiKey, task *relayTask, info relayInfo, wr
 func insertFailureLog(ak ApiKey, info relayInfo, task *relayTask, status int, errMsg string) {
 	task.markClientRecorded()
 	var billing *billingDetails
-	if info.agentPurge != nil {
-		billing = &billingDetails{Source: task.format, AgentPurge: info.agentPurge}
+	if info.agentPurge != nil || info.requestRedaction != nil {
+		billing = &billingDetails{Source: task.format, AgentPurge: info.agentPurge, RequestRedaction: info.requestRedaction}
 	}
 	dbInsertLog(&CallLog{
 		Client:  task.clientIdentity(),
@@ -498,6 +562,10 @@ func insertFailureLog(ak ApiKey, info relayInfo, task *relayTask, status int, er
 
 func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wrote bool, err error) {
 	info = relayInfo{UpstreamID: up.ID, UpstreamName: up.Name}
+	if task.requestRedaction != nil && task.requestRedaction.Config.Mode != requestredact.ModeOff {
+		receipt := task.requestRedactionReceipt
+		info.requestRedaction = &receipt
+	}
 	upModel := up.mapModel(resolveModelRequest(up, task.modelRequest()))
 	info.UpstreamModel = upModel
 	if limit := up.openCodeRateLimit(upModel); limit != nil {
@@ -606,8 +674,26 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	if err != nil {
 		return info, false, &protocolConversionError{err}
 	}
-	if info.agentPurge != nil {
-		info.agentPurgeBody = reqBody
+	if task.requestRedaction != nil && task.requestRedaction.Config.Mode != requestredact.ModeOff {
+		processed, receipt, redactionErr := task.requestRedaction.processStage(wireFormat, reqBody, up.ID, "outbound")
+		if redactionErr != nil {
+			info.requestRedaction = &receipt
+			return info, false, redactionErr
+		}
+		reqBody = processed.Body
+		if task.requestRedaction.Config.Mode == requestredact.ModeEnforce {
+			if bounded, budgetErr := boundAgentPurgeBody(reqBody, wireFormat, upModel, task); budgetErr != nil {
+				receipt.Status = "rejected"
+				info.requestRedaction = &receipt
+				return info, false, &requestredact.Error{Kind: "limit"}
+			} else {
+				reqBody = bounded
+			}
+		}
+		info.requestRedaction = &receipt
+	}
+	if info.agentPurge != nil || task.requestRedaction != nil && task.requestRedaction.Config.Mode != requestredact.ModeOff {
+		info.finalBody, info.finalFormat = reqBody, wireFormat
 	}
 	requestCtx, cancelCause := context.WithCancelCause(c.Request.Context())
 	cancel := func() { cancelCause(context.Canceled) }
@@ -675,6 +761,11 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 		ensureAnthropicThinkingDisplayBeta(req.Header, reqBody)
 		normalizeInternAIAnthropicHeaders(req.Header, wireFormat, url)
 	}
+	if task.requestRedaction != nil && task.requestRedaction.Config.Mode == requestredact.ModeEnforce {
+		if err := checkRedactionHeaders(task.requestRedaction, up, c.Request.Header, req.Header); err != nil {
+			return info, false, err
+		}
+	}
 
 	start := time.Now()
 	info.startedAt = start
@@ -698,7 +789,8 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	// an upstream for client cancellation or request/configuration validation.
 	defer func() {
 		var toolLimit *upstreamToolLimitError
-		if c.Request.Context().Err() != nil || errors.Is(err, errDownstreamWrite) || errors.As(err, &toolLimit) {
+		var redactionFailure *requestredact.Error
+		if c.Request.Context().Err() != nil || errors.Is(err, errDownstreamWrite) || errors.As(err, &toolLimit) || errors.As(err, &redactionFailure) {
 			return
 		}
 		if up.isOpenCode() && rateLimit != nil && up.selectedKeyID == "" {
@@ -755,7 +847,26 @@ func doRelay(c *gin.Context, up *Upstream, task *relayTask) (info relayInfo, wro
 	}
 	if up.isOpenCode() && wireFormat == FormatOpenAIResponse && resp.StatusCode == http.StatusBadRequest && !task.openCodeReasoningRepaired {
 		original := resp
-		resp, err = retryOpenCodeReasoning(client, req, resp, reqBody, keepalive, cancel)
+		redactionChecks := []func([]byte) ([]byte, error){}
+		if task.requestRedaction != nil && task.requestRedaction.Config.Mode != requestredact.ModeOff {
+			redactionChecks = append(redactionChecks, func(repaired []byte) ([]byte, error) {
+				processed, receipt, checkErr := task.requestRedaction.processStage(wireFormat, repaired, up.ID, "retry")
+				info.requestRedaction = &receipt
+				if checkErr != nil {
+					return nil, checkErr
+				}
+				if task.requestRedaction.Config.Mode == requestredact.ModeEnforce {
+					bounded, budgetErr := boundAgentPurgeBody(processed.Body, wireFormat, upModel, task)
+					if budgetErr != nil {
+						return nil, &requestredact.Error{Kind: "limit"}
+					}
+					processed.Body = bounded
+				}
+				info.finalBody, info.finalFormat = processed.Body, wireFormat
+				return processed.Body, nil
+			})
+		}
+		resp, err = retryOpenCodeReasoning(client, req, resp, reqBody, keepalive, cancel, redactionChecks...)
 		task.openCodeReasoningRepaired = resp != original
 		if err != nil {
 			original.Body.Close()

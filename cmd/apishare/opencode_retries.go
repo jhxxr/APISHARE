@@ -85,7 +85,7 @@ func repairOpenCodeReasoning(body, errorBody []byte) ([]byte, bool) {
 	return encoded, err == nil
 }
 
-func retryOpenCodeReasoning(client *http.Client, req *http.Request, resp *http.Response, body []byte, state *messagesKeepalive, cancel context.CancelFunc) (*http.Response, error) {
+func retryOpenCodeReasoning(client *http.Client, req *http.Request, resp *http.Response, body []byte, state *messagesKeepalive, cancel context.CancelFunc, checks ...func([]byte) ([]byte, error)) (*http.Response, error) {
 	// Bound the inspection, restoring the exact original error if it is not
 	// eligible. This runs before any upstream response is delivered downstream.
 	errorBody, err := io.ReadAll(io.LimitReader(resp.Body, (16<<10)+1))
@@ -99,6 +99,12 @@ func retryOpenCodeReasoning(client *http.Client, req *http.Request, resp *http.R
 	repaired, changed := repairOpenCodeReasoning(body, errorBody)
 	if !changed {
 		return resp, nil
+	}
+	if len(checks) > 0 {
+		repaired, err = checks[0](repaired)
+		if err != nil {
+			return resp, err
+		}
 	}
 	resp.Body.Close()
 	retry := req.Clone(req.Context())

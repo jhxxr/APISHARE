@@ -446,6 +446,9 @@ CREATE INDEX IF NOT EXISTS idx_log_key_daily ON call_log_key_daily(key_id, day);
 	if err := migrateAgentPurgeSchema(); err != nil {
 		return err
 	}
+	if err := migrateRequestRedactionSchema(); err != nil {
+		return err
+	}
 	if err := disableRemovedDecisionUpstreams(); err != nil {
 		return err
 	}

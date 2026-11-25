@@ -148,6 +148,7 @@ func registerAdminRoutes(r *gin.Engine) {
 	registerSiteBrandingAdmin(auth)
 	registerXAuthAdminRoutes(auth)
 	registerAgentPurgeAdminRoutes(auth)
+	registerAdminRequestRedactionRoutes(auth)
 	registerWebSearchAdminRoutes(auth)
 	registerPricingAdminRoutes(auth)
 

@@ -44,6 +44,14 @@ body {
 .agent-purge-preview summary { cursor: pointer; min-height: 44px; display: list-item; padding: 10px 0; }
 .agent-purge-preview pre { padding: 14px; background: var(--surface-soft); border-radius: 8px; max-height: 300px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.7 var(--mono); }
 .agent-purge-panel > .card-head .btn { min-height: 44px; }
+.request-redaction-user { min-width: 0; }
+.request-redaction-user > .card-head { align-items: flex-start; }
+.request-redaction-category-list { display: flex; flex-wrap: wrap; gap: 7px; }
+.request-redaction-category-list span { padding: 5px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-soft); font-size: 12px; }
+.request-redaction-dry-run { display: grid; gap: 10px; margin-top: 12px; }
+.request-redaction-dry-run > summary { min-height: 40px; display: flex; align-items: center; cursor: pointer; }
+.request-redaction-dry-run textarea { width: 100%; min-height: 92px; resize: vertical; }
+.request-redaction-dry-run .request-redaction-result { font: 12px/1.55 var(--mono); }
 
 /* Header */
 .user-topbar {

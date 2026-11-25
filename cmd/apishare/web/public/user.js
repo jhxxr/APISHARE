@@ -15,6 +15,7 @@
     logStatus: "",
     toastTimer: 0,
     agentPurge: null,
+    requestRedaction: null,
   };
 
   const numFmt = new Intl.NumberFormat("zh-CN");
@@ -493,6 +494,9 @@
         const latency = row.latency_ms ? `${ (row.latency_ms / 1000).toFixed(2) }s` : "—";
         const ttft = row.first_token_ms ? `首字 ${(row.first_token_ms / 1000).toFixed(2)}s` : "";
         const errNote = !ok && row.error ? `<div class="muted" style="font-size:11px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(row.error)}">${esc(row.error)}</div>` : "";
+        const redaction = row.billing?.request_redaction;
+        const redactionStates = { redacted: "已替换敏感文本", checked: "已检查，无命中", observed: "仅观察，原文仍发送", unchecked: "含未检查内容", rejected: "发送前已拒绝", disabled: "未启用请求脱敏" };
+        const redactionNote = redaction ? `<div class="muted" style="font-size:11px">${esc(redactionStates[redaction.status] || "处理状态未知")}${redaction.unchecked?.length && redaction.status !== "unchecked" ? " · 含未检查内容" : ""}</div>` : "";
         return `<tr>
           <td><code>${esc(fmtBeijingTime(row.created_at))}</code></td>
           <td>${modelLabelHTML(row.model)}</td>
@@ -500,7 +504,7 @@
           <td><code>${fmtInt(row.prompt_tokens)}</code> / <code>${fmtInt(row.completion_tokens)}</code></td>
           <td><code>${esc(latency)}</code>${ttft ? `<div class="muted" style="font-size:11px">${esc(ttft)}</div>` : ""}</td>
           <td><code>${fmtUSD(row.cost_usd)}</code></td>
-          <td><span class="http-badge ${statusCls}">${esc(row.status || 0)}</span>${errNote}</td>
+          <td><span class="http-badge ${statusCls}">${esc(row.status || 0)}</span>${errNote}${redactionNote}</td>
         </tr>`;
       }).join("");
     } catch {
@@ -658,7 +662,77 @@
     }
   }
 
+  async function redactionAPI(path, method = "GET", body) {
+    const res = await fetch("/api/user/" + path, {
+      method, cache: "no-store",
+      headers: { "Content-Type": "application/json", "X-APIShare-Request": "user-console" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "请求脱敏操作失败");
+    return data;
+  }
+
+  function renderUserRedaction(view) {
+    state.requestRedaction = view;
+    $("#userRequestRedactionEnabled").checked = !!view.enabled;
+    $("#userRequestRedactionEnabled").disabled = false;
+    $("#saveUserRequestRedaction").disabled = false;
+    const badge = $("#userRequestRedactionStatus");
+    badge.textContent = view.enabled ? "已开启" : "已关闭";
+    badge.className = "status-pill " + (view.enabled ? "on" : "off");
+    $("#userRequestRedactionNote").textContent = "已保存 · 个人修订 " + view.revision + "。现有 WebSocket 在设置变化后需重连。音频、Realtime 等接口不检查文本，不能视为全部内容已脱敏。";
+    $("#userRequestRedactionError").classList.add("hidden");
+  }
+
+  async function loadUserRedaction() {
+    try { renderUserRedaction(await redactionAPI("request-processing")); }
+    catch (error) {
+      state.requestRedaction = null;
+      $("#saveUserRequestRedaction").disabled = true;
+      $("#userRequestRedactionEnabled").disabled = true;
+      const note = $("#userRequestRedactionError");
+      note.textContent = error.message; note.classList.remove("hidden");
+    }
+  }
+
+  async function saveUserRedaction() {
+    if (!state.requestRedaction) return;
+    const button = $("#saveUserRequestRedaction");
+    button.disabled = true;
+    try {
+      renderUserRedaction(await redactionAPI("request-processing/redaction", "PUT", {
+        enabled: $("#userRequestRedactionEnabled").checked,
+        revision: state.requestRedaction.revision,
+      }));
+      toast("个人请求脱敏设置已保存");
+    } catch (error) {
+      const note = $("#userRequestRedactionError");
+      note.textContent = error.message + "；草稿未保存，服务端状态仍为" + (state.requestRedaction.enabled ? "开启" : "关闭") + "。版本冲突时请刷新后比较。";
+      note.classList.remove("hidden");
+    } finally { button.disabled = false; }
+  }
+
+  async function dryRunUserRedaction() {
+    const button = $("#userRequestRedactionDryRun"), output = $("#userRequestRedactionResult");
+    button.disabled = true;
+    try {
+      const result = await redactionAPI("request-processing/redaction/dry-run", "POST", {
+        format: $("#userRequestRedactionFormat").value,
+        body: JSON.parse($("#userRequestRedactionSample").value),
+      });
+      output.textContent = "开启后的预览，不保存开关，不调用外部服务。\n" + JSON.stringify(result, null, 2);
+    } catch (error) { output.textContent = error.message; }
+    finally { button.disabled = false; }
+  }
+
   function bindEvents() {
+    $("#saveUserRequestRedaction")?.addEventListener("click", saveUserRedaction);
+    $("#userRequestRedactionDryRun")?.addEventListener("click", dryRunUserRedaction);
+    $("#userRequestRedactionEnabled")?.addEventListener("change", () => {
+      $("#userRequestRedactionNote").textContent = "有未保存修改；点击保存后才会生效。";
+    });
+    $("#userRequestRedactionSample").value = JSON.stringify({ model: "example-model", messages: [{ role: "user", content: "联系 jane@example.com，电话 13812345678" }] }, null, 2);
     $("#toggleKeyBtn")?.addEventListener("click", () => {
       state.keyVisible = !state.keyVisible;
       renderKeyCard();
@@ -706,7 +780,7 @@
     $("#refreshBtn")?.addEventListener("click", async () => {
       const ok = await loadDashboard();
       if (ok) {
-        await Promise.all([loadUserLogs(), loadAgentPurgeSettings()]);
+        await Promise.all([loadUserLogs(), loadAgentPurgeSettings(), loadUserRedaction()]);
       }
       toast("控制台数据已刷新");
     });
@@ -748,7 +822,7 @@
     loadBranding();
     const ok = await loadDashboard();
     if (ok) {
-      await Promise.all([loadUserLogs(), loadAgentPurgeSettings()]);
+      await Promise.all([loadUserLogs(), loadAgentPurgeSettings(), loadUserRedaction()]);
     }
   }
 

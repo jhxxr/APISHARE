@@ -775,12 +775,16 @@ func recordRelayFailure(c *gin.Context, task *relayTask, info relayInfo, status 
 		Upstream: failureResponse{ChannelID: info.UpstreamID, Channel: failurePrefix(info.UpstreamName, 96), Model: failurePrefix(info.UpstreamModel, 96),
 			Status: info.failureHTTPStatus, Kind: kind, ErrorType: kind, Summary: failureSummaryLine(info, kind, err)},
 	}
-	entry.Request.Headers = failureRequestHeaders(c.Request.Header)
+	requestHeaders := c.Request.Header
+	if task.requestRedaction != nil && task.requestRedaction.Config.Mode == "enforce" {
+		requestHeaders = failureRedactionHeaders(c.Request.Header)
+	}
+	entry.Request.Headers = failureRequestHeaders(requestHeaders)
 	root, _ := decodeProtocolObject(task.failureBody)
 	if s.fullContent {
 		// Explicit admin opt-in: keep the diagnostics usable for real debugging.
 		// The files are 0600 inside a 0700 directory; the UI warns about scope.
-		entry.Request.Headers = failureRawHeaders(c.Request.Header)
+		entry.Request.Headers = failureRawHeaders(requestHeaders)
 		entry.Request.Body, entry.Request.Raw = failureRawBody(task.failureBody, s.entryBytes)
 	} else {
 		entry.Request.Body, entry.Request.Truncated = summarizeFailureRequest(root)
@@ -802,6 +806,19 @@ func recordRelayFailure(c *gin.Context, task *relayTask, info relayInfo, status 
 		entry.Upstream.Truncated = reply.truncated
 	} else {
 		entry.Upstream.setBody(body, root, secrets)
+	}
+	if task.requestRedaction != nil && task.requestRedaction.Config.Mode == "enforce" {
+		// Error payloads may echo prompts, escaped JSON, or opaque provider
+		// state. Omit rather than claiming an unparsed blob has been checked.
+		// Text coverage can retain unknown/opaque fields in memory for relay,
+		// but they cannot be persisted as if they had been checked.
+		entry.Request.Body, entry.Request.Raw = nil, ""
+		entry.Request.Truncated = len(task.failureBody) > 0
+		entry.Request.Headers = nil
+		entry.Request.Redacted = true
+		entry.Upstream.Summary = "upstream request failed; response omitted by request redaction policy"
+		entry.Upstream.Body = ""
+		entry.Upstream.Truncated = len(body.data) > 0
 	}
 	if len(entry.Upstream.Body) > s.entryBytes {
 		entry.Upstream.Body = failurePrefix(entry.Upstream.Body, s.entryBytes)

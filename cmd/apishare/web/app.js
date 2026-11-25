@@ -1385,6 +1385,7 @@ async function loadSettings() {
     if (!proxiesCache.length && typeof loadProxies === "function") await loadProxies(true);
     const settings = await api("api/settings");
     await loadAgentPurgePolicy();
+    await loadRequestRedactionPolicy();
     $("setTtl").value = settings.affinity_ttl_min; $("setRetry").value = settings.retry;
     $("setInject").checked = !!settings.inject_stream_usage;
     $("setLogRetention").value = String(settings.log_retention_days ?? 7);

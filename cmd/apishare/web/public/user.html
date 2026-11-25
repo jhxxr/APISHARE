@@ -195,6 +195,30 @@
         </article>
       </section>
 
+      <section class="user-card request-redaction-user" aria-labelledby="userRequestRedactionTitle">
+        <div class="card-head">
+          <div>
+            <span class="eyebrow">REQUEST PRIVACY</span>
+            <h2 id="userRequestRedactionTitle">请求脱敏 <span id="userRequestRedactionStatus" class="status-pill off">未启用</span></h2>
+            <p class="card-sub">这是你的独立设置，不受管理员全局脱敏配置影响。开启后使用系统内置规则，适用于本人密钥的所有客户端与有权限模型。</p>
+          </div>
+          <button id="saveUserRequestRedaction" type="button" class="btn primary mini" disabled>保存个人设置</button>
+        </div>
+        <p id="userRequestRedactionError" class="agent-purge-notice hidden" role="alert"></p>
+        <label class="user-switch-row agent-purge-master"><input id="userRequestRedactionEnabled" type="checkbox" disabled><span><strong>启用我的请求脱敏</strong><small>关闭后不执行本项脱敏；已发出的历史请求不会恢复原文。</small></span></label>
+        <div class="request-redaction-category-list" aria-label="内置规则">
+          <span>API Key 与令牌</span><span>邮箱</span><span>手机号</span><span>身份证</span><span>银行卡</span>
+        </div>
+        <p class="agent-purge-footnote">处理支持的请求文本。工具参数命中时拒绝请求；图片、附件、签名内容及远端历史可能未检查。更改对新请求生效。</p>
+        <details class="request-redaction-dry-run"><summary>试运行合成样例</summary>
+          <label class="user-field"><span>协议</span><select id="userRequestRedactionFormat"><option value="openai-chat">OpenAI Chat</option><option value="openai-responses">OpenAI Responses</option><option value="anthropic">Anthropic Messages</option><option value="gemini">Gemini</option></select></label>
+          <textarea id="userRequestRedactionSample" rows="4" spellcheck="false" aria-label="脱敏试运行样例"></textarea>
+          <button id="userRequestRedactionDryRun" type="button" class="btn ghost mini">试运行，不保存设置</button>
+          <pre id="userRequestRedactionResult" class="request-redaction-result" aria-live="polite">试运行结果将显示在这里。</pre>
+        </details>
+        <p id="userRequestRedactionNote" class="agent-purge-footnote" role="status"></p>
+      </section>
+
       <section class="user-card agent-purge-panel" aria-labelledby="agentPurgeTitle">
         <div class="card-head">
           <div>

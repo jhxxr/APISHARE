@@ -35,16 +35,17 @@ type billingCost struct {
 }
 
 type billingDetails struct {
-	Source        clientFormat       `json:"source"`
-	Reported      upstreamUsage      `json:"reported"`
-	Usage         billingUsage       `json:"usage"`
-	Cost          billingCost        `json:"cost"`
-	Price         Price              `json:"price"`
-	PriceSource   string             `json:"price_source"`
-	PricingModel  string             `json:"pricing_model,omitempty"`
-	UpstreamModel string             `json:"upstream_model,omitempty"`
-	QuotaPool     string             `json:"quota_pool,omitempty"`
-	AgentPurge    *agentPurgeReceipt `json:"agent_purge,omitempty"`
+	Source           clientFormat             `json:"source"`
+	Reported         upstreamUsage            `json:"reported"`
+	Usage            billingUsage             `json:"usage"`
+	Cost             billingCost              `json:"cost"`
+	Price            Price                    `json:"price"`
+	PriceSource      string                   `json:"price_source"`
+	PricingModel     string                   `json:"pricing_model,omitempty"`
+	UpstreamModel    string                   `json:"upstream_model,omitempty"`
+	QuotaPool        string                   `json:"quota_pool,omitempty"`
+	AgentPurge       *agentPurgeReceipt       `json:"agent_purge,omitempty"`
+	RequestRedaction *requestRedactionReceipt `json:"request_redaction,omitempty"`
 }
 
 func nonnegativeTokens(value int) int {
