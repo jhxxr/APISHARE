@@ -613,9 +613,6 @@ func (s *responsesWSSession) admit(model string, request *responsesWSRequest) (*
 	task := relayTask{client: requestClientFor(s.c), traceID: randHex(16), format: FormatOpenAIResponse,
 		endpoint: "/v1/responses", model: model, apiKeyID: key.ID, stream: true, userSub: userSubForKey(*key)}
 	task.agentPurgeState = loadAgentPurgeRequestState(task.userSub)
-	if agentPurgeEnabledForSub(task.agentPurgeState, task.userSub) && !agentPurgeModelAuthorized(task.agentPurgeState, model) {
-		return nil, http.StatusForbidden, "model " + model + " is not authorized for personalized prompts; ask an administrator to authorize it or disable personalized prompts"
-	}
 	if s.up != nil && agentPurgeAppliesToModel(&task) && !shouldApplyAgentPurge(task.agentPurgeState, task.userSub, s.up, &task) {
 		return nil, http.StatusServiceUnavailable, "persona channel authorization changed; reconnect to use an administrator-authorized upstream"
 	}

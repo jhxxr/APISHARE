@@ -222,8 +222,9 @@ func agentPurgeAppliesToModel(task *relayTask) bool {
 }
 
 // agentPurgeEnabledForSub reports whether the user actually activated a persona,
-// independent of the requested model. Requests for models outside the
-// administrator's authorization must then be rejected instead of routed.
+// independent of the requested model. Models outside the administrator's
+// authorization keep the plain request and normal routing; the persona is
+// never applied to them.
 func agentPurgeEnabledForSub(state *agentPurgeRequestState, userSub string) bool {
 	if state == nil || userSub == "" || !state.policy.Enabled || !state.user.Enabled {
 		return false

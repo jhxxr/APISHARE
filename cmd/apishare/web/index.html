@@ -382,7 +382,7 @@
         <section id="tab-settings" class="panel hidden">
           <div class="page-heading"><div><span class="eyebrow">WORKSPACE PREFERENCES</span><h1>工作空间设置</h1><p>管理网站外观、请求调度与管理员访问。</p></div></div>
           <section class="card-block settings-card agent-purge-admin-card" aria-labelledby="agentPurgeAdminTitle">
-            <div class="section-heading"><span class="section-icon"><svg class="icon"><use href="#i-spark"/></svg></span><div><h2 id="agentPurgeAdminTitle">个性化提示词 · Agent Purge</h2><p>完整内置项目及默认人设库模板，用户可自行选择；仅对管理员授权的模型与上游组合生效。<a href="api/agent-purge/license" target="_blank" rel="noopener">许可与来源</a></p></div></div>
+            <div class="section-heading"><span class="section-icon"><svg class="icon"><use href="#i-spark"/></svg></span><div><h2 id="agentPurgeAdminTitle">个性化提示词 · Agent Purge</h2><p>完整内置项目及默认人设库模板，用户可自行选择；仅对管理员授权的模型与上游组合生效，未勾选的模型照常普通路由、不做提示词替换。<a href="api/agent-purge/license" target="_blank" rel="noopener">许可与来源</a></p></div></div>
             <label class="switch-row"><span><strong>开放用户自选提示词</strong><small>默认关闭。用户开启角色后，所有客户端请求下方模型都只会路由到你授权的渠道；不依赖 User-Agent，无需选择模型或渠道。</small></span><input id="agentPurgeAdminEnabled" type="checkbox" class="switch-input"><span class="switch-track"></span></label>
             <label class="field"><span>筛选模型或上游</span><input id="agentPurgePolicySearch" type="search" placeholder="搜索模型名称、上游名称或类型" autocomplete="off"></label>
             <div id="agentPurgePolicyPairs" class="agent-purge-policy-pairs" aria-live="polite"><p class="muted">正在加载当前可用模型与上游…</p></div>

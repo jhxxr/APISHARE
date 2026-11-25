@@ -615,7 +615,7 @@
     const badge = $("#agentPurgeStatus");
     badge.textContent = !view.enabled ? "站点未开放" : !enabled ? "未启用" : !templateSelected ? "待选择角色" : !models ? "暂无可用模型" : "已选择启用";
     badge.className = "status-pill " + (enabled && models && templateSelected ? "on" : "off");
-    $("#agentPurgeSelectionNote").textContent = `${models} 个模型可用于角色替换，无需选择渠道。开启后对所有客户端生效，不依赖 User-Agent；失败重试也只会使用管理员授权的渠道。修改后请保存。`;
+    $("#agentPurgeSelectionNote").textContent = `${models} 个模型可用于角色替换，无需选择渠道。开启后对所有客户端生效，不依赖 User-Agent；失败重试也只会使用管理员授权的渠道。列表之外的模型仍可正常请求，只是不会进行提示词替换。修改后请保存。`;
     const mode = $("#agentPurgeMode").value;
     $("#agentPurgeModeHint").textContent = mode === "strict"
       ? "严格替换会移除请求中可控的 system/developer 原文，可能影响工具使用说明。独立结构化工具仍保留；客户端或上游另加的内容不受此开关控制。"

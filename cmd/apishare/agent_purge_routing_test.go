@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -290,16 +291,20 @@ func TestAgentPurgeResponsesWSRestrictsRoutingAndRechecksPolicy(t *testing.T) {
 	}
 }
 
-func TestAgentPurgeRejectsUnauthorizedModelInsteadOfFailingSilently(t *testing.T) {
+func TestAgentPurgeLeavesUnauthorizedModelsUntouched(t *testing.T) {
 	modelsTestDB(t)
-	key := &ApiKey{Name: "persona denial", Key: "sk-persona-denial", Models: "alias,other", Enabled: true, QPS: 1000, Concurrency: 5}
+	key := &ApiKey{Name: "persona passthrough", Key: "sk-persona-passthrough", Models: "alias,other", Enabled: true, QPS: 1000, Concurrency: 5}
 	if err := dbInsertKey(key); err != nil {
 		t.Fatal(err)
 	}
-	agentPurgeTestUser(t, key, "denied-user")
-	var calls atomic.Int32
+	agentPurgeTestUser(t, key, "passthrough-user")
+	var bodies []string
+	var mu sync.Mutex
 	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
+		raw, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(raw))
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, protocolResponses[FormatOpenAIChat])
 	}))
@@ -311,7 +316,7 @@ func TestAgentPurgeRejectsUnauthorizedModelInsteadOfFailingSilently(t *testing.T
 	if err := saveAgentPurgePolicy(agentPurgePolicy{Enabled: true, Pairs: []agentPurgePair{{Model: "alias", UpstreamID: up.ID}}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := saveUserAgentPurgeConfig("denied-user", userAgentPurgeConfig{Enabled: true, Mode: "append"}); err != nil {
+	if err := saveUserAgentPurgeConfig("passthrough-user", userAgentPurgeConfig{Enabled: true, Mode: "strict"}); err != nil {
 		t.Fatal(err)
 	}
 	router := newRouter()
@@ -322,22 +327,22 @@ func TestAgentPurgeRejectsUnauthorizedModelInsteadOfFailingSilently(t *testing.T
 		router.ServeHTTP(w, req)
 		return w
 	}
-	if w := call("other"); w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "not authorized for personalized prompts") {
-		t.Fatalf("unauthorized model bypassed the persona guard: %d %s", w.Code, w.Body.String())
+	// A model without administrator authorization must still be relayed, with
+	// the caller's prompt untouched and the normal upstream set available.
+	if w := call("other"); w.Code != http.StatusOK {
+		t.Fatalf("unauthorized model was blocked by the persona switch: %d %s", w.Code, w.Body.String())
 	}
-	if calls.Load() != 0 {
-		t.Fatalf("unauthorized model reached an upstream %d times", calls.Load())
+	mu.Lock()
+	if len(bodies) != 1 || strings.Contains(bodies[0], "you are") {
+		t.Fatalf("unauthorized model request was rewritten: %v", bodies)
 	}
-	if w := call("alias"); w.Code != http.StatusOK || calls.Load() != 1 {
-		t.Fatalf("authorized model was blocked by the guard: %d %s", w.Code, w.Body.String())
+	mu.Unlock()
+	if w := call("alias"); w.Code != http.StatusOK {
+		t.Fatalf("authorized model failed: %d %s", w.Code, w.Body.String())
 	}
-	// Disabling the personal prompt restores ordinary routing for other models.
-	cfg := loadUserAgentPurgeConfig("denied-user")
-	cfg.Enabled = false
-	if err := saveUserAgentPurgeConfig("denied-user", cfg); err != nil {
-		t.Fatal(err)
+	mu.Lock()
+	if len(bodies) != 2 || bodies[1] == bodies[0] {
+		t.Fatalf("authorized model was not rewritten: %v", bodies)
 	}
-	if w := call("other"); w.Code != http.StatusOK || calls.Load() != 2 {
-		t.Fatalf("disabled persona still blocked other models: %d %s", w.Code, w.Body.String())
-	}
+	mu.Unlock()
 }
