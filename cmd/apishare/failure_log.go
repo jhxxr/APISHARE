@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -369,10 +370,14 @@ type failureLogEntry struct {
 	// TruncatedReason explains why details were shortened, so the console can
 	// say "configured limit" instead of silently showing a partial record.
 	TruncatedReason string `json:"truncated_reason,omitempty"`
+	// ContentOmittedReason is independent of the failure and size-limit markers.
+	ContentOmittedReason string `json:"content_omitted_reason,omitempty"`
 }
 
 // failureTruncatedEntryLimit marks records shrunk to fit EntryKiB.
 const failureTruncatedEntryLimit = "entry_limit"
+
+const failureContentOmittedRedaction = "request_redaction_policy"
 
 type failureRequest struct {
 	Method    string            `json:"method"`
@@ -816,8 +821,10 @@ func recordRelayFailure(c *gin.Context, task *relayTask, info relayInfo, status 
 		entry.Request.Truncated = len(task.failureBody) > 0
 		entry.Request.Headers = nil
 		entry.Request.Redacted = true
-		entry.Upstream.Summary = "upstream request failed; response omitted by request redaction policy"
+		entry.ContentOmittedReason = failureContentOmittedRedaction
+		entry.Upstream.Summary = failureRedactedSummary(info, kind, err)
 		entry.Upstream.Body = ""
+		entry.Upstream.Redacted = true
 		entry.Upstream.Truncated = len(body.data) > 0
 	}
 	if len(entry.Upstream.Body) > s.entryBytes {
@@ -863,6 +870,58 @@ func relayFailureSummary(info relayInfo, kind string) string {
 		return fmt.Sprintf("upstream returned %d", info.Status)
 	}
 	return kind
+}
+
+// failureRedactedSummary keeps actionable diagnostics without persisting an
+// arbitrary Error() string, which can contain prompts, URLs or credentials.
+// All descriptions are local constants or typed numeric metadata.
+func failureRedactedSummary(info relayInfo, kind string, err error) string {
+	var detail string
+	var dns *net.DNSError
+	var timeout net.Error
+	var toolLimit *upstreamToolLimitError
+	switch {
+	case errors.Is(err, errDownstreamWrite):
+		detail = "writing client response failed"
+	case errors.Is(err, context.Canceled):
+		detail = "request canceled or client disconnected"
+	case errors.Is(err, errUpstreamFirstOutputTimeout):
+		detail = "upstream first-output timeout"
+	case errors.Is(err, errUpstreamIdleTimeout):
+		detail = "upstream response body idle timeout"
+	case errors.Is(err, context.DeadlineExceeded):
+		detail = "request deadline exceeded"
+	case errors.As(err, &timeout) && timeout.Timeout():
+		detail = "network timeout"
+	case errors.As(err, &dns):
+		detail = "DNS lookup failed"
+	case errors.Is(err, syscall.ECONNREFUSED):
+		detail = "connection refused"
+	case errors.Is(err, syscall.ECONNRESET):
+		detail = "connection reset by peer"
+	case errors.Is(err, syscall.EPIPE):
+		detail = "broken pipe"
+	case errors.Is(err, net.ErrClosed):
+		detail = "network connection closed"
+	case errors.Is(err, io.ErrUnexpectedEOF):
+		detail = "upstream response ended unexpectedly"
+	case errors.Is(err, io.EOF):
+		detail = "upstream response ended"
+	case errors.As(err, &toolLimit):
+		detail = toolLimit.Error()
+	}
+	summary := kind
+	if detail != "" {
+		summary += ": " + detail
+	}
+	status := info.failureHTTPStatus
+	if status == 0 {
+		status = info.Status
+	}
+	if status != 0 {
+		summary += fmt.Sprintf(" (upstream HTTP %d)", status)
+	}
+	return summary
 }
 
 // failureSummaryLine is the human-readable one-liner shown in the console list.

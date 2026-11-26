@@ -13,8 +13,8 @@ function warnFullContentScope() {
   const note = $("failureLogSettingsNote");
   if (!note) return;
   note.textContent = $("failureLogFullContent").value === "true"
-    ? "完整原文会保存请求体、响应体以及 Authorization 等请求头，仅在你需要精确复现问题期间开启。"
-    : "脱敏模式下只保存结构、状态码、错误类型与上游错误摘要，不保存正文与敏感请求头。";
+    ? "完整原文会保存请求体、响应体以及 Authorization 等请求头，仅在你需要精确复现问题期间开启。请求强制脱敏策略优先，命中时仍不保存正文与请求头，但保留安全的失败原因。"
+    : "脱敏模式下保存结构、状态码、错误类型与安全的错误摘要；请求强制脱敏时不保存正文与请求头，但保留安全的失败原因。";
 }
 
 function failureLogSettingsFromCache() {
@@ -112,7 +112,7 @@ function renderFailureLogList(data) {
     return `<button type="button" class="failure-row${active ? " active" : ""}" role="listitem" data-failure="${esc(item.name)}" onclick="openFailureLog(this.dataset.failure)">
       <span class="failure-row-top"><span class="failure-kind">${esc(item.failure_kind || "unknown")}</span><span class="failure-status">${esc(item.gateway_status || 0)}</span><span class="failure-time">${esc(failureLogTime(item.time))}</span></span>
       <span class="failure-row-model">${esc(item.model || "（未识别模型）")}</span>
-      <span class="failure-row-summary">${esc(item.summary || item.route || "")}</span>
+      <span class="failure-row-summary">${esc(failureLogSummary(item.summary, item.failure_kind) || item.route || "")}</span>
       <span class="failure-row-meta"><span>${esc(item.channel || "未知上游")}</span><span>${fmtFailureDuration(item.duration_ms)}</span><span>${fmtFailureSize(item.size)}</span></span>
     </button>`;
   }).join("");
@@ -162,6 +162,16 @@ function renderHeaderTable(headers) {
   }).join("")}</div>`;
 }
 
+function isLegacyFailureRedactionSummary(summary) {
+  return summary === "upstream request failed; response omitted by request redaction policy";
+}
+
+function failureLogSummary(summary, kind) {
+  return isLegacyFailureRedactionSummary(summary)
+    ? (kind || "unknown") + "（旧记录未保存具体错误信息）"
+    : (summary || "");
+}
+
 function renderFailureLogDetail(entry) {
   const request = entry.request || {};
   const upstream = entry.upstream || {};
@@ -169,6 +179,9 @@ function renderFailureLogDetail(entry) {
     ? JSON.stringify(request.body, null, 2)
     : (request.raw_body || "");
   const upstreamText = upstream.body || "";
+  const contentOmitted = entry.content_omitted_reason === "request_redaction_policy"
+    || isLegacyFailureRedactionSummary(upstream.summary);
+  const summary = failureLogSummary(upstream.summary, upstream.failure_kind || upstream.error_type);
   const parts = [];
   parts.push(`<div class="failure-detail-head">
     <div><span class="failure-kind">${esc(upstream.failure_kind || upstream.error_type || "unknown")}</span><h2>${esc(request.model || "（未识别模型）")}</h2>
@@ -183,16 +196,26 @@ function renderFailureLogDetail(entry) {
     <div><span>上游</span><strong>${esc(upstream.channel || "—")}</strong></div>
     <div><span>上游模型</span><strong>${esc(upstream.model || "—")}</strong></div>
   </div>`);
-  if (upstream.summary) parts.push(`<section class="failure-section"><h3>失败摘要</h3><p class="failure-summary-text">${esc(upstream.summary)}</p></section>`);
-  const requestCut = request.truncated || request.raw_body_truncated;
+  if (summary) parts.push(`<section class="failure-section"><h3>失败摘要</h3><p class="failure-summary-text">${esc(summary)}</p></section>`);
+  if (contentOmitted) parts.push('<p class="failure-muted">正文与请求头因请求强制脱敏策略未保存；这不是失败原因，切换“完整原文”也不会覆盖该策略。已省略的内容无法恢复。</p>');
+  const requestCut = !contentOmitted && (request.truncated || request.raw_body_truncated);
   const cutoffNote = entry.truncated_reason === "entry_limit" || entry.truncated
-    ? '<p class="failure-warning">该记录因超过单条记录上限而被压缩，正文保留开头部分。</p>' : "";
-  parts.push(`<section class="failure-section"><h3>请求体${requestCut ? ' <span class="failure-badge">已截断</span>' : ""}</h3>
+    ? '<p class="failure-warning">该记录因超过单条记录上限而被压缩，正文可能仅保留开头部分或被省略。</p>' : "";
+  const requestEmptyNote = contentOmitted
+    ? "请求正文因请求强制脱敏策略未保存。"
+    : request.redacted
+      ? "脱敏保存模式下未保存请求正文。若无强制脱敏策略限制，可切换“完整原文”后重试；不会恢复已有记录。"
+      : "该记录没有保存请求正文。";
+  const upstreamEmptyNote = contentOmitted
+    ? "上游响应正文因请求强制脱敏策略未保存，不代表上游没有返回正文。"
+    : "该记录没有保存上游响应正文。";
+  const upstreamCut = !contentOmitted && (upstream.body_truncated || upstream.truncated);
+  parts.push(`<section class="failure-section"><h3>请求体${contentOmitted ? ' <span class="failure-badge">未保存</span>' : requestCut ? ' <span class="failure-badge">已截断</span>' : ""}</h3>
     ${cutoffNote}
-    ${bodyText ? `<pre class="failure-pre">${esc(bodyText)}</pre>` : '<p class="failure-muted">脱敏模式下未保存请求正文。需要原始内容请在“保存设置”中切换为完整原文。</p>'}</section>`);
-  parts.push(`<section class="failure-section"><h3>上游返回${upstream.truncated ? ' <span class="failure-badge">已截断</span>' : ""}</h3>
-    ${upstreamText ? `<pre class="failure-pre">${esc(upstreamText)}</pre>` : '<p class="failure-muted">没有上游响应正文</p>'}</section>`);
-  parts.push(`<section class="failure-section"><h3>请求头</h3>${renderHeaderTable(request.headers)}</section>`);
+    ${bodyText ? `<pre class="failure-pre">${esc(bodyText)}</pre>` : `<p class="failure-muted">${esc(requestEmptyNote)}</p>`}</section>`);
+  parts.push(`<section class="failure-section"><h3>上游返回${contentOmitted ? ' <span class="failure-badge">未保存</span>' : upstreamCut ? ' <span class="failure-badge">已截断</span>' : ""}</h3>
+    ${upstreamText ? `<pre class="failure-pre">${esc(upstreamText)}</pre>` : `<p class="failure-muted">${esc(upstreamEmptyNote)}</p>`}</section>`);
+  parts.push(`<section class="failure-section"><h3>请求头</h3>${contentOmitted ? '<p class="failure-muted">请求头因请求强制脱敏策略未保存。</p>' : renderHeaderTable(request.headers)}</section>`);
   parts.push(`<section class="failure-section"><h3>原始记录</h3><pre class="failure-pre">${esc(JSON.stringify(entry, null, 2))}</pre></section>`);
   $("failureLogDetail").innerHTML = parts.join("");
 }
